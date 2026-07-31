@@ -8,7 +8,7 @@ export default function StarNight() {
   return (
     <section className="relative min-h-screen overflow-hidden bg-black text-white">
       <Image
-        src="/images/concert.JPG"
+        src="/images/concert.jpg"
         alt="Saviskar Star Night"
         fill
         sizes="100vw"

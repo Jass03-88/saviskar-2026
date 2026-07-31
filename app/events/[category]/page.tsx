@@ -14,7 +14,7 @@ const categories = {
     tagline: "Dance. Music. Performance.",
     description:
       "A stage for expression, rhythm and performances that turn moments into memories.",
-    image: "/images/cultural.JPG",
+    image: "/images/cultural.jpg",
   },
 
   technical: {

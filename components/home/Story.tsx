@@ -107,7 +107,7 @@ export default function Story() {
             className="absolute -inset-[5%]"
           >
             <Image
-              src="/images/hero.JPG"
+              src="/images/hero.jpg"
               alt="Saviskar live concert"
               fill
               priority

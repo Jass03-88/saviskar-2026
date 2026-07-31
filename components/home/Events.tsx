@@ -13,7 +13,7 @@ const events = [
     subtitle: "Dance. Music. Performance.",
     description:
       "Take the stage and turn every performance into a moment worth remembering.",
-    image: "/images/cultural.JPG",
+    image: "/images/cultural.jpg",
   },
   {
     number: "02",

@@ -14,7 +14,7 @@ const categories = [
     title: "Cultural",
     description:
       "Music, dance, theatre and performances that take over the Saviskar stage.",
-    image: "/images/cultural.JPG",
+    image: "/images/cultural.jpg",
   },
   {
     number: "03",
