@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { createClient } from "@supabase/supabase-js";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 type RegistrationEmailBody = {
   registrationId?: unknown;
 };
@@ -127,7 +125,7 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
-
+const resend = new Resend(process.env.RESEND_API_KEY);
     if (!process.env.RESEND_FROM_EMAIL) {
       console.error("RESEND_FROM_EMAIL is missing.");
 
