@@ -193,10 +193,10 @@ export default function Gallery() {
   return (
     <>
       <section
-        id="gallery"
-        className="relative overflow-hidden bg-[#f4f4f2] px-5 py-24 text-black md:px-10 md:py-36"
-      >
-        <div className="mx-auto max-w-[1200px]">
+  id="gallery"
+  className="relative -mt-40 overflow-hidden bg-transparent px-5 pt-64 pb-24 text-white md:px-10 md:pb-36"
+>
+  <div className="relative z-10">
 
           {/* HEADER */}
           <div className="mb-16 grid gap-10 md:mb-24 md:grid-cols-2 md:items-end">
@@ -209,7 +209,7 @@ export default function Gallery() {
                 ease: [0.22, 1, 0.36, 1],
               }}
             >
-              <p className="mb-6 text-[9px] uppercase tracking-[0.3em] text-black/40">
+              <p className="mb-6 text-[9px] uppercase tracking-[0.3em] text-white/50">
                 24 Frames / One Experience
               </p>
 
@@ -227,7 +227,7 @@ export default function Gallery() {
               transition={{ duration: 0.8, delay: 0.15 }}
               className="md:justify-self-end"
             >
-              <p className="max-w-[410px] font-serif text-lg leading-[1.5] text-black/50 md:text-xl">
+              <p className="max-w-[410px] font-serif text-lg leading-[1.5] text-white/50 md:text-xl">
                 The stages, the people, the competition and everything
                 in between. Twenty-four frames from an experience that
                 was never meant to stand still.
@@ -269,7 +269,7 @@ export default function Gallery() {
                   {String(index + 1).padStart(2, "0")}
                 </span>
 
-                <div className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full bg-white text-black transition-all duration-500 group-hover:rotate-45 group-hover:scale-110">
+                <div className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full bg-white text-white transition-all duration-500 group-hover:rotate-45 group-hover:scale-110">
                   <ArrowUpRight size={16} strokeWidth={1.5} />
                 </div>
 
@@ -292,10 +292,10 @@ export default function Gallery() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.8 }}
-            className="mt-24 grid gap-8 border-t border-black/15 pt-8 md:grid-cols-2"
+            className="mt-24 grid gap-8 border-t border-white/15 pt-8 md:grid-cols-2"
           >
             <div>
-              <p className="text-[9px] uppercase tracking-[0.3em] text-black/35">
+              <p className="text-[9px] uppercase tracking-[0.3em] text-white/35">
                 Saviskar
               </p>
 
@@ -304,7 +304,7 @@ export default function Gallery() {
               </p>
             </div>
 
-            <p className="self-end text-[9px] uppercase tracking-[0.28em] text-black/35 md:text-right">
+            <p className="self-end text-[9px] uppercase tracking-[0.28em] text-white/35 md:text-right">
               CGC University, Mohali
             </p>
           </motion.div>
@@ -326,7 +326,7 @@ export default function Gallery() {
             <button
               type="button"
               onClick={() => setSelectedIndex(null)}
-              className="absolute right-5 top-5 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-105 md:right-8 md:top-8"
+              className="absolute right-5 top-5 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-white text-white transition-transform hover:scale-105 md:right-8 md:top-8"
               aria-label="Close gallery"
             >
               <X size={18} />
@@ -339,7 +339,7 @@ export default function Gallery() {
                 event.stopPropagation();
                 previous();
               }}
-              className="absolute left-4 top-1/2 z-50 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white hover:text-black md:left-8"
+              className="absolute left-4 top-1/2 z-50 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white hover:text-white md:left-8"
               aria-label="Previous image"
             >
               <ArrowLeft size={18} />
@@ -352,7 +352,7 @@ export default function Gallery() {
                 event.stopPropagation();
                 next();
               }}
-              className="absolute right-4 top-1/2 z-50 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white hover:text-black md:right-8"
+              className="absolute right-4 top-1/2 z-50 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white hover:text-white md:right-8"
               aria-label="Next image"
             >
               <ArrowRight size={18} />

@@ -1,84 +1,101 @@
 "use client";
 
 import { motion } from "motion/react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, ArrowRight } from "lucide-react";
 import SplitText from "@/components/SplitText";
+import AuroraBackground from "@/components/ui/AuroraBackground";
 
 export default function Hero() {
   return (
-    <section className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-black px-5 text-white">
-      {/* Subtle background atmosphere */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-1/2 top-[55%] h-[38rem] w-[38rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/[0.025] blur-3xl" />
-        <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-white/[0.025] to-transparent" />
-      </div>
+    <section className="relative flex min-h-screen items-center justify-center overflow-hidden bg-transparent text-white">
 
-      <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-col items-center justify-center text-center">
+      {/* Animated Background */}
+      <AuroraBackground />
+
+      <div className="relative z-20 mx-auto flex w-full max-w-7xl flex-col items-center px-6 text-center">
+
         <motion.p
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 25 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.2 }}
-          className="mb-7 text-[10px] font-medium uppercase tracking-[0.32em] text-white/45 md:text-xs"
+          transition={{ duration: .7 }}
+          className="mb-8 text-xs uppercase tracking-[0.45em] text-white/50"
         >
-          CGC UNIVERSITY, MOHALI
+          CGC UNIVERSITY • MOHALI
         </motion.p>
 
-        <div className="w-full overflow-hidden">
-          <SplitText
-            text="SAVISKAR"
-            className="text-[clamp(4rem,15vw,13rem)] font-semibold leading-[0.76] tracking-[-0.075em] text-white"
-            delay={70}
-            duration={1.1}
-            ease="power3.out"
-            splitType="chars"
-            from={{ opacity: 0, y: 100 }}
-            to={{ opacity: 1, y: 0 }}
-            threshold={0.1}
-            rootMargin="-50px"
-            textAlign="center"
-            onLetterAnimationComplete={() => {}}
-          />
-        </div>
+        <SplitText
+          text="SAVISKAR"
+          className="text-[clamp(5rem,15vw,12rem)] font-black tracking-[-0.08em] leading-none drop-shadow-[0_0_50px_rgba(255,255,255,0.18)]"
+          delay={55}
+          duration={1}
+          splitType="chars"
+          from={{ opacity: 0, y: 140 }}
+          to={{ opacity: 1, y: 0 }} onLetterAnimationComplete={undefined}        />
+
+        <motion.h2
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.1 }}
+          className="mt-8 text-3xl md:text-6xl font-semibold tracking-tight"
+        >
+          The Stage is Yours.
+        </motion.h2>
+
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.3 }}
+          className="mt-8 max-w-2xl text-lg leading-8 text-white/55"
+        >
+          Technology, Culture, Innovation and Competition —
+          brought together into one unforgettable experience.
+        </motion.p>
 
         <motion.div
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: 25 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 1.05 }}
-          className="mt-12 flex flex-col items-center md:mt-14"
+          transition={{ delay: 1.5 }}
+          className="mt-14 flex flex-wrap items-center justify-center gap-5"
         >
-          <h1 className="text-3xl font-medium tracking-[-0.04em] md:text-5xl">
-            The stage is yours.
-          </h1>
 
-          <p className="mt-5 max-w-lg text-sm leading-6 text-white/45 md:text-base md:leading-7">
-            Technology. Culture. Competition. Creativity.
-            <br className="hidden sm:block" />
-            One experience that brings it all together.
-          </p>
-
-          <motion.a
-            href="#story"
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.98 }}
-            className="group mt-8 inline-flex items-center gap-3 rounded-full bg-white px-6 py-3 text-sm font-medium text-black transition-opacity hover:opacity-90"
+          <a
+            href="#events"
+            className="group rounded-full bg-white px-8 py-4 text-black font-medium transition-all duration-300 hover:scale-105"
           >
-            Discover Saviskar
-            <ArrowDown
-              size={15}
-              className="transition-transform duration-300 group-hover:translate-y-0.5"
-            />
-          </motion.a>
+            <span className="flex items-center gap-3">
+              Explore Events
+              <ArrowRight
+                size={18}
+                className="transition group-hover:translate-x-1"
+              />
+            </span>
+          </a>
+
+          <a
+            href="/register"
+            className="rounded-full border border-white/20 bg-white/5 backdrop-blur-xl px-8 py-4 font-medium transition-all duration-300 hover:border-white/40 hover:bg-white/10"
+          >
+            Register Now
+          </a>
+
         </motion.div>
+
       </div>
 
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 1, delay: 1.6 }}
-        className="absolute bottom-7 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-[0.28em] text-white/25"
+        animate={{
+          y: [0, 10, 0],
+        }}
+        transition={{
+          repeat: Infinity,
+          duration: 2,
+        }}
+        className="absolute bottom-10 left-1/2 -translate-x-1/2 text-white/35"
       >
-        Scroll to explore
+        <ArrowDown size={18} />
       </motion.div>
+{/* Bottom fade */}
+<div className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-gradient-to-b from-transparent via-black/40 to-black" />
     </section>
   );
 }
