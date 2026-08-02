@@ -792,15 +792,15 @@ export default function AdminPage() {
 
         <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/80">
               Saviskar 2026
             </p>
 
-            <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl">
+            <h1 className="text-4xl font-semibold tracking-[-0.05em] text-black md:text-6xl">
               Registrations
             </h1>
 
-            <p className="mt-4 text-sm text-black/45">
+            <p className="mt-4 text-sm text-black/80">
               Manage registrations and participant entry.
             </p>
           </div>
@@ -833,7 +833,7 @@ export default function AdminPage() {
                 ]);
               }}
               disabled={loading}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] disabled:opacity-50"
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm font-medium text-black transition hover:bg-black/[0.03] disabled:opacity-50"
             >
               <RefreshCw
                 size={15}
@@ -847,7 +847,7 @@ export default function AdminPage() {
 
             <button
               onClick={logout}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03]"
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm font-medium text-black transition hover:bg-black/[0.03]"
             >
               <LogOut size={15} />
               Logout
@@ -886,11 +886,11 @@ export default function AdminPage() {
         {registrations.length > 0 && (
           <div className="mb-8 rounded-[28px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.04)] md:p-8">
 
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/70">
               Event analytics
             </p>
 
-            <h2 className="mt-2 text-xl font-semibold">
+            <h2 className="mt-2 text-xl font-semibold text-black">
               Registration breakdown
             </h2>
 
@@ -902,17 +902,17 @@ export default function AdminPage() {
                   className="rounded-[20px] bg-black/[0.035] p-5"
                 >
 
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-black/40">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-black/80">
                     {item.eventName}
                   </p>
 
                   <div className="mt-4 flex items-end justify-between">
 
-                    <p className="text-3xl font-semibold">
-                      {item.count}
-                    </p>
+                    <p className="text-3xl font-bold text-black">
+  {item.count}
+</p>
 
-                    <p className="text-xs text-black/35">
+                    <p className="text-xs text-black/70">
                       {item.percentage}%
                     </p>
 
@@ -936,7 +936,7 @@ export default function AdminPage() {
 
               <Search
                 size={15}
-                className="text-black/35"
+                className="text-black/70"
               />
 
               <input
@@ -945,7 +945,7 @@ export default function AdminPage() {
                   setSearch(event.target.value)
                 }
                 placeholder="Search name, event, college, email, phone, team..."
-                className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-black/30"
+                className="w-full bg-transparent py-3 text-sm text-black outline-none placeholder:text-black/70"
               />
 
             </div>
@@ -955,7 +955,7 @@ export default function AdminPage() {
               onChange={(event) =>
                 setEventFilter(event.target.value)
               }
-              className="rounded-full bg-black/[0.035] px-5 py-3 text-sm outline-none"
+              className="rounded-full bg-black/[0.035] px-5 py-3 text-sm text-black outline-none"
             >
 
               <option value="all">
@@ -980,7 +980,7 @@ export default function AdminPage() {
                   event.target.value as StatusFilter
                 )
               }
-              className="rounded-full bg-black/[0.035] px-5 py-3 text-sm outline-none"
+              className="rounded-full bg-black/[0.035] px-5 py-3 text-sm text-black outline-none"
             >
 
               <option value="all">
@@ -1032,7 +1032,7 @@ export default function AdminPage() {
                   className="mx-auto mb-4 animate-spin"
                 />
 
-                <p className="text-sm text-black/40">
+                <p className="text-sm text-black/80">
                   Loading registrations...
                 </p>
 
@@ -1055,7 +1055,7 @@ export default function AdminPage() {
                   No registrations found
                 </p>
 
-                <p className="mt-2 text-sm text-black/40">
+                <p className="mt-2 text-sm text-black/80">
                   Try changing your filters.
                 </p>
 
@@ -1119,11 +1119,11 @@ export default function AdminPage() {
 
                         <td className="px-6 py-5">
 
-                          <p className="font-medium">
+                          <p className="font-medium text-black">
                             {registration.name}
                           </p>
 
-                          <p className="mt-1 max-w-[170px] truncate font-mono text-[10px] text-black/35">
+                          <p className="mt-1 max-w-[170px] truncate font-mono text-[10px] text-black/70">
                             {registration.id}
                           </p>
 
@@ -1133,7 +1133,7 @@ export default function AdminPage() {
 
                         <td className="px-6 py-5">
 
-                          <span className="rounded-full bg-black/[0.05] px-3 py-1.5 text-xs">
+                          <span className="rounded-full bg-black/[0.05] px-3 py-1.5 text-xs font-medium text-black">
                             {getEventName(
                               registration.event_id
                             )}
@@ -1147,11 +1147,11 @@ export default function AdminPage() {
 
                         <td className="px-6 py-5">
 
-                          <p className="text-sm">
+                          <p className="text-sm text-black">
                             {registration.email}
                           </p>
 
-                          <p className="mt-1 text-xs text-black/40">
+                          <p className="mt-1 text-xs text-black/80">
                             {registration.phone}
                           </p>
 
@@ -1175,7 +1175,7 @@ export default function AdminPage() {
 
                               {registration.checked_in_at && (
 
-                                <p className="mt-2 text-[10px] text-black/35">
+                                <p className="mt-2 text-[10px] text-black/70">
                                   {new Date(
                                     registration.checked_in_at
                                   ).toLocaleString()}
@@ -1187,7 +1187,7 @@ export default function AdminPage() {
 
                           ) : (
 
-                            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.045] px-3 py-1.5 text-xs text-black/55">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.045] px-3 py-1.5 text-xs text-black/80">
                               <Clock3 size={13} />
                               Pending
                             </span>
@@ -1196,7 +1196,7 @@ export default function AdminPage() {
 
                         </td>
 
-                        <td className="px-6 py-5 text-sm text-black/45">
+                        <td className="px-6 py-5 text-sm text-black/80">
 
                           {registration.created_at
                             ? new Date(
@@ -1214,7 +1214,7 @@ export default function AdminPage() {
                               onClick={() =>
                                 openRegistration(registration)
                               }
-                              className="flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs transition hover:bg-black hover:text-white"
+                              className="flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-medium text-black transition hover:bg-black hover:text-white"
                             >
                               <Eye size={13} />
                               View
@@ -1270,7 +1270,7 @@ export default function AdminPage() {
 
         {!loading && (
 
-          <p className="mt-4 text-right text-xs text-black/35">
+          <p className="mt-4 text-right text-xs text-black/70">
             Showing {filteredRegistrations.length} of{" "}
             {registrations.length} registrations
           </p>
@@ -1295,9 +1295,9 @@ export default function AdminPage() {
           >
             <div className="mb-8 flex items-start justify-between">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.22em] text-black/35">Admin registration</p>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-black/70">Admin registration</p>
                 <h2 className="mt-2 text-3xl font-semibold">Add Registration</h2>
-                <p className="mt-2 text-sm text-black/45">Manually register an individual participant or complete team.</p>
+                <p className="mt-2 text-sm text-black/80">Manually register an individual participant or complete team.</p>
               </div>
               <button
                 type="button"
@@ -1313,12 +1313,12 @@ export default function AdminPage() {
 
             <form onSubmit={createManualRegistration} className="space-y-6">
               <div>
-                <label className="mb-2 block text-[10px] font-medium uppercase tracking-[0.18em] text-black/40">Event *</label>
+                <label className="mb-2 block text-[10px] font-medium uppercase tracking-[0.18em] text-black/80">Event *</label>
                 <select
                   required
                   value={newRegistration.event_id}
                   onChange={(event) => selectManualEvent(event.target.value)}
-                  className="w-full rounded-[16px] border border-black/10 bg-white px-4 py-3.5 text-sm outline-none focus:border-black/30"
+                  className="w-full rounded-[16px] border border-black/10 bg-white px-4 py-3.5 text-sm text-black outline-none focus:border-black/30"
                 >
                   <option value="">Select event</option>
                   {eventRecords.map((event) => (
@@ -1333,7 +1333,7 @@ export default function AdminPage() {
                 <div className="rounded-[18px] bg-black/[0.035] p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="text-[9px] uppercase tracking-[0.2em] text-black/35">Registering for</p>
+                      <p className="text-[9px] uppercase tracking-[0.2em] text-black/70">Registering for</p>
                       <p className="mt-1 font-medium">{selectedManualEvent.name}</p>
                     </div>
                     <span className="rounded-full bg-black px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-white">
@@ -1341,7 +1341,7 @@ export default function AdminPage() {
                     </span>
                   </div>
                   {isManualTeamEvent && (
-                    <p className="mt-3 text-xs text-black/45">
+                    <p className="mt-3 text-xs text-black/80">
                       Team size: {manualMinTeamSize}{manualMaxTeamSize !== manualMinTeamSize ? `–${manualMaxTeamSize}` : ""} members including the leader.
                     </p>
                   )}
@@ -1350,7 +1350,7 @@ export default function AdminPage() {
 
               {isManualTeamEvent && (
                 <div className="border-b border-black/[0.08] pb-2">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-black/35">Team leader</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-black/70">Team leader</p>
                   <h3 className="mt-1 text-xl font-semibold">Leader details</h3>
                 </div>
               )}
@@ -1391,18 +1391,18 @@ export default function AdminPage() {
 
                   <div className="flex flex-col gap-3 border-t border-black/[0.08] pt-6 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-black/35">Team members</p>
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-black/70">Team members</p>
                       <h3 className="mt-1 text-xl font-semibold">Add teammates</h3>
-                      <p className="mt-1 text-xs text-black/40">The team leader is already counted as Member 1.</p>
+                      <p className="mt-1 text-xs text-black/80">The team leader is already counted as Member 1.</p>
                     </div>
-                    <span className="text-xs text-black/45">{manualTeamMembers.length + 1} / {manualMaxTeamSize} members</span>
+                    <span className="text-xs text-black/80">{manualTeamMembers.length + 1} / {manualMaxTeamSize} members</span>
                   </div>
 
                   {manualTeamMembers.map((member, index) => (
                     <div key={index} className="rounded-[20px] border border-black/[0.08] p-5">
                       <div className="mb-4 flex items-center justify-between">
                         <div>
-                          <p className="text-[9px] uppercase tracking-[0.2em] text-black/35">Team member</p>
+                          <p className="text-[9px] uppercase tracking-[0.2em] text-black/70">Team member</p>
                           <p className="mt-1 font-semibold">Member {index + 2}</p>
                         </div>
                         {manualTeamMembers.length > manualMinimumExtraMembers && (
@@ -1480,7 +1480,7 @@ export default function AdminPage() {
 
               <div>
 
-                <p className="text-[10px] uppercase tracking-[0.22em] text-black/35">
+                <p className="text-[10px] uppercase tracking-[0.22em] text-black/70">
                   Participant details
                 </p>
 
@@ -1501,7 +1501,7 @@ export default function AdminPage() {
 
             <div className="mb-7 rounded-[20px] bg-black p-5 text-white">
 
-              <p className="text-[9px] uppercase tracking-[0.2em] text-white/40">
+              <p className="text-[9px] uppercase tracking-[0.2em] text-white">
                 Registration ID
               </p>
 
@@ -1585,7 +1585,7 @@ export default function AdminPage() {
               <div className="mt-8 border-t border-black/[0.08] pt-8">
                 <div className="mb-5 flex items-end justify-between gap-4">
                   <div>
-                    <p className="text-[10px] uppercase tracking-[0.22em] text-black/35">
+                    <p className="text-[10px] uppercase tracking-[0.22em] text-black/70">
                       Team members
                     </p>
                     <h3 className="mt-2 text-xl font-semibold">
@@ -1602,20 +1602,20 @@ export default function AdminPage() {
                 </div>
 
                 <div className="mb-4 rounded-[18px] bg-black/[0.035] p-5">
-                  <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/70">
                     Team leader
                   </p>
                   <p className="mt-2 font-medium">
                     {selectedRegistration.name}
                   </p>
-                  <div className="mt-2 flex flex-col gap-1 text-xs text-black/45 sm:flex-row sm:gap-4">
+                  <div className="mt-2 flex flex-col gap-1 text-xs text-black/80 sm:flex-row sm:gap-4">
                     <span>{selectedRegistration.email || "—"}</span>
                     <span>{selectedRegistration.phone || "—"}</span>
                   </div>
                 </div>
 
                 {membersLoading ? (
-                  <div className="flex items-center gap-3 rounded-[18px] border border-black/[0.07] p-5 text-sm text-black/45">
+                  <div className="flex items-center gap-3 rounded-[18px] border border-black/[0.07] p-5 text-sm text-black/80">
                     <RefreshCw size={15} className="animate-spin" />
                     Loading team members...
                   </div>
@@ -1624,7 +1624,7 @@ export default function AdminPage() {
                     Could not load team members: {membersError}
                   </div>
                 ) : registrationMembers.length === 0 ? (
-                  <div className="rounded-[18px] border border-black/[0.07] p-5 text-sm text-black/45">
+                  <div className="rounded-[18px] border border-black/[0.07] p-5 text-sm text-black/80">
                     No additional team members are stored for this registration.
                   </div>
                 ) : (
@@ -1636,7 +1636,7 @@ export default function AdminPage() {
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div>
-                            <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35">
+                            <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/70">
                               {member.is_team_leader
                                 ? "Team leader"
                                 : `Member ${index + 2}`}
@@ -1772,8 +1772,8 @@ function StatCard({
       <p
         className={`text-[10px] uppercase tracking-[0.2em] ${
           dark
-            ? "text-white/40"
-            : "text-black/40"
+            ? "text-white"
+            : "text-black/80"
         }`}
       >
         {title}
@@ -1797,7 +1797,7 @@ function TableHead({
   children: React.ReactNode;
 }) {
   return (
-    <th className="px-6 py-5 text-[10px] font-medium uppercase tracking-[0.18em] text-black/40">
+    <th className="px-6 py-5 text-[10px] font-medium uppercase tracking-[0.18em] text-black/80">
       {children}
     </th>
   );
@@ -1817,11 +1817,11 @@ function Detail({
   return (
     <div className="border-b border-black/[0.07] pb-4">
 
-      <p className="text-[9px] uppercase tracking-[0.2em] text-black/35">
+      <p className="text-[9px] uppercase tracking-[0.2em] text-black/70">
         {title}
       </p>
 
-      <p className="mt-2 break-words text-sm">
+      <p className="mt-2 break-words text-sm text-black">
         {value || "—"}
       </p>
 
@@ -1844,7 +1844,7 @@ function ManualField({
 }) {
   return (
     <div>
-      <label className="mb-2 block text-[10px] font-medium uppercase tracking-[0.18em] text-black/40">
+      <label className="mb-2 block text-[10px] font-medium uppercase tracking-[0.18em] text-black/80">
         {label}
       </label>
       <input
@@ -1853,7 +1853,7 @@ function ManualField({
         placeholder={placeholder}
         required={label.includes("*")}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-[16px] border border-black/10 bg-white px-4 py-3.5 text-sm outline-none transition placeholder:text-black/25 focus:border-black/30"
+        className="w-full rounded-[16px] border border-black/10 bg-white px-4 py-3.5 text-sm text-black outline-none transition placeholder:text-black/25 focus:border-black/30"
       />
     </div>
   );

@@ -350,7 +350,7 @@ export default function AdminEventsPage() {
               Saviskar 2026
             </p>
 
-            <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl">
+            <h1 className="text-4xl font-semibold tracking-[-0.05em] text-black md:text-6xl">
               Events
             </h1>
 
@@ -362,7 +362,7 @@ export default function AdminEventsPage() {
           <div className="flex flex-wrap gap-3">
             <button
               onClick={() => router.push("/admin")}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03]"
+              className="flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-medium text-black transition hover:bg-black hover:text-white"
             >
               <ArrowLeft size={15} />
               Dashboard
@@ -371,7 +371,7 @@ export default function AdminEventsPage() {
             <button
               onClick={loadEvents}
               disabled={loading}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03]"
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm text-black transition hover:bg-black/[0.03]"
             >
               <RefreshCw
                 size={15}
@@ -449,7 +449,7 @@ export default function AdminEventsPage() {
                 className="mx-auto mb-5 text-black/20"
               />
 
-              <h2 className="text-xl font-semibold">
+              <h2 className="text-xl font-semibold text-black">
                 No events yet
               </h2>
 
@@ -478,11 +478,11 @@ export default function AdminEventsPage() {
                       {event.category || "Event"}
                     </p>
 
-                    <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em]">
+                    <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-black">
                       {event.name}
                     </h2>
 
-                    <p className="mt-1 font-mono text-[10px] text-black/30">
+                    <p className="mt-1 font-mono text-[10px] text-neutral-500">
                       /{event.slug}
                     </p>
                   </div>
@@ -497,7 +497,7 @@ export default function AdminEventsPage() {
                 </div>
 
                 {event.description && (
-                  <p className="mb-6 line-clamp-3 text-sm leading-6 text-black/50">
+                  <p className="mb-6 line-clamp-3 text-sm leading-6 text-neutral-700">
                     {event.description}
                   </p>
                 )}
@@ -577,7 +577,7 @@ export default function AdminEventsPage() {
 
                   <button
                     onClick={() => openEditForm(event)}
-                    className="flex items-center justify-center gap-2 rounded-full border border-black/10 px-4 py-2.5 text-xs transition hover:bg-black hover:text-white"
+                    className="flex items-center justify-center gap-2 rounded-full border border-black/10 px-4 py-2.5 text-xs text-black transition hover:bg-black hover:text-white"
                   >
                     <Edit3 size={13} />
                     Edit
@@ -890,7 +890,7 @@ export default function AdminEventsPage() {
 }
 
 const inputClass =
-  "w-full rounded-[14px] border border-black/[0.08] bg-black/[0.025] px-4 py-3.5 text-sm outline-none transition focus:border-black/25 focus:bg-white";
+  "w-full rounded-[14px] border border-black/[0.08] bg-black/[0.025] px-4 py-3.5 text-sm text-black placeholder:text-black/35 outline-none transition focus:border-black/25 focus:bg-white";
 
 function Field({
   label,
@@ -924,7 +924,7 @@ function StatCard({
       className={`rounded-[24px] p-7 ${
         dark
           ? "bg-black text-white"
-          : "bg-white shadow-[0_15px_50px_rgba(0,0,0,0.035)]"
+          : "bg-white text-black shadow-[0_15px_50px_rgba(0,0,0,0.035)]"
       }`}
     >
       <p
@@ -950,8 +950,8 @@ function InfoRow({
   value: string;
 }) {
   return (
-    <div className="flex items-center gap-3 text-sm text-black/55">
-      <span className="text-black/35">{icon}</span>
+    <div className="flex items-center gap-3 text-sm text-neutral-700">
+      <span className="text-neutral-500">{icon}</span>
       <span>{value}</span>
     </div>
   );
@@ -971,7 +971,7 @@ function ToggleRow({
   return (
     <div className="flex items-center justify-between gap-5">
       <div>
-        <p className="text-sm font-medium">{title}</p>
+        <p className="text-sm font-medium text-black">{title}</p>
 
         <p className="mt-1 text-xs text-black/40">
           {description}

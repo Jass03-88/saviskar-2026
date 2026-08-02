@@ -811,7 +811,7 @@ export default function AdminPage() {
                   setSearch(event.target.value)
                 }
                 placeholder="Search name, event, college, email, phone, team..."
-                className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-black/30"
+                className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-black/70"
               />
 
             </div>
