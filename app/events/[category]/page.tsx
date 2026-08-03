@@ -242,7 +242,7 @@ export default function CategoryPage() {
 
                   <div className="flex items-start gap-5 md:gap-10">
 
-                    <span className="mt-2 min-w-[25px] text-[11px] text-black/30">
+                    <span className="mt-2 min-w-[25px] text-[11px] text-black/70">
                       {String(index + 1).padStart(2, "0")}
                     </span>
 

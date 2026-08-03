@@ -883,7 +883,7 @@ try {
 
               {eventsLoading ? (
 
-                <div className="border-b border-black/15 py-4 text-lg text-black/30">
+                <div className="border-b border-black/15 py-4 text-lg text-black/70">
                   Loading events...
                 </div>
 

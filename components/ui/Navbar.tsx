@@ -38,12 +38,12 @@ export default function Navbar() {
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.7, delay: 0.2 }}
-        className="fixed left-0 top-0 z-50 w-full px-3 pt-3 md:px-6"
+        className="fixed left-0 top-0 z-50 w-full px-3 pt-4 md:px-6"
       >
         <div
           className={`
-            mx-auto max-w-[1200px]
-            rounded-[24px]
+            mx-auto max-w-[1240px]
+            rounded-full
             border
             transition-all
             duration-500
@@ -51,22 +51,22 @@ export default function Navbar() {
               scrolled
                 ? `
                   border-black/10
-                  bg-white/75
+                  bg-white/72
                   text-black
-                  shadow-[0_8px_40px_rgba(0,0,0,0.08)]
-                  backdrop-blur-xl
+                  shadow-[0_18px_50px_rgba(0,0,0,0.10)]
+                  backdrop-blur-2xl
                 `
                 : `
-                  border-white/10
-                  bg-black/20
+                  border-white/15
+                  bg-black/25
                   text-white
-                  shadow-[0_8px_40px_rgba(0,0,0,0.12)]
-                  backdrop-blur-xl
+                  shadow-[0_20px_60px_rgba(124,58,237,0.18)]
+                  backdrop-blur-2xl
                 `
             }
           `}
         >
-          <div className="flex h-[64px] items-center justify-between px-5 md:px-7">
+          <div className="flex h-[70px] items-center justify-between px-5 md:px-7">
             {/* Logo */}
             <Link
               href="/"
@@ -76,15 +76,15 @@ export default function Navbar() {
             </Link>
 
             {/* Desktop Navigation */}
-            <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-8 md:flex">
+            <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-10 md:flex">
               {navItems.map((item) => (
                 <Link
                   key={item.label}
                   href={item.href}
                   className={`
                     text-[13px]
-                    transition-colors
-                    duration-300
+                    transition-all
+                    duration-300 hover:-translate-y-0.5
                     ${
                       scrolled
                         ? "text-black/55 hover:text-black"
@@ -103,7 +103,7 @@ export default function Navbar() {
               className={`
                 hidden items-center gap-1.5
                 text-[13px] font-medium
-                transition-colors duration-300
+                transition-all duration-300 hover:-translate-y-0.5
                 md:flex
                 ${
                   scrolled
@@ -150,7 +150,7 @@ export default function Navbar() {
         <div
           className={`
             absolute inset-0 backdrop-blur-2xl
-            transition-colors duration-500
+            transition-all duration-500
             ${
               scrolled
                 ? "bg-white/95 text-black"
@@ -187,7 +187,7 @@ export default function Navbar() {
                     ${
                       scrolled
                         ? "border-black/10"
-                        : "border-white/10"
+                        : "border-white/15"
                     }
                   `}
                 >
@@ -212,7 +212,7 @@ export default function Navbar() {
             className={`
               flex h-14 items-center justify-center gap-2
               rounded-full text-sm font-medium
-              transition-colors
+              transition-all
               ${
                 scrolled
                   ? "bg-black text-white"

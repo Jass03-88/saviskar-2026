@@ -1,18 +1,48 @@
 "use client";
 
 import { motion } from "motion/react";
+import MouseSpotlight from "@/components/ui/MouseSpotlight";
 import { ArrowDown, ArrowRight } from "lucide-react";
 import SplitText from "@/components/SplitText";
+import Lightfall from "@/components/ui/Lightfall";
 import AuroraBackground from "@/components/ui/AuroraBackground";
-
 export default function Hero() {
   return (
     <section className="relative flex min-h-screen items-center justify-center overflow-hidden bg-transparent text-white">
-
+{/* Mouse Spotlight */}
+<div className="absolute inset-0 z-10">
+  <MouseSpotlight />
+</div>
       {/* Animated Background */}
-      <AuroraBackground />
+      {/* Aurora */}
+<div className="absolute inset-0 z-0">
+  <AuroraBackground />
+</div>
 
-      <div className="relative z-20 mx-auto flex w-full max-w-7xl flex-col items-center px-6 text-center">
+{/* Lightfall */}
+<div className="absolute inset-0 z-10 opacity-70">
+  <Lightfall
+  colors={[
+  "#FFFFFF",
+  "#F8F4FF",
+  "#E9D5FF",
+  "#C084FC",
+  "#8B5CF6",
+]}
+
+backgroundColor="#12061F"
+
+opacity={0.5}
+glow={0.8}
+speed={0.2}
+density={1.0}
+streakWidth={0.5}
+streakLength={1.25}
+mouseStrength={0.08}
+/>
+</div>
+
+      <div className="relative z-30 ... mx-auto flex w-full max-w-7xl flex-col items-center px-6 text-center">
 
         <motion.p
           initial={{ opacity: 0, y: 25 }}
@@ -96,6 +126,21 @@ export default function Hero() {
       </motion.div>
 {/* Bottom fade */}
 <div className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-gradient-to-b from-transparent via-black/40 to-black" />
+{/* Hero → Gallery Fade */}
+<div
+  className="
+    absolute
+    bottom-0
+    left-0
+    w-full
+    h-64
+    pointer-events-none
+    bg-gradient-to-b
+    from-transparent
+    via-[#12051f]/50
+    to-black
+  "
+/>
     </section>
   );
 }

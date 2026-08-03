@@ -193,8 +193,9 @@ export default function Gallery() {
   return (
     <>
       <section
+      
   id="gallery"
-  className="relative -mt-40 overflow-hidden bg-transparent px-5 pt-64 pb-24 text-white md:px-10 md:pb-36"
+  className="relative -mt-24 overflow-hidden bg-[#050505] px-5 pt-32 pb-24 text-white md:px-10 md:pb-36"
 >
   <div className="relative z-10">
 
@@ -235,7 +236,7 @@ export default function Gallery() {
             </motion.div>
           </div>
 
-          <div className="mb-4 h-px bg-black/15" />
+          
 
           {/* GALLERY */}
           <div className="grid auto-flow-dense auto-rows-[260px] grid-cols-1 gap-3 md:grid-cols-3 md:auto-rows-[310px]">
@@ -252,7 +253,7 @@ export default function Gallery() {
                   delay: Math.min((index % 6) * 0.04, 0.2),
                   ease: [0.22, 1, 0.36, 1],
                 }}
-                className={`group relative overflow-hidden rounded-[18px] bg-[#111] text-left ${image.size}`}
+                className={`group relative overflow-hidden rounded-[22px] bg-transparent text-left border border-white/5 transition-all duration-700 ease-[cubic-bezier(.22,1,.36,1)] hover:border-[#8A2EFF]/40 hover:shadow-[0_0_60px_rgba(138,46,255,.16)] ${image.size}`}
               >
                 <Image
                   src={image.src}
@@ -260,20 +261,87 @@ export default function Gallery() {
                   fill
                   unoptimized
                   sizes="(max-width: 768px) 100vw, 50vw"
-                  className="object-cover transition-transform duration-[1000ms] ease-out group-hover:scale-[1.055]"
+                  className="object-cover transition-transform duration-[1400ms] ease-out group-hover:scale-[1.08]"
                 />
-
-                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/5 to-black/10 transition-all duration-500 group-hover:from-black/95" />
+<div
+  className="
+absolute
+inset-0
+opacity-0
+transition-opacity
+duration-700
+group-hover:opacity-100
+"
+>
+  <div
+    className="
+absolute
+left-1/2
+top-1/2
+h-[420px]
+w-[420px]
+-translate-x-1/2
+-translate-y-3
+opacity-50
+rounded-full
+bg-[#8A2EFF]/15
+blur-[120px]
+"
+  />
+</div>
+                <div
+  className="
+absolute
+inset-0
+bg-gradient-to-t
+from-black/90
+via-black/15
+to-black/5
+transition-all
+duration-700
+ease-out
+group-hover:from-black/96
+group-hover:via-black/5
+"
+/>
 
                 <span className="absolute left-6 top-6 text-[9px] tracking-[0.25em] text-white/60">
                   {String(index + 1).padStart(2, "0")}
                 </span>
 
-                <div className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full bg-white text-white transition-all duration-500 group-hover:rotate-45 group-hover:scale-110">
-                  <ArrowUpRight size={16} strokeWidth={1.5} />
-                </div>
+                <div
+  className="
+absolute
+right-5
+top-5
+flex
+h-10
+w-10
+items-center
+justify-center
+rounded-full
+border
+border-[#A855F7]/40
+bg-black/55
+backdrop-blur-xl
+text-white
+transition-all
+duration-500
+ease-out
+shadow-[0_0_0_rgba(168,85,247,0)]
+group-hover:bg-[#8A2EFF]
+group-hover:text-white
+group-hover:scale-110
+group-hover:rotate-[315deg]
+group-hover:shadow-[0_0_35px_rgba(168,85,247,.55)]
+"
+>
+  <ArrowUpRight size={17} strokeWidth={1.8} />
+</div>
 
-                <div className="absolute inset-x-0 bottom-0 translate-y-1 p-6 transition-transform duration-500 group-hover:translate-y-0 md:p-7">
+                <div className="absolute inset-x-0 bottom-0 translate-y-3
+opacity-90 p-6 transition-transform duration-500 group-hover:translate-y-0
+group-hover:opacity-100 md:p-7">
                   <p className="mb-2 text-[8px] uppercase tracking-[0.28em] text-white/50">
                     {image.category}
                   </p>
@@ -309,6 +377,11 @@ export default function Gallery() {
             </p>
           </motion.div>
         </div>
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+  <div className="absolute left-1/2 top-0 h-[900px] w-[900px] -translate-x-1/2 rounded-full bg-violet-700/15 blur-[240px]" />
+</div>
+
+<div className="relative z-10"></div>
       </section>
 
       {/* FULLSCREEN VIEWER */}
@@ -326,7 +399,9 @@ export default function Gallery() {
             <button
               type="button"
               onClick={() => setSelectedIndex(null)}
-              className="absolute right-5 top-5 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-white text-white transition-transform hover:scale-105 md:right-8 md:top-8"
+              className="absolute right-5 top-5 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-black/45 backdrop-blur-xl border border-white/10 text-white hover:bg-[#8A2EFF]
+hover:border-[#A855F7]
+hover:shadow-[0_0_30px_rgba(168,85,247,.45)]"
               aria-label="Close gallery"
             >
               <X size={18} />
@@ -339,7 +414,30 @@ export default function Gallery() {
                 event.stopPropagation();
                 previous();
               }}
-              className="absolute left-4 top-1/2 z-50 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white hover:text-white md:left-8"
+              className="
+absolute
+left-4
+top-1/2
+z-50
+flex
+h-11
+w-11
+-translate-y-1/2
+items-center
+justify-center
+rounded-full
+border
+border-white/10
+bg-black/45
+backdrop-blur-xl
+text-white
+transition-all
+duration-300
+hover:bg-[#8A2EFF]
+hover:border-[#A855F7]
+hover:shadow-[0_0_30px_rgba(168,85,247,.45)]
+md:left-8
+"
               aria-label="Previous image"
             >
               <ArrowLeft size={18} />
@@ -352,8 +450,30 @@ export default function Gallery() {
                 event.stopPropagation();
                 next();
               }}
-              className="absolute right-4 top-1/2 z-50 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white hover:text-white md:right-8"
-              aria-label="Next image"
+              className="
+absolute
+right-4
+top-1/2
+z-50
+flex
+h-11
+w-11
+-translate-y-1/2
+items-center
+justify-center
+rounded-full
+border
+border-white/10
+bg-black/45
+backdrop-blur-xl
+text-white
+transition-all
+duration-300
+hover:bg-[#8A2EFF]
+hover:border-[#A855F7]
+hover:shadow-[0_0_30px_rgba(168,85,247,.45)]
+md:right-8
+"
             >
               <ArrowRight size={18} />
             </button>
