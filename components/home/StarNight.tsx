@@ -1,10 +1,19 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
 import { motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import StageTransition from "@/components/ui/StageTransition";
 
 export default function StarNight() {
+  const [showTransition, setShowTransition] = useState(false);
+const router = useRouter();
+  const handleStageTransition = () => {
+    setShowTransition(true);
+  };
+
   return (
     <section className="relative min-h-screen overflow-hidden bg-black text-white">
       <Image
@@ -58,16 +67,28 @@ export default function StarNight() {
               The night Saviskar becomes unforgettable.
             </p>
 
-            <a
-              href="#"
-              className="flex w-fit items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-medium text-black transition-transform hover:scale-[1.03]"
-            >
-              Explore Star Night
-              <ArrowUpRight size={15} />
-            </a>
+            <button
+  onClick={handleStageTransition}
+  className="group flex w-fit items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-medium text-black transition-all duration-300 hover:scale-[1.03] active:scale-95"
+>
+  Explore Star Night
+
+  <ArrowUpRight
+    size={15}
+    className="transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+  />
+</button>
           </motion.div>
         </div>
       </div>
+
+      {showTransition && (
+        <StageTransition
+  onComplete={() => {
+    router.push("/starnight");
+  }}
+/>
+      )}
     </section>
   );
 }
