@@ -30,6 +30,9 @@ type Event = {
   min_team_size: number | null;
   max_team_size: number | null;
   registration_limit: number | null;
+  payment_type: "free" | "paid";
+  registration_fee: number;
+  payment_unit: "per_student" | "per_team" | null;
   registration_open: boolean;
   active: boolean;
 };
@@ -46,6 +49,9 @@ type EventForm = {
   min_team_size: string;
   max_team_size: string;
   registration_limit: string;
+  payment_type: "free" | "paid";
+  registration_fee: string;
+  payment_unit: "per_student" | "per_team";
   registration_open: boolean;
   active: boolean;
 };
@@ -62,6 +68,9 @@ const emptyForm: EventForm = {
   min_team_size: "",
   max_team_size: "",
   registration_limit: "",
+  payment_type: "free",
+  registration_fee: "0",
+  payment_unit: "per_student",
   registration_open: true,
   active: true,
 };
@@ -168,6 +177,13 @@ export default function AdminEventsPage() {
       max_team_size: event.max_team_size?.toString() || "",
       registration_limit:
         event.registration_limit?.toString() || "",
+      payment_type: event.payment_type ?? "free",
+      registration_fee:
+        event.registration_fee?.toString() || "0",
+      payment_unit:
+        event.payment_unit === "per_team"
+          ? "per_team"
+          : "per_student",
       registration_open: event.registration_open,
       active: event.active,
     });
@@ -185,7 +201,6 @@ export default function AdminEventsPage() {
   }
 
   async function saveEvent(e: React.FormEvent) {
-    e.preventDefault();
 
     if (!form.name.trim()) {
       setError("Event name is required.");
@@ -210,6 +225,15 @@ export default function AdminEventsPage() {
       setError(
         "Minimum team size cannot be greater than maximum team size."
       );
+      return;
+    }
+
+    if (
+      form.payment_type === "paid" &&
+      (!form.registration_fee ||
+        Number(form.registration_fee) <= 0)
+    ) {
+      setError("Please enter a valid fee greater than ₹0.");
       return;
     }
 
@@ -242,6 +266,18 @@ export default function AdminEventsPage() {
       registration_limit: form.registration_limit
         ? Number(form.registration_limit)
         : null,
+
+      payment_type: form.payment_type,
+      registration_fee:
+        form.payment_type === "paid"
+          ? Number(form.registration_fee)
+          : 0,
+      // payment_unit is NOT NULL in the current database,
+      // so free events keep a harmless default value.
+      payment_unit:
+        form.payment_type === "paid"
+          ? form.payment_unit
+          : "per_student",
 
       registration_open: form.registration_open,
       active: form.active,
@@ -534,6 +570,21 @@ export default function AdminEventsPage() {
                         : "Individual"
                     }
                   />
+
+                  <InfoRow
+                    icon={<span className="text-xs font-semibold">₹</span>}
+                    value={
+                      event.payment_type === "paid"
+                        ? `₹${Number(event.registration_fee || 0).toLocaleString(
+                            "en-IN"
+                          )} · ${
+                            event.payment_unit === "per_team"
+                              ? "per team"
+                              : "per student"
+                          }`
+                        : "Free"
+                    }
+                  />
                 </div>
 
                 <div className="mb-6 flex flex-wrap gap-2">
@@ -614,7 +665,7 @@ export default function AdminEventsPage() {
                   Event management
                 </p>
 
-                <h2 className="mt-2 text-3xl font-semibold">
+                <h2 className="mt-2 text-3xl font-semibold text-black">
                   {editingEvent
                     ? "Edit event"
                     : "Create event"}
@@ -624,7 +675,7 @@ export default function AdminEventsPage() {
               <button
                 type="button"
                 onClick={closeForm}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-black/[0.05]"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-black/[0.05] text-black"
               >
                 <X size={17} />
               </button>
@@ -767,6 +818,71 @@ export default function AdminEventsPage() {
                   />
                 </Field>
 
+                <Field label="Event fee">
+                  <select
+                    value={form.payment_type}
+                    onChange={(e) => {
+                      const value = e.target.value as
+                        | "free"
+                        | "paid";
+
+                      updateForm("payment_type", value);
+
+                      if (value === "free") {
+                        updateForm("registration_fee", "0");
+                      }
+                    }}
+                    className={inputClass}
+                  >
+                    <option value="free">Free</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                </Field>
+
+                {form.payment_type === "paid" && (
+                  <>
+                    <Field label="Registration fee (₹)">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        required
+                        value={form.registration_fee}
+                        onChange={(e) =>
+                          updateForm(
+                            "registration_fee",
+                            e.target.value
+                          )
+                        }
+                        placeholder="500"
+                        className={inputClass}
+                      />
+                    </Field>
+
+                    <Field label="Charge">
+                      <select
+                        value={form.payment_unit}
+                        onChange={(e) =>
+                          updateForm(
+                            "payment_unit",
+                            e.target.value as
+                              | "per_student"
+                              | "per_team"
+                          )
+                        }
+                        className={inputClass}
+                      >
+                        <option value="per_student">
+                          Per student
+                        </option>
+                        <option value="per_team">
+                          Per team
+                        </option>
+                      </select>
+                    </Field>
+                  </>
+                )}
+
                 {form.registration_type === "team" && (
                   <>
                     <Field label="Minimum team size">
@@ -857,7 +973,7 @@ export default function AdminEventsPage() {
                   type="button"
                   onClick={closeForm}
                   disabled={saving}
-                  className="rounded-full border border-black/10 px-6 py-3 text-sm"
+                  className="rounded-full border border-black/10 px-6 py-3 text-sm text-black"
                 >
                   Cancel
                 </button>

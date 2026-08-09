@@ -436,7 +436,7 @@ export default function AdminPage() {
   async function createManualRegistration(
     event: React.FormEvent<HTMLFormElement>
   ) {
-    event.preventDefault();
+  
 
     if (
       !newRegistration.event_id ||
