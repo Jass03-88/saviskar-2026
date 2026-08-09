@@ -52,6 +52,96 @@ function Counter({
   );
 }
 
+
+const EVENT_START = new Date("2026-10-24T00:00:00+05:30").getTime();
+
+function Countdown() {
+  const [timeLeft, setTimeLeft] = useState({
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
+  });
+
+  useEffect(() => {
+    const updateCountdown = () => {
+      const difference = Math.max(EVENT_START - Date.now(), 0);
+
+      setTimeLeft({
+        days: Math.floor(difference / (1000 * 60 * 60 * 24)),
+        hours: Math.floor((difference / (1000 * 60 * 60)) % 24),
+        minutes: Math.floor((difference / (1000 * 60)) % 60),
+        seconds: Math.floor((difference / 1000) % 60),
+      });
+    };
+
+    updateCountdown();
+
+    const interval = window.setInterval(updateCountdown, 1000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const units = [
+    { value: timeLeft.days, label: "Days" },
+    { value: timeLeft.hours, label: "Hours" },
+    { value: timeLeft.minutes, label: "Minutes" },
+    { value: timeLeft.seconds, label: "Seconds" },
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.5 }}
+      transition={{
+        duration: 0.9,
+        ease: [0.22, 1, 0.36, 1],
+      }}
+      className="max-w-[650px]"
+    >
+      <div className="mb-8 flex items-center gap-3">
+        <span className="h-[5px] w-[5px] rounded-full bg-black" />
+        <span className="text-[10px] uppercase tracking-[0.28em] text-black/45">
+          The countdown
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 border-t border-black/10 sm:grid-cols-4">
+        {units.map((unit, index) => (
+          <motion.div
+            key={unit.label}
+            initial={{ opacity: 0, y: 15 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{
+              duration: 0.6,
+              delay: index * 0.08,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+            className="border-b border-black/10 py-7 sm:border-b-0 sm:border-r sm:px-5 sm:first:pl-0 sm:last:border-r-0"
+          >
+            <div className="font-serif text-5xl font-semibold leading-none tracking-[-0.065em] md:text-6xl">
+              {String(unit.value).padStart(2, "0")}
+            </div>
+
+            <div className="mt-4 flex items-center gap-2">
+              <span className="h-[4px] w-[4px] rounded-full bg-black" />
+              <span className="text-[10px] uppercase tracking-[0.18em] text-black/40">
+                {unit.label}
+              </span>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+      <p className="mt-7 font-serif text-lg tracking-[-0.02em] text-black/45 md:text-xl">
+        Until Saviskar 2026 begins.
+      </p>
+    </motion.div>
+  );
+}
+
 const stats = [
   {
     type: "counter",
@@ -276,27 +366,31 @@ export default function About() {
           ))}
         </div>
 
-        {/* BOTTOM STATEMENT */}
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.7 }}
-          transition={{
-            duration: 0.9,
-            ease: [0.22, 1, 0.36, 1],
-          }}
-          className="mt-24 flex justify-end md:mt-32"
-        >
-          <p className="max-w-[500px] font-serif text-2xl leading-[1.25] tracking-[-0.04em] md:text-4xl">
-            Two days.
-            <br />
-            Hundreds of moments.
-            <br />
-            <span className="text-black/35">
-              One stage.
-            </span>
-          </p>
-        </motion.div>
+        {/* COUNTDOWN + BOTTOM STATEMENT */}
+        <div className="mt-24 grid gap-16 md:mt-32 md:grid-cols-2 md:items-end md:gap-20">
+          <Countdown />
+
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, amount: 0.7 }}
+            transition={{
+              duration: 0.9,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+            className="flex justify-start md:justify-end"
+          >
+            <p className="max-w-[500px] font-serif text-2xl leading-[1.25] tracking-[-0.04em] md:text-4xl">
+              Two days.
+              <br />
+              Hundreds of moments.
+              <br />
+              <span className="text-black/35">
+                One stage.
+              </span>
+            </p>
+          </motion.div>
+        </div>
 
       </div>
     </section>
