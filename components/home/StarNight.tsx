@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import StageTransition from "@/components/ui/StageTransition";
-
+import Link from "next/link";
 export default function StarNight() {
   const [showTransition, setShowTransition] = useState(false);
 const router = useRouter();
@@ -67,8 +67,8 @@ const router = useRouter();
               The night Saviskar becomes unforgettable.
             </p>
 
-            <button
-  onClick={handleStageTransition}
+            <Link
+  href="/starnight"
   className="group flex w-fit items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-medium text-black transition-all duration-300 hover:scale-[1.03] active:scale-95"
 >
   Explore Star Night
@@ -77,7 +77,7 @@ const router = useRouter();
     size={15}
     className="transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
   />
-</button>
+</Link>
           </motion.div>
         </div>
       </div>
