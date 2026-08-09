@@ -1296,7 +1296,9 @@ export default function AdminPage() {
             <div className="mb-8 flex items-start justify-between">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.22em] text-black/70">Admin registration</p>
-                <h2 className="mt-2 text-3xl font-semibold">Add Registration</h2>
+                <h2 className="text-black text-3xl font-semibold">
+  Add Registration
+</h2>
                 <p className="mt-2 text-sm text-black/80">Manually register an individual participant or complete team.</p>
               </div>
               <button
@@ -1305,7 +1307,7 @@ export default function AdminPage() {
                   setShowAddRegistration(false);
                   resetManualRegistration();
                 }}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-black/[0.05]"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-black/[0.05]  text-black"
               >
                 <X size={17} />
               </button>

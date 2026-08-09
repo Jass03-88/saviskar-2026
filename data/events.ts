@@ -4,6 +4,14 @@ export type SaviskarEvent = {
   category: "technical" | "cultural" | "non-technical" | "sports";
   tagline: string;
   featured?: boolean;
+
+  // Registration & payment settings
+  // Leave these unset until event details are confirmed.
+  isPaid?: boolean;
+  price?: number;
+  registrationRequired?: boolean;
+  registrationLimit?: number;
+  registrationOpen?: boolean;
 };
 
 export const events: SaviskarEvent[] = [

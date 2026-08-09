@@ -346,9 +346,9 @@ export default function ScannerPage() {
               Saviskar 2026
             </p>
 
-            <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl">
-              Entry Scanner
-            </h1>
+            <h1 className="text-4xl font-semibold tracking-[-0.05em] text-black md:text-6xl">
+  Entry Scanner
+</h1>
 
             <p className="mt-4 text-sm text-black/45">
               Scan participant or team QR codes to verify entry.
@@ -357,7 +357,7 @@ export default function ScannerPage() {
 
           <button
             onClick={() => router.push("/admin")}
-            className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black hover:text-white"
+            className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm text-black transition hover:bg-black hover:text-white"
           >
             <ArrowLeft size={15} />
             Dashboard
@@ -465,13 +465,13 @@ export default function ScannerPage() {
                   className="mb-5 text-black/15"
                 />
 
-                <p className="font-medium">
-                  Waiting for scan
-                </p>
+                <p className="text-black">
+  Waiting for scan
+</p>
 
-                <p className="mt-2 text-sm text-black/40">
-                  Registration details will appear here.
-                </p>
+<p className="text-black">
+  Registration details will appear here.
+</p>
 
               </div>
             )}

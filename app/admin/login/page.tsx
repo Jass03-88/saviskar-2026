@@ -63,10 +63,10 @@ export default function AdminLoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-[#f5f5f5] px-6 py-16">
       <div className="w-full max-w-[480px]">
         <div className="mb-8 text-center">
-          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.3em] text-black/35">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.3em] text-black">
             Saviskar 2026
           </p>
-          <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-5xl">
+          <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-5xl text-black">
             Admin.
           </h1>
           <p className="mt-4 text-sm text-black/40">
@@ -91,7 +91,7 @@ export default function AdminLoginPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="admin@example.com"
-                className="mt-2 w-full border-b border-black/15 bg-transparent py-4 text-base outline-none transition placeholder:text-black/20 focus:border-black"
+                className="mt-2 w-full border-b border-black/15 bg-transparent py-4 text-black outline-none transition placeholder:text-black/20 focus:border-black"
               />
             </label>
 
@@ -106,7 +106,7 @@ export default function AdminLoginPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Enter your password"
-                className="mt-2 w-full border-b border-black/15 bg-transparent py-4 text-base outline-none transition placeholder:text-black/20 focus:border-black"
+                className="mt-2 w-full border-b border-black/15 bg-transparent py-4 text-black outline-none transition placeholder:text-black/20 focus:border-black"
               />
             </label>
 

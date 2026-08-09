@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  
   ArrowLeft,
   ArrowUpRight,
   CalendarDays,
   MapPin,
   Users,
   Trophy,
+  CreditCard,
 } from "lucide-react";
 import Image from "next/image";
 import { supabase } from "@/lib/supabase";
@@ -37,14 +37,13 @@ export default async function EventPage({
   }
 
   const formattedDate = currentEvent.event_date
-    ? new Date(`${currentEvent.event_date}T00:00:00`).toLocaleDateString(
-        "en-IN",
-        {
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-        }
-      )
+    ? new Date(
+        `${currentEvent.event_date}T00:00:00`
+      ).toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })
     : "To be announced";
 
   const teamDetails =
@@ -54,44 +53,88 @@ export default async function EventPage({
         : "Team event"
       : "Individual";
 
-const eventHeroImages: Record<string, string> = {
-  hackathon: "/gallery/technical.jpg",
-  roborace: "/gallery/technical.jpg",
-  dronathon: "/gallery/technical.jpg",
+  /*
+   * Payment-ready fields.
+   *
+   * These safely read the fields if/when you add them to Supabase.
+   * Until then:
+   * - is_paid defaults to false
+   * - price remains undefined
+   * - UI displays "To be announced"
+   */
+  const eventData = currentEvent as typeof currentEvent & {
+    is_paid?: boolean;
+    price?: number;
+    registration_fee?: number;
+  };
 
-  dance: "/gallery/cultural.jpg",
-  singing: "/gallery/cultural.jpg",
+  const isPaid = eventData.is_paid === true;
 
-  sports: "/gallery/sports.jpg",
+  const price =
+    typeof eventData.price === "number"
+      ? eventData.price
+      : typeof eventData.registration_fee === "number"
+        ? eventData.registration_fee
+        : null;
 
-  default: "/gallery/hero.jpg",
-};
+  const registrationFee = isPaid
+    ? price !== null
+      ? `₹${price.toLocaleString("en-IN")}`
+      : "Fee to be announced"
+    : "Free";
 
-const heroImage =
-  eventHeroImages[currentEvent.slug] ??
-  eventHeroImages.default;
+  const eventHeroImages: Record<string, string> = {
+    hackathon: "/gallery/technical.jpg",
+    roborace: "/gallery/technical.jpg",
+    dronathon: "/gallery/technical.jpg",
+
+    dance: "/gallery/cultural.jpg",
+    singing: "/gallery/cultural.jpg",
+
+    sports: "/gallery/sports.jpg",
+
+    default: "/gallery/hero.jpg",
+  };
+
+  const heroImage =
+    eventHeroImages[currentEvent.slug] ??
+    eventHeroImages.default;
+
   return (
     <main className="min-h-screen bg-black text-white">
 
-      {/* HERO */}
+      {/* =====================================================
+          HERO
+      ===================================================== */}
+
       <section className="relative flex min-h-screen flex-col">
-{/* Hero background image */}
-<div className="absolute inset-0 overflow-hidden">
-  <Image
-    src={heroImage}
-    alt={currentEvent.name}
-    fill
-    priority
-    className="object-cover scale-110 animate-[slowZoom_20s_linear_infinite_alternate]"
-  />
-<div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/35 to-transparent" />
-  <div className="absolute inset-0 bg-black/72" />
-  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/35 to-black/10" />
-</div>
-        {/* Subtle background glow */}
+
+        {/* Background */}
+        <div className="absolute inset-0 overflow-hidden">
+
+          <Image
+            src={heroImage}
+            alt={currentEvent.name}
+            fill
+            priority
+            className="object-cover scale-110 animate-[slowZoom_20s_linear_infinite_alternate]"
+          />
+
+          <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/35 to-transparent" />
+
+          <div className="absolute inset-0 bg-black/72" />
+
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/35 to-black/10" />
+
+        </div>
+
+        {/* Glow */}
         <div className="pointer-events-none absolute left-1/2 top-1/2 h-[600px] w-[80vw] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/[0.035] blur-[130px]" />
 
-        {/* Top navigation */}
+        {/* =====================================================
+            NAVIGATION
+        ===================================================== */}
+
         <div className="relative z-10 mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 py-8 md:px-10">
 
           <Link
@@ -108,7 +151,10 @@ const heroImage =
 
         </div>
 
-        {/* Hero content */}
+        {/* =====================================================
+            HERO CONTENT
+        ===================================================== */}
+
         <div className="relative z-10 mx-auto flex w-full max-w-[1400px] flex-1 flex-col justify-center px-6 py-20 md:px-10">
 
           <div className="max-w-[1200px]">
@@ -117,27 +163,32 @@ const heroImage =
               {formatCategory(category)} Event
             </p>
 
-            <div className="inline-block rounded-3xl border border-white/10 bg-black/25 backdrop-blur-xl px-8 py-5 shadow-2xl">
-  <h1 className="text-6xl md:text-8xl font-semibold tracking-tight text-white">
-    {currentEvent.name}
-  </h1>
-</div>
+            <div className="inline-block rounded-3xl border border-white/10 bg-black/25 px-8 py-5 shadow-2xl backdrop-blur-xl">
+
+              <h1 className="text-6xl font-semibold tracking-tight text-white md:text-8xl">
+                {currentEvent.name}
+              </h1>
+
+            </div>
 
             {currentEvent.description && (
-              <div className="mt-10 max-w-2xl rounded-3xl border border-white/10 bg-black/25 backdrop-blur-xl p-8 shadow-2xl">
+              <div className="mt-10 max-w-2xl rounded-3xl border border-white/10 bg-black/25 p-8 shadow-2xl backdrop-blur-xl">
 
-  <p className="text-lg leading-8 text-white/80">
-    {currentEvent.description}
-  </p>
+                <p className="text-lg leading-8 text-white/80">
+                  {currentEvent.description}
+                </p>
 
-</div>
+              </div>
             )}
 
           </div>
 
         </div>
 
-        {/* Hero bottom */}
+        {/* =====================================================
+            HERO BOTTOM
+        ===================================================== */}
+
         <div className="relative z-10 mx-auto w-full max-w-[1400px] px-6 pb-10 md:px-10">
 
           <div className="flex flex-col gap-7 border-t border-white/15 pt-7 md:flex-row md:items-center md:justify-between">
@@ -152,6 +203,11 @@ const heroImage =
               <div className="flex items-center gap-2">
                 <MapPin size={15} />
                 {currentEvent.venue || "CGC University, Mohali"}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <CreditCard size={15} />
+                {registrationFee}
               </div>
 
             </div>
@@ -176,7 +232,10 @@ const heroImage =
 
       </section>
 
-      {/* DETAILS */}
+      {/* =====================================================
+          DETAILS
+      ===================================================== */}
+
       <section className="bg-[#f5f5f7] px-6 py-28 text-black md:px-10 md:py-40">
 
         <div className="mx-auto max-w-[1200px]">
@@ -202,7 +261,8 @@ const heroImage =
 
             </div>
 
-            {/* Quick information */}
+            {/* QUICK INFORMATION */}
+
             <div className="border-t border-black/10">
 
               <InfoRow
@@ -219,6 +279,12 @@ const heroImage =
                     ? "Open"
                     : "Closed"
                 }
+              />
+
+              <InfoRow
+                icon={<CreditCard size={17} />}
+                label="Entry Fee"
+                value={registrationFee}
               />
 
               <InfoRow
@@ -252,7 +318,10 @@ const heroImage =
 
       </section>
 
-      {/* RULES */}
+      {/* =====================================================
+          RULES
+      ===================================================== */}
+
       <section className="bg-white px-6 py-28 text-black md:px-10 md:py-40">
 
         <div className="mx-auto max-w-[1200px]">
@@ -296,7 +365,10 @@ const heroImage =
 
       </section>
 
-      {/* REGISTRATION CTA */}
+      {/* =====================================================
+          REGISTRATION
+      ===================================================== */}
+
       <section
         id="register"
         className="bg-black px-6 py-28 text-white md:px-10 md:py-40"
@@ -318,10 +390,23 @@ const heroImage =
 
             {currentEvent.registration_open ? (
               <>
-                <p className="max-w-md text-sm leading-6 text-white/40 md:text-base">
-                  Register for {currentEvent.name} and become part of
-                  Saviskar 2026.
-                </p>
+
+                <div>
+
+                  <p className="max-w-md text-sm leading-6 text-white/40 md:text-base">
+                    Register for {currentEvent.name} and become part of
+                    Saviskar 2026.
+                  </p>
+
+                  <p className="mt-3 text-xs uppercase tracking-[0.2em] text-white/25">
+                    {isPaid
+                      ? price !== null
+                        ? `Registration fee: ₹${price.toLocaleString("en-IN")}`
+                        : "Paid event · Fee to be announced"
+                      : "Free registration"}
+                  </p>
+
+                </div>
 
                 <Link
                   href={`/register?event=${currentEvent.id}`}
@@ -330,9 +415,11 @@ const heroImage =
                   Register for {currentEvent.name}
                   <ArrowUpRight size={15} />
                 </Link>
+
               </>
             ) : (
               <>
+
                 <p className="max-w-md text-sm leading-6 text-white/40 md:text-base">
                   Registration for {currentEvent.name} is currently closed.
                 </p>
@@ -340,6 +427,7 @@ const heroImage =
                 <span className="rounded-full border border-white/15 px-7 py-4 text-sm text-white/40">
                   Registration closed
                 </span>
+
               </>
             )}
 
@@ -352,6 +440,11 @@ const heroImage =
     </main>
   );
 }
+
+
+/* =========================================================
+   INFO ROW
+========================================================= */
 
 function InfoRow({
   icon,
@@ -366,11 +459,13 @@ function InfoRow({
     <div className="flex items-center justify-between gap-5 border-b border-black/10 py-6">
 
       <div className="flex items-center gap-3 text-black/40">
+
         {icon}
 
         <span className="text-sm">
           {label}
         </span>
+
       </div>
 
       <span className="text-right text-sm font-medium">
@@ -380,6 +475,11 @@ function InfoRow({
     </div>
   );
 }
+
+
+/* =========================================================
+   CATEGORY FORMATTER
+========================================================= */
 
 function formatCategory(category: string) {
   return category
@@ -392,10 +492,16 @@ function formatCategory(category: string) {
     .join(" ");
 }
 
+
+/* =========================================================
+   TIME FORMATTER
+========================================================= */
+
 function formatTime(time: string) {
   const [hours, minutes] = time.split(":");
 
   const date = new Date();
+
   date.setHours(Number(hours));
   date.setMinutes(Number(minutes));
 
