@@ -2,7 +2,7 @@
 
 import { motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
-
+import Link from "next/link";
 export default function RegisterCTA() {
   return (
     <section
@@ -41,13 +41,13 @@ export default function RegisterCTA() {
             Your Saviskar story starts here.
           </p>
 
-          <a
-            href="#"
-            className="flex w-fit items-center gap-3 rounded-full bg-black px-7 py-4 text-sm font-medium text-white transition-transform hover:scale-[1.03]"
-          >
-            Register for Saviskar
-            <ArrowUpRight size={16} />
-          </a>
+          <Link
+  href="/register"
+  className="flex items-center gap-2 rounded-full bg-black px-7 py-4 text-sm font-medium text-white transition-transform hover:scale-[1.03]"
+>
+  Register for Saviskar
+  <ArrowUpRight size={15} />
+</Link>
         </div>
       </div>
     </section>

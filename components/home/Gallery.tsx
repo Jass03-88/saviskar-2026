@@ -13,18 +13,6 @@ const images = [
     size: "md:col-span-2 md:row-span-2",
   },
   {
-    src: "/gallery/star 2.jpg",
-    title: "Live. Loud. Unforgettable.",
-    category: "Live",
-    size: "md:row-span-2",
-  },
-  {
-    src: "/gallery/star 3.jpg",
-    title: "Voices That Stay With You",
-    category: "Music",
-    size: "",
-  },
-  {
     src: "/gallery/car show.jpg",
     title: "Built to Turn Heads",
     category: "Showcase",
@@ -35,12 +23,6 @@ const images = [
     title: "The Experience Begins",
     category: "Arrivals",
     size: "md:col-span-2",
-  },
-  {
-    src: "/gallery/star 5.jpg",
-    title: "Under the Lights",
-    category: "Main Stage",
-    size: "md:row-span-2",
   },
   {
     src: "/gallery/gate.jpg",
@@ -115,30 +97,6 @@ const images = [
     size: "",
   },
   {
-    src: "/gallery/hero.jpg",
-    title: "The Stage Is Yours.",
-    category: "Performance",
-    size: "md:col-span-2 md:row-span-2",
-  },
-  {
-    src: "/gallery/concert.jpg",
-    title: "Made for the Spotlight",
-    category: "Concert",
-    size: "",
-  },
-  {
-    src: "/gallery/star 1.jpg",
-    title: "Every Voice Matters",
-    category: "Live",
-    size: "md:row-span-2",
-  },
-  {
-    src: "/gallery/star 4.jpg",
-    title: "In Her Element",
-    category: "Live",
-    size: "",
-  },
-  {
     src: "/gallery/team.jpg",
     title: "People Make the Festival",
     category: "Community",
@@ -155,8 +113,7 @@ const images = [
 export default function Gallery() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
-  const selected =
-    selectedIndex !== null ? images[selectedIndex] : null;
+  const selected = selectedIndex !== null ? images[selectedIndex] : null;
 
   const next = () => {
     setSelectedIndex((current) =>
@@ -193,25 +150,19 @@ export default function Gallery() {
   return (
     <>
       <section
-      
-  id="gallery"
-  className="relative -mt-24 overflow-hidden bg-[#050505] px-5 pt-32 pb-24 text-white md:px-10 md:pb-36"
->
-  <div className="relative z-10">
-
-          {/* HEADER */}
-          <div className="mb-16 grid gap-10 md:mb-24 md:grid-cols-2 md:items-end">
+        id="gallery"
+        className="relative -mt-40 overflow-hidden bg-transparent px-5 pt-64 pb-20 text-white md:px-10 md:pb-28"
+      >
+        <div className="relative z-10">
+          <div className="mb-14 grid gap-8 md:mb-20 md:grid-cols-2 md:items-end">
             <motion.div
               initial={{ opacity: 0, y: 35 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, amount: 0.3 }}
-              transition={{
-                duration: 0.8,
-                ease: [0.22, 1, 0.36, 1],
-              }}
+              transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
             >
-              <p className="mb-6 text-[9px] uppercase tracking-[0.3em] text-white/50">
-                24 Frames / One Experience
+              <p className="mb-5 text-[9px] uppercase tracking-[0.3em] text-white/50">
+                17 Frames / One Experience
               </p>
 
               <h2 className="font-serif text-[clamp(3.7rem,8vw,7.5rem)] leading-[0.82] tracking-[-0.06em]">
@@ -224,22 +175,20 @@ export default function Gallery() {
             <motion.div
               initial={{ opacity: 0, y: 25 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
+              viewport={{ once: true, amount: 0.3 }}
               transition={{ duration: 0.8, delay: 0.15 }}
               className="md:justify-self-end"
             >
               <p className="max-w-[410px] font-serif text-lg leading-[1.5] text-white/50 md:text-xl">
                 The stages, the people, the competition and everything
-                in between. Twenty-four frames from an experience that
-                was never meant to stand still.
+                in between. A tighter edit of the Saviskar experience.
               </p>
             </motion.div>
           </div>
 
-          
+          <div className="mb-4 h-px bg-black/15" />
 
-          {/* GALLERY */}
-          <div className="grid auto-flow-dense auto-rows-[260px] grid-cols-1 gap-3 md:grid-cols-3 md:auto-rows-[310px]">
+          <div className="grid auto-flow-dense auto-rows-[240px] grid-cols-1 gap-3 md:grid-cols-3 md:auto-rows-[290px]">
             {images.map((image, index) => (
               <motion.button
                 key={image.src}
@@ -253,7 +202,7 @@ export default function Gallery() {
                   delay: Math.min((index % 6) * 0.04, 0.2),
                   ease: [0.22, 1, 0.36, 1],
                 }}
-                className={`group relative overflow-hidden rounded-[22px] bg-transparent text-left border border-white/5 transition-all duration-700 ease-[cubic-bezier(.22,1,.36,1)] hover:border-[#8A2EFF]/40 hover:shadow-[0_0_60px_rgba(138,46,255,.16)] ${image.size}`}
+                className={`group relative overflow-hidden rounded-[18px] bg-transparent text-left ${image.size}`}
               >
                 <Image
                   src={image.src}
@@ -261,87 +210,20 @@ export default function Gallery() {
                   fill
                   unoptimized
                   sizes="(max-width: 768px) 100vw, 50vw"
-                  className="object-cover transition-transform duration-[1400ms] ease-out group-hover:scale-[1.08]"
+                  className="object-cover transition-transform duration-[1000ms] ease-out group-hover:scale-[1.055]"
                 />
-<div
-  className="
-absolute
-inset-0
-opacity-0
-transition-opacity
-duration-700
-group-hover:opacity-100
-"
->
-  <div
-    className="
-absolute
-left-1/2
-top-1/2
-h-[420px]
-w-[420px]
--translate-x-1/2
--translate-y-3
-opacity-50
-rounded-full
-bg-[#8A2EFF]/15
-blur-[120px]
-"
-  />
-</div>
-                <div
-  className="
-absolute
-inset-0
-bg-gradient-to-t
-from-black/90
-via-black/15
-to-black/5
-transition-all
-duration-700
-ease-out
-group-hover:from-black/96
-group-hover:via-black/5
-"
-/>
+
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/5 to-black/10 transition-all duration-500 group-hover:from-black/95" />
 
                 <span className="absolute left-6 top-6 text-[9px] tracking-[0.25em] text-white/60">
                   {String(index + 1).padStart(2, "0")}
                 </span>
 
-                <div
-  className="
-absolute
-right-5
-top-5
-flex
-h-10
-w-10
-items-center
-justify-center
-rounded-full
-border
-border-[#A855F7]/40
-bg-black/55
-backdrop-blur-xl
-text-white
-transition-all
-duration-500
-ease-out
-shadow-[0_0_0_rgba(168,85,247,0)]
-group-hover:bg-[#8A2EFF]
-group-hover:text-white
-group-hover:scale-110
-group-hover:rotate-[315deg]
-group-hover:shadow-[0_0_35px_rgba(168,85,247,.55)]
-"
->
-  <ArrowUpRight size={17} strokeWidth={1.8} />
-</div>
+                <div className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full bg-white text-black transition-all duration-500 group-hover:rotate-45 group-hover:scale-110">
+                  <ArrowUpRight size={16} strokeWidth={1.5} />
+                </div>
 
-                <div className="absolute inset-x-0 bottom-0 translate-y-3
-opacity-90 p-6 transition-transform duration-500 group-hover:translate-y-0
-group-hover:opacity-100 md:p-7">
+                <div className="absolute inset-x-0 bottom-0 translate-y-1 p-6 transition-transform duration-500 group-hover:translate-y-0 md:p-7">
                   <p className="mb-2 text-[8px] uppercase tracking-[0.28em] text-white/50">
                     {image.category}
                   </p>
@@ -354,19 +236,17 @@ group-hover:opacity-100 md:p-7">
             ))}
           </div>
 
-          {/* END */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.8 }}
-            className="mt-24 grid gap-8 border-t border-white/15 pt-8 md:grid-cols-2"
+            className="mt-20 grid gap-8 border-t border-white/15 pt-8 md:grid-cols-2"
           >
             <div>
               <p className="text-[9px] uppercase tracking-[0.3em] text-white/35">
                 Saviskar
               </p>
-
               <p className="mt-3 font-serif text-2xl tracking-[-0.03em]">
                 Some moments end. The story doesn't.
               </p>
@@ -377,14 +257,8 @@ group-hover:opacity-100 md:p-7">
             </p>
           </motion.div>
         </div>
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-  <div className="absolute left-1/2 top-0 h-[900px] w-[900px] -translate-x-1/2 rounded-full bg-violet-700/15 blur-[240px]" />
-</div>
-
-<div className="relative z-10"></div>
       </section>
 
-      {/* FULLSCREEN VIEWER */}
       <AnimatePresence>
         {selected && selectedIndex !== null && (
           <motion.div
@@ -395,85 +269,35 @@ group-hover:opacity-100 md:p-7">
             onClick={() => setSelectedIndex(null)}
             className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/95 p-4 md:p-10"
           >
-            {/* CLOSE */}
             <button
               type="button"
               onClick={() => setSelectedIndex(null)}
-              className="absolute right-5 top-5 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-black/45 backdrop-blur-xl border border-white/10 text-white hover:bg-[#8A2EFF]
-hover:border-[#A855F7]
-hover:shadow-[0_0_30px_rgba(168,85,247,.45)]"
+              className="absolute right-5 top-5 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-105 md:right-8 md:top-8"
               aria-label="Close gallery"
             >
               <X size={18} />
             </button>
 
-            {/* PREVIOUS */}
             <button
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
                 previous();
               }}
-              className="
-absolute
-left-4
-top-1/2
-z-50
-flex
-h-11
-w-11
--translate-y-1/2
-items-center
-justify-center
-rounded-full
-border
-border-white/10
-bg-black/45
-backdrop-blur-xl
-text-white
-transition-all
-duration-300
-hover:bg-[#8A2EFF]
-hover:border-[#A855F7]
-hover:shadow-[0_0_30px_rgba(168,85,247,.45)]
-md:left-8
-"
+              className="absolute left-4 top-1/2 z-50 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white hover:text-black md:left-8"
               aria-label="Previous image"
             >
               <ArrowLeft size={18} />
             </button>
 
-            {/* NEXT */}
             <button
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
                 next();
               }}
-              className="
-absolute
-right-4
-top-1/2
-z-50
-flex
-h-11
-w-11
--translate-y-1/2
-items-center
-justify-center
-rounded-full
-border
-border-white/10
-bg-black/45
-backdrop-blur-xl
-text-white
-transition-all
-duration-300
-hover:bg-[#8A2EFF]
-hover:border-[#A855F7]
-hover:shadow-[0_0_30px_rgba(168,85,247,.45)]
-md:right-8
-"
+              className="absolute right-4 top-1/2 z-50 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md transition hover:bg-white hover:text-black md:right-8"
+              aria-label="Next image"
             >
               <ArrowRight size={18} />
             </button>
@@ -482,10 +306,7 @@ md:right-8
               key={selected.src}
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
-              transition={{
-                duration: 0.4,
-                ease: [0.22, 1, 0.36, 1],
-              }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
               onClick={(event) => event.stopPropagation()}
               className="relative h-[82vh] w-[88vw] max-w-[1350px]"
             >
@@ -500,7 +321,7 @@ md:right-8
 
               <div className="absolute bottom-2 left-2 rounded-xl bg-black/40 px-4 py-3 text-white backdrop-blur-md">
                 <p className="mb-1 text-[8px] uppercase tracking-[0.25em] text-white/50">
-                  {String(selectedIndex + 1).padStart(2, "0")} / 24
+                  {String(selectedIndex + 1).padStart(2, "0")} / {images.length}
                   {" — "}
                   {selected.category}
                 </p>
