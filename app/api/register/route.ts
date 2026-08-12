@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { sendRegistrationEmail } from "@/lib/send-registration-email";
 
 type MemberInput = {
   name?: unknown;
@@ -163,7 +164,7 @@ function checkRateLimit(
         1,
         Math.ceil(
           (current.resetAt - now) /
-            1000
+          1000
         )
       ),
     };
@@ -277,7 +278,7 @@ export async function POST(
         parsedLength
       ) &&
       parsedLength >
-        MAX_REQUEST_BYTES
+      MAX_REQUEST_BYTES
     ) {
       return errorResponse(
         "Registration request is too large.",
@@ -528,8 +529,7 @@ export async function POST(
             )
           ) {
             throw new Error(
-              `Please select a valid event for selection ${
-                eventIndex + 1
+              `Please select a valid event for selection ${eventIndex + 1
               }.`
             );
           }
@@ -802,7 +802,7 @@ export async function POST(
   const {
     data: participant,
     error:
-      participantLookupError,
+    participantLookupError,
   } =
     await supabaseAdmin
       .from("participants")
@@ -824,17 +824,17 @@ export async function POST(
 
   const {
     data:
-      participantEventRows,
+    participantEventRows,
     error:
-      participantEventsError,
+    participantEventsError,
   } =
     participant?.id
       ? await supabaseAdmin
-          .from(
-            "participant_events"
-          )
-          .select(
-            `
+        .from(
+          "participant_events"
+        )
+        .select(
+          `
               id,
               participant_id,
               event_id,
@@ -848,24 +848,26 @@ export async function POST(
               events (
                 id,
                 name,
+                category,
+                registration_type,
                 registration_fee,
                 payment_type,
                 payment_unit
               )
             `
-          )
-          .eq(
-            "participant_id",
-            participant.id
-          )
-          .in(
-            "event_id",
-            eventIds
-          )
+        )
+        .eq(
+          "participant_id",
+          participant.id
+        )
+        .in(
+          "event_id",
+          eventIds
+        )
       : {
-          data: [],
-          error: null,
-        };
+        data: [],
+        error: null,
+      };
 
   if (
     participantEventsError
@@ -944,6 +946,133 @@ export async function POST(
         Number(
           row.payment_amount
         ) || 0;
+    }
+  }
+
+  // =====================================================
+  // 15.5 SEND CONFIRMATION EMAILS
+  // =====================================================
+
+  /*
+   * For each newly added event, send a confirmation
+   * email with QR code directly via Resend SDK.
+   *
+   * This calls Resend directly (not via HTTP self-fetch)
+   * to avoid Next.js dev/serverless self-call deadlocks.
+   *
+   * Errors are logged but never block the user response.
+   */
+  const peRows =
+    Array.isArray(
+      participantEventRows
+    )
+      ? (participantEventRows as any[])
+      : [];
+
+  for (const result of results as any[]) {
+    if (
+      result.status !== "added"
+    ) {
+      continue;
+    }
+
+    /*
+     * Find the matching participant_events row
+     * to get the UUID (registrationId) and
+     * joined event metadata.
+     */
+    const peRow = peRows.find(
+      (row: any) =>
+        String(row.event_id) ===
+        String(result.event_id)
+    );
+
+    if (!peRow) {
+      console.error(
+        "Could not find participant_events row for email:",
+        result.event_id
+      );
+      continue;
+    }
+
+    const eventMeta =
+      peRow.events ?? {};
+
+    const isTeam =
+      eventMeta.registration_type ===
+      "team";
+
+    /*
+     * Match the original event payload to get
+     * team name and member details.
+     */
+    const matchedEvent =
+      events.find(
+        (e) =>
+          e.eventId ===
+          String(result.event_id)
+      );
+
+    try {
+      const emailResult =
+        await sendRegistrationEmail({
+          registrationId:
+            String(peRow.id),
+
+          eventName:
+            result.event_name ||
+            eventMeta.name ||
+            "Event",
+
+          eventCategory:
+            eventMeta.category || null,
+
+          name:
+            name || "Participant",
+
+          college:
+            college || "",
+
+          email:
+            email || "",
+
+          phone:
+            phone || "",
+
+          team: isTeam
+            ? (matchedEvent?.team ||
+              peRow.team_name ||
+              "")
+            : null,
+
+          isTeamEvent: isTeam,
+
+          members: isTeam
+            ? (matchedEvent?.members ?? [])
+            : [],
+        });
+
+      if (!emailResult.success) {
+        console.error(
+          "Confirmation email failed for event:",
+          result.event_id,
+          emailResult.error
+        );
+      } else {
+        console.log(
+          "Confirmation email sent for event:",
+          result.event_name,
+          "to",
+          emailResult.emailsSent,
+          "recipient(s)"
+        );
+      }
+    } catch (emailError) {
+      console.error(
+        "Confirmation email exception for event:",
+        result.event_id,
+        emailError
+      );
     }
   }
 
