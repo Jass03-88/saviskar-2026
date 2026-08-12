@@ -1,95 +1,182 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 import {
-  ArrowLeft,
-  BarChart3,
-  CalendarDays,
-  Edit3,
-  MapPin,
-  Plus,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { useRouter } from "next/navigation";
+import {
+  Search,
   RefreshCw,
-  Trash2,
+  LogOut,
+  QrCode,
+  Download,
   Users,
+  UserCheck,
+  Clock3,
+  CalendarDays,
   X,
+  Check,
+  Trash2,
+  Mail,
+  Phone,
+  GraduationCap,
+  ExternalLink,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
-type Event = {
+/* =========================================================
+   TYPES
+========================================================= */
+
+type Participant = {
   id: string;
+  participant_id: string;
+  name: string;
+  college: string | null;
+  email: string;
+  phone: string | null;
+  photo_url: string | null;
   created_at: string;
-  slug: string;
+};
+
+type ParticipantEvent = {
+  id: string;
+  participant_id: string;
+  event_id: string;
+  registration_status: string | null;
+  payment_status: string | null;
+  payment_amount: number | null;
+  payment_id: string | null;
+  team_name: string | null;
+  checked_in: boolean | null;
+  checked_in_at: string | null;
+  created_at: string;
+};
+
+type EventRecord = {
+  id: string;
   name: string;
   category: string | null;
-  description: string | null;
-  event_date: string | null;
-  start_time: string | null;
-  venue: string | null;
-  registration_type: "individual" | "team";
-  min_team_size: number | null;
-  max_team_size: number | null;
-  registration_limit: number | null;
-  payment_type: "free" | "paid";
-  registration_fee: number;
-  payment_unit: "per_student" | "per_team" | null;
-  registration_open: boolean;
-  active: boolean;
 };
 
-type EventForm = {
-  name: string;
-  slug: string;
-  category: string;
-  description: string;
-  event_date: string;
-  start_time: string;
-  venue: string;
-  registration_type: "individual" | "team";
-  min_team_size: string;
-  max_team_size: string;
-  registration_limit: string;
-  payment_type: "free" | "paid";
-  registration_fee: string;
-  payment_unit: "per_student" | "per_team";
-  registration_open: boolean;
-  active: boolean;
+type Registration = {
+  participant: Participant;
+  event: EventRecord | null;
+  registration: ParticipantEvent;
 };
 
-const emptyForm: EventForm = {
-  name: "",
-  slug: "",
-  category: "",
-  description: "",
-  event_date: "",
-  start_time: "",
-  venue: "",
-  registration_type: "individual",
-  min_team_size: "",
-  max_team_size: "",
-  registration_limit: "",
-  payment_type: "free",
-  registration_fee: "0",
-  payment_unit: "per_student",
-  registration_open: true,
-  active: true,
-};
+type StatusFilter = "all" | "checked-in" | "pending";
+type PaymentFilter = "all" | "paid" | "pending" | "not_required";
 
-export default function AdminEventsPage() {
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatAmount(value: number | null) {
+  const amount = Number(value || 0);
+
+  return amount > 0
+    ? `₹${amount.toLocaleString("en-IN")}`
+    : "Free";
+}
+
+function paymentLabel(value: string | null) {
+  if (!value) return "Unknown";
+
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function paymentClass(value: string | null) {
+  const status = value?.toLowerCase();
+
+  if (status === "paid") {
+    return "bg-green-50 text-green-700 border-green-100";
+  }
+
+  if (status === "pending") {
+    return "bg-amber-50 text-amber-700 border-amber-100";
+  }
+
+  return "bg-black/[0.04] text-black/45 border-black/10";
+}
+
+function escapeCsv(value: unknown) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+/* =========================================================
+   PAGE
+========================================================= */
+
+export default function AdminPage() {
   const router = useRouter();
 
-  const [events, setEvents] = useState<Event[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [registrations, setRegistrations] =
+    useState<Registration[]>([]);
 
-  const [showForm, setShowForm] = useState(false);
-  const [editingEvent, setEditingEvent] =
-    useState<Event | null>(null);
+  const [events, setEvents] =
+    useState<EventRecord[]>([]);
 
-  const [form, setForm] = useState<EventForm>(emptyForm);
+  const [loading, setLoading] =
+    useState(true);
 
-  async function checkAuth() {
+  const [refreshing, setRefreshing] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [search, setSearch] =
+    useState("");
+
+  const [eventFilter, setEventFilter] =
+    useState("all");
+
+  const [statusFilter, setStatusFilter] =
+    useState<StatusFilter>("all");
+
+  const [paymentFilter, setPaymentFilter] =
+    useState<PaymentFilter>("all");
+
+  const [selectedParticipant, setSelectedParticipant] =
+    useState<Participant | null>(null);
+
+  const [selectedParticipantEvents, setSelectedParticipantEvents] =
+    useState<Registration[]>([]);
+
+  const [updatingId, setUpdatingId] =
+    useState<string | null>(null);
+
+  const [deletingId, setDeletingId] =
+    useState<string | null>(null);
+
+  /* =======================================================
+     AUTH
+  ======================================================= */
+
+  const checkAuth = useCallback(async () => {
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -100,279 +187,745 @@ export default function AdminEventsPage() {
     }
 
     return true;
-  }
+  }, [router]);
 
-  async function loadEvents() {
-    setLoading(true);
-    setError("");
+  /* =======================================================
+     LOAD DATA
+  ======================================================= */
 
-    const { data, error } = await supabase
-      .from("events")
-      .select("*")
-      .order("event_date", { ascending: true });
-
-    if (error) {
-      console.error("EVENT LOAD ERROR:", error);
-      setError(error.message);
-      setLoading(false);
-      return;
-    }
-
-    setEvents((data as Event[]) || []);
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    async function initialise() {
-      const authenticated = await checkAuth();
-
-      if (!authenticated) return;
-
-      await loadEvents();
-    }
-
-    initialise();
-  }, []);
-
-  function updateForm<K extends keyof EventForm>(
-    key: K,
-    value: EventForm[K]
-  ) {
-    setForm((current) => ({
-      ...current,
-      [key]: value,
-    }));
-  }
-
-  function createSlug(value: string) {
-    return value
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  }
-
-  function openCreateForm() {
-    setEditingEvent(null);
-    setForm(emptyForm);
-    setError("");
-    setShowForm(true);
-  }
-
-  function openEditForm(event: Event) {
-    setEditingEvent(event);
-
-    setForm({
-      name: event.name,
-      slug: event.slug,
-      category: event.category || "",
-      description: event.description || "",
-      event_date: event.event_date || "",
-      start_time: event.start_time
-        ? event.start_time.slice(0, 5)
-        : "",
-      venue: event.venue || "",
-      registration_type: event.registration_type,
-      min_team_size: event.min_team_size?.toString() || "",
-      max_team_size: event.max_team_size?.toString() || "",
-      registration_limit:
-        event.registration_limit?.toString() || "",
-      payment_type: event.payment_type ?? "free",
-      registration_fee:
-        event.registration_fee?.toString() || "0",
-      payment_unit:
-        event.payment_unit === "per_team"
-          ? "per_team"
-          : "per_student",
-      registration_open: event.registration_open,
-      active: event.active,
-    });
-
-    setError("");
-    setShowForm(true);
-  }
-
-  function closeForm() {
-    if (saving) return;
-
-    setShowForm(false);
-    setEditingEvent(null);
-    setForm(emptyForm);
-  }
-
-  async function saveEvent(e: React.FormEvent) {
-
-    if (!form.name.trim()) {
-      setError("Event name is required.");
-      return;
-    }
-
-    const slug =
-      form.slug.trim() || createSlug(form.name);
-
-    if (!slug) {
-      setError("Please enter a valid event name.");
-      return;
-    }
-
-    if (
-      form.registration_type === "team" &&
-      form.min_team_size &&
-      form.max_team_size &&
-      Number(form.min_team_size) >
-        Number(form.max_team_size)
-    ) {
-      setError(
-        "Minimum team size cannot be greater than maximum team size."
-      );
-      return;
-    }
-
-    if (
-      form.payment_type === "paid" &&
-      (!form.registration_fee ||
-        Number(form.registration_fee) <= 0)
-    ) {
-      setError("Please enter a valid fee greater than ₹0.");
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-
-    const payload = {
-      name: form.name.trim(),
-      slug,
-      category: form.category.trim() || null,
-      description: form.description.trim() || null,
-      event_date: form.event_date || null,
-      start_time: form.start_time || null,
-      venue: form.venue.trim() || null,
-
-      registration_type: form.registration_type,
-
-      min_team_size:
-        form.registration_type === "team" &&
-        form.min_team_size
-          ? Number(form.min_team_size)
-          : null,
-
-      max_team_size:
-        form.registration_type === "team" &&
-        form.max_team_size
-          ? Number(form.max_team_size)
-          : null,
-
-      registration_limit: form.registration_limit
-        ? Number(form.registration_limit)
-        : null,
-
-      payment_type: form.payment_type,
-      registration_fee:
-        form.payment_type === "paid"
-          ? Number(form.registration_fee)
-          : 0,
-      // payment_unit is NOT NULL in the current database,
-      // so free events keep a harmless default value.
-      payment_unit:
-        form.payment_type === "paid"
-          ? form.payment_unit
-          : "per_student",
-
-      registration_open: form.registration_open,
-      active: form.active,
-    };
-
-    let result;
-
-    if (editingEvent) {
-      result = await supabase
-        .from("events")
-        .update(payload)
-        .eq("id", editingEvent.id);
-    } else {
-      result = await supabase
-        .from("events")
-        .insert(payload);
-    }
-
-    if (result.error) {
-      console.error("EVENT SAVE ERROR:", result.error);
-
-      if (result.error.code === "23505") {
-        setError(
-          "An event with this slug already exists."
-        );
+  const loadData = useCallback(
+    async (refresh = false) => {
+      if (refresh) {
+        setRefreshing(true);
       } else {
-        setError(result.error.message);
+        setLoading(true);
       }
 
-      setSaving(false);
+      setError("");
+
+      try {
+        const authenticated = await checkAuth();
+
+        if (!authenticated) return;
+
+        const [
+          participantsResult,
+          participantEventsResult,
+          eventsResult,
+        ] = await Promise.all([
+          supabase
+            .from("participants")
+            .select(
+              "id, participant_id, name, college, email, phone, photo_url, created_at"
+            )
+            .order("created_at", {
+              ascending: false,
+            }),
+
+          supabase
+            .from("participant_events")
+            .select(
+              "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, created_at"
+            )
+            .order("created_at", {
+              ascending: false,
+            }),
+
+          supabase
+            .from("events")
+            .select(
+              "id, name, category"
+            )
+            .order("name", {
+              ascending: true,
+            }),
+        ]);
+
+        if (participantsResult.error) {
+          throw participantsResult.error;
+        }
+
+        if (participantEventsResult.error) {
+          throw participantEventsResult.error;
+        }
+
+        if (eventsResult.error) {
+          throw eventsResult.error;
+        }
+
+        const participantRows =
+          (participantsResult.data ??
+            []) as Participant[];
+
+        const participantEventRows =
+          (participantEventsResult.data ??
+            []) as ParticipantEvent[];
+
+        const eventRows =
+          (eventsResult.data ??
+            []) as EventRecord[];
+
+        setEvents(eventRows);
+
+        const participantMap =
+          new Map<string, Participant>();
+
+        for (const participant of participantRows) {
+          participantMap.set(
+            participant.id,
+            participant
+          );
+        }
+
+        const eventMap =
+          new Map<string, EventRecord>();
+
+        for (const event of eventRows) {
+          eventMap.set(
+            event.id,
+            event
+          );
+        }
+
+        const combined: Registration[] =
+          participantEventRows
+            .map((registration) => {
+              const participant =
+                participantMap.get(
+                  registration.participant_id
+                );
+
+              if (!participant) {
+                return null;
+              }
+
+              return {
+                participant,
+                registration,
+                event:
+                  eventMap.get(
+                    registration.event_id
+                  ) ?? null,
+              };
+            })
+            .filter(
+              (
+                item
+              ): item is Registration =>
+                item !== null
+            );
+
+        setRegistrations(combined);
+      } catch (loadError) {
+        console.error(
+          "ADMIN LOAD ERROR:",
+          loadError
+        );
+
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load registrations."
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [checkAuth]
+  );
+
+  /* =======================================================
+     INITIAL LOAD
+  ======================================================= */
+
+  useEffect(() => {
+    void loadData();
+
+    const participantChannel =
+      supabase
+        .channel(
+          "admin-participants-dashboard"
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "participants",
+          },
+          () => {
+            void loadData(true);
+          }
+        )
+        .subscribe();
+
+    const participantEventChannel =
+      supabase
+        .channel(
+          "admin-participant-events-dashboard"
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "participant_events",
+          },
+          () => {
+            void loadData(true);
+          }
+        )
+        .subscribe();
+
+    const eventChannel =
+      supabase
+        .channel(
+          "admin-events-dashboard"
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "events",
+          },
+          () => {
+            void loadData(true);
+          }
+        )
+        .subscribe();
+
+    return () => {
+      void supabase.removeChannel(
+        participantChannel
+      );
+
+      void supabase.removeChannel(
+        participantEventChannel
+      );
+
+      void supabase.removeChannel(
+        eventChannel
+      );
+    };
+  }, [loadData]);
+
+  /* =======================================================
+     LOGOUT
+  ======================================================= */
+
+  async function logout() {
+    await supabase.auth.signOut();
+
+    router.replace("/admin/login");
+  }
+
+  /* =======================================================
+     FILTERS
+  ======================================================= */
+
+  const filteredRegistrations =
+    useMemo(() => {
+      const query =
+        search.trim().toLowerCase();
+
+      return registrations.filter(
+        (item) => {
+          const participant =
+            item.participant;
+
+          const eventName =
+            item.event?.name ?? "";
+
+          const matchesSearch =
+            !query ||
+            participant.name
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.email
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.phone
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.college
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.participant_id
+              ?.toLowerCase()
+              .includes(query) ||
+            eventName
+              .toLowerCase()
+              .includes(query) ||
+            item.registration.team_name
+              ?.toLowerCase()
+              .includes(query);
+
+          const matchesEvent =
+            eventFilter === "all" ||
+            item.registration.event_id ===
+              eventFilter;
+
+          const matchesStatus =
+            statusFilter === "all" ||
+            (statusFilter ===
+              "checked-in" &&
+              item.registration
+                .checked_in === true) ||
+            (statusFilter ===
+              "pending" &&
+              item.registration
+                .checked_in !== true);
+
+          const matchesPayment =
+            paymentFilter === "all" ||
+            item.registration
+              .payment_status
+              ?.toLowerCase() ===
+              paymentFilter;
+
+          return (
+            matchesSearch &&
+            matchesEvent &&
+            matchesStatus &&
+            matchesPayment
+          );
+        }
+      );
+    }, [
+      registrations,
+      search,
+      eventFilter,
+      statusFilter,
+      paymentFilter,
+    ]);
+
+  /* =======================================================
+     STATS
+  ======================================================= */
+
+  const stats = useMemo(() => {
+    const total =
+      registrations.length;
+
+    const checkedIn =
+      registrations.filter(
+        (item) =>
+          item.registration
+            .checked_in === true
+      ).length;
+
+    const pending =
+      total - checkedIn;
+
+    const uniqueParticipants =
+      new Set(
+        registrations.map(
+          (item) =>
+            item.participant.id
+        )
+      ).size;
+
+    return {
+      total,
+      checkedIn,
+      pending,
+      uniqueParticipants,
+    };
+  }, [registrations]);
+
+  /* =======================================================
+     EVENT ANALYTICS
+  ======================================================= */
+
+  const eventAnalytics =
+    useMemo(() => {
+      return events
+        .map((event) => {
+          const count =
+            registrations.filter(
+              (item) =>
+                item.registration
+                  .event_id ===
+                event.id
+            ).length;
+
+          const checked =
+            registrations.filter(
+              (item) =>
+                item.registration
+                  .event_id ===
+                  event.id &&
+                item.registration
+                  .checked_in === true
+            ).length;
+
+          return {
+            ...event,
+            count,
+            checked,
+          };
+        })
+        .filter(
+          (event) => event.count > 0
+        );
+    }, [events, registrations]);
+
+  /* =======================================================
+     PARTICIPANT GROUPING
+  ======================================================= */
+
+  const participantGroups =
+    useMemo(() => {
+      const map =
+        new Map<
+          string,
+          Registration[]
+        >();
+
+      for (const registration of filteredRegistrations) {
+        const id =
+          registration.participant.id;
+
+        const existing =
+          map.get(id) ?? [];
+
+        existing.push(registration);
+
+        map.set(id, existing);
+      }
+
+      return Array.from(
+        map.values()
+      );
+    }, [filteredRegistrations]);
+
+  /* =======================================================
+     PARTICIPANT DETAIL
+  ======================================================= */
+
+  function openParticipant(
+    registrationsForParticipant: Registration[]
+  ) {
+    if (
+      registrationsForParticipant.length ===
+      0
+    ) {
       return;
     }
 
-    await loadEvents();
-
-    setSaving(false);
-    setShowForm(false);
-    setEditingEvent(null);
-    setForm(emptyForm);
-  }
-
-  async function toggleRegistration(event: Event) {
-    const { error } = await supabase
-      .from("events")
-      .update({
-        registration_open: !event.registration_open,
-      })
-      .eq("id", event.id);
-
-    if (error) {
-      console.error(error);
-      alert("Could not update registration status.");
-      return;
-    }
-
-    await loadEvents();
-  }
-
-  async function toggleActive(event: Event) {
-    const { error } = await supabase
-      .from("events")
-      .update({
-        active: !event.active,
-      })
-      .eq("id", event.id);
-
-    if (error) {
-      console.error(error);
-      alert("Could not update event status.");
-      return;
-    }
-
-    await loadEvents();
-  }
-
-  async function deleteEvent(event: Event) {
-    const confirmed = window.confirm(
-      `Delete "${event.name}"?\n\nThis action cannot be undone.`
+    setSelectedParticipant(
+      registrationsForParticipant[0]
+        .participant
     );
+
+    setSelectedParticipantEvents(
+      registrationsForParticipant
+    );
+  }
+
+  /* =======================================================
+     CHECK IN
+  ======================================================= */
+
+  async function toggleCheckIn(
+    registration: Registration
+  ) {
+    const next =
+      registration.registration
+        .checked_in !== true;
+
+    setUpdatingId(
+      registration.registration.id
+    );
+
+    const { error: updateError } =
+      await supabase
+        .from("participant_events")
+        .update({
+          checked_in: next,
+          checked_in_at: next
+            ? new Date().toISOString()
+            : null,
+        })
+        .eq(
+          "id",
+          registration.registration.id
+        );
+
+    if (updateError) {
+      console.error(
+        "CHECK-IN ERROR:",
+        updateError
+      );
+
+      alert(
+        updateError.message
+      );
+
+      setUpdatingId(null);
+      return;
+    }
+
+    setRegistrations(
+      (current) =>
+        current.map((item) =>
+          item.registration.id ===
+          registration.registration.id
+            ? {
+                ...item,
+                registration: {
+                  ...item.registration,
+                  checked_in: next,
+                  checked_in_at:
+                    next
+                      ? new Date().toISOString()
+                      : null,
+                },
+              }
+            : item
+        )
+    );
+
+    setSelectedParticipantEvents(
+      (current) =>
+        current.map((item) =>
+          item.registration.id ===
+          registration.registration.id
+            ? {
+                ...item,
+                registration: {
+                  ...item.registration,
+                  checked_in: next,
+                  checked_in_at:
+                    next
+                      ? new Date().toISOString()
+                      : null,
+                },
+              }
+            : item
+        )
+    );
+
+    setUpdatingId(null);
+  }
+
+  /* =======================================================
+     DELETE EVENT REGISTRATION
+  ======================================================= */
+
+  async function deleteRegistration(
+    registration: Registration
+  ) {
+    const eventName =
+      registration.event?.name ??
+      "this event";
+
+    const confirmed =
+      window.confirm(
+        `Remove ${registration.participant.name} from ${eventName}?\n\nTheir Participant ID will remain available for other events.`
+      );
 
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("events")
-      .delete()
-      .eq("id", event.id);
+    setDeletingId(
+      registration.registration.id
+    );
 
-    if (error) {
-      console.error("DELETE EVENT ERROR:", error);
-      alert("Could not delete event.");
+    /*
+     * Remove team members first.
+     */
+
+    const { error: memberError } =
+      await supabase
+        .from(
+          "participant_event_members"
+        )
+        .delete()
+        .eq(
+          "participant_event_id",
+          registration.registration.id
+        );
+
+    if (memberError) {
+      console.error(
+        "MEMBER DELETE ERROR:",
+        memberError
+      );
+
+      alert(
+        memberError.message
+      );
+
+      setDeletingId(null);
       return;
     }
 
-    await loadEvents();
+    const { error } =
+      await supabase
+        .from("participant_events")
+        .delete()
+        .eq(
+          "id",
+          registration.registration.id
+        );
+
+    if (error) {
+      console.error(
+        "REGISTRATION DELETE ERROR:",
+        error
+      );
+
+      alert(error.message);
+
+      setDeletingId(null);
+      return;
+    }
+
+    setRegistrations(
+      (current) =>
+        current.filter(
+          (item) =>
+            item.registration.id !==
+            registration.registration.id
+        )
+    );
+
+    setSelectedParticipantEvents(
+      (current) =>
+        current.filter(
+          (item) =>
+            item.registration.id !==
+            registration.registration.id
+        )
+    );
+
+    setDeletingId(null);
   }
+
+  /* =======================================================
+     CSV
+  ======================================================= */
+
+  function exportCsv() {
+    const rows = [
+      [
+        "Participant ID",
+        "Name",
+        "College",
+        "Email",
+        "Phone",
+        "Event",
+        "Category",
+        "Team",
+        "Registration Status",
+        "Payment Status",
+        "Payment Amount",
+        "Payment ID",
+        "Checked In",
+        "Checked In At",
+        "Registered At",
+      ],
+      ...filteredRegistrations.map(
+        (item) => [
+          item.participant
+            .participant_id,
+
+          item.participant.name,
+
+          item.participant.college ??
+            "",
+
+          item.participant.email,
+
+          item.participant.phone ??
+            "",
+
+          item.event?.name ??
+            item.registration
+              .event_id,
+
+          item.event?.category ??
+            "",
+
+          item.registration
+            .team_name ??
+            "Individual",
+
+          item.registration
+            .registration_status ??
+            "",
+
+          item.registration
+            .payment_status ??
+            "",
+
+          item.registration
+            .payment_amount ??
+            0,
+
+          item.registration
+            .payment_id ??
+            "",
+
+          item.registration
+            .checked_in
+            ? "Yes"
+            : "No",
+
+          formatDate(
+            item.registration
+              .checked_in_at
+          ),
+
+          formatDate(
+            item.registration
+              .created_at
+          ),
+        ]
+      ),
+    ];
+
+    const csv =
+      rows
+        .map((row) =>
+          row
+            .map(escapeCsv)
+            .join(",")
+        )
+        .join("\n");
+
+    const blob =
+      new Blob([csv], {
+        type: "text/csv;charset=utf-8;",
+      });
+
+    const url =
+      URL.createObjectURL(blob);
+
+    const link =
+      document.createElement("a");
+
+    link.href = url;
+
+    link.download =
+      `saviskar-registrations-${new Date()
+        .toISOString()
+        .slice(0, 10)}.csv`;
+
+    document.body.appendChild(link);
+
+    link.click();
+
+    link.remove();
+
+    URL.revokeObjectURL(url);
+  }
+
+  /* =======================================================
+     RENDER
+  ======================================================= */
 
   return (
     <main className="min-h-screen bg-[#f5f5f5] px-5 py-10 md:px-10 lg:px-16">
@@ -386,738 +939,978 @@ export default function AdminEventsPage() {
               Saviskar 2026
             </p>
 
-            <h1 className="text-4xl font-semibold tracking-[-0.05em] text-black md:text-6xl">
-              Events
+            <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl">
+              Registrations
             </h1>
 
             <p className="mt-4 text-sm text-black/45">
-              Create and manage Saviskar events.
+              Manage registrations and participant entry.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
+
             <button
-              onClick={() => router.push("/admin")}
-              className="flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-medium text-black transition hover:bg-black hover:text-white"
+              type="button"
+              onClick={() =>
+                router.push(
+                  "/admin/events"
+                )
+              }
+              className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
             >
-              <ArrowLeft size={15} />
-              Dashboard
+              <CalendarDays
+                size={15}
+              />
+
+              Manage Events
             </button>
 
             <button
-              onClick={loadEvents}
-              disabled={loading}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm text-black transition hover:bg-black/[0.03]"
+              type="button"
+              onClick={() =>
+                router.push(
+                  "/register"
+                )
+              }
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03]"
+            >
+              <ExternalLink
+                size={15}
+              />
+
+              Add Registration
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  "/admin/scanner"
+                )
+              }
+              className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+            >
+              <QrCode size={15} />
+
+              Entry Scanner
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                loadData(true)
+              }
+              disabled={refreshing}
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] disabled:opacity-50"
             >
               <RefreshCw
                 size={15}
-                className={loading ? "animate-spin" : ""}
+                className={
+                  refreshing
+                    ? "animate-spin"
+                    : ""
+                }
               />
+
               Refresh
             </button>
 
             <button
-              onClick={openCreateForm}
-              className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+              type="button"
+              onClick={logout}
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03]"
             >
-              <Plus size={15} />
-              Create Event
+              <LogOut
+                size={15}
+              />
+
+              Logout
             </button>
           </div>
         </div>
 
-        {/* STATS */}
-
-        <div className="mb-8 grid gap-4 md:grid-cols-3">
-          <StatCard
-            title="Total events"
-            value={events.length}
-            dark
-          />
-
-          <StatCard
-            title="Active events"
-            value={
-              events.filter((event) => event.active).length
-            }
-          />
-
-          <StatCard
-            title="Registration open"
-            value={
-              events.filter(
-                (event) =>
-                  event.active &&
-                  event.registration_open
-              ).length
-            }
-          />
-        </div>
-
         {/* ERROR */}
 
-        {error && !showForm && (
-          <div className="mb-6 rounded-[20px] bg-red-50 p-5 text-sm text-red-700">
+        {error && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
             {error}
           </div>
         )}
 
-        {/* EVENTS */}
+        {/* STATS */}
 
-        {loading ? (
-          <div className="flex min-h-[350px] items-center justify-center rounded-[28px] bg-white">
-            <div className="text-center">
-              <RefreshCw
-                size={24}
-                className="mx-auto mb-4 animate-spin"
-              />
+        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
-              <p className="text-sm text-black/40">
-                Loading events...
-              </p>
-            </div>
-          </div>
-        ) : events.length === 0 ? (
-          <div className="flex min-h-[400px] items-center justify-center rounded-[28px] bg-white text-center shadow-[0_20px_80px_rgba(0,0,0,0.04)]">
-            <div>
+          <StatCard
+            title="Total registrations"
+            value={stats.total}
+            icon={
               <CalendarDays
-                size={30}
-                className="mx-auto mb-5 text-black/20"
+                size={18}
               />
+            }
+            dark
+          />
 
-              <h2 className="text-xl font-semibold text-black">
-                No events yet
-              </h2>
+          <StatCard
+            title="Participants"
+            value={
+              stats.uniqueParticipants
+            }
+            icon={
+              <Users size={18} />
+            }
+          />
 
-              <p className="mt-2 text-sm text-black/40">
-                Create your first Saviskar event.
-              </p>
+          <StatCard
+            title="Checked in"
+            value={
+              stats.checkedIn
+            }
+            icon={
+              <UserCheck
+                size={18}
+              />
+            }
+          />
 
-              <button
-                onClick={openCreateForm}
-                className="mt-6 rounded-full bg-black px-6 py-3 text-sm text-white"
-              >
-                Create Event
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {events.map((event) => (
-              <div
-                key={event.id}
-                className="flex flex-col rounded-[28px] bg-white p-7 shadow-[0_20px_80px_rgba(0,0,0,0.04)]"
-              >
-                <div className="mb-6 flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35">
-                      {event.category || "Event"}
-                    </p>
+          <StatCard
+            title="Pending"
+            value={
+              stats.pending
+            }
+            icon={
+              <Clock3
+                size={18}
+              />
+            }
+          />
+        </div>
 
-                    <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-black">
-                      {event.name}
-                    </h2>
+        {/* EVENT ANALYTICS */}
 
-                    <p className="mt-1 font-mono text-[10px] text-neutral-500">
-                      /{event.slug}
-                    </p>
-                  </div>
+        {eventAnalytics.length >
+          0 && (
+          <div className="mb-8 rounded-[28px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.04)] md:p-8">
 
-                  <div
-                    className={`h-3 w-3 rounded-full ${
-                      event.active
-                        ? "bg-green-500"
-                        : "bg-black/15"
-                    }`}
-                  />
-                </div>
-
-                {event.description && (
-                  <p className="mb-6 line-clamp-3 text-sm leading-6 text-neutral-700">
-                    {event.description}
-                  </p>
-                )}
-
-                <div className="mb-7 space-y-3">
-                  <InfoRow
-                    icon={<CalendarDays size={14} />}
-                    value={
-                      event.event_date
-                        ? formatDate(event.event_date)
-                        : "Date not set"
-                    }
-                  />
-
-                  <InfoRow
-                    icon={<MapPin size={14} />}
-                    value={event.venue || "Venue not set"}
-                  />
-
-                  <InfoRow
-                    icon={<Users size={14} />}
-                    value={
-                      event.registration_type === "team"
-                        ? `Team${
-                            event.min_team_size ||
-                            event.max_team_size
-                              ? ` · ${
-                                  event.min_team_size || "?"
-                                }–${
-                                  event.max_team_size || "?"
-                                } members`
-                              : ""
-                          }`
-                        : "Individual"
-                    }
-                  />
-
-                  <InfoRow
-                    icon={<span className="text-xs font-semibold">₹</span>}
-                    value={
-                      event.payment_type === "paid"
-                        ? `₹${Number(event.registration_fee || 0).toLocaleString(
-                            "en-IN"
-                          )} · ${
-                            event.payment_unit === "per_team"
-                              ? "per team"
-                              : "per student"
-                          }`
-                        : "Free"
-                    }
-                  />
-                </div>
-
-                <div className="mb-6 flex flex-wrap gap-2">
-                  <button
-                    onClick={() =>
-                      toggleRegistration(event)
-                    }
-                    className={`rounded-full px-3 py-2 text-xs font-medium ${
-                      event.registration_open
-                        ? "bg-green-50 text-green-700"
-                        : "bg-red-50 text-red-600"
-                    }`}
-                  >
-                    {event.registration_open
-                      ? "Registration open"
-                      : "Registration closed"}
-                  </button>
-
-                  <button
-                    onClick={() => toggleActive(event)}
-                    className={`rounded-full px-3 py-2 text-xs ${
-                      event.active
-                        ? "bg-black text-white"
-                        : "bg-black/[0.05] text-black/50"
-                    }`}
-                  >
-                    {event.active ? "Active" : "Inactive"}
-                  </button>
-                </div>
-
-                <div className="mt-auto grid grid-cols-2 gap-2 border-t border-black/[0.06] pt-5">
-                  <button
-                    onClick={() =>
-                      router.push(`/admin/events/${event.id}/registrations`)
-                    }
-                    className="flex items-center justify-center gap-2 rounded-full bg-black px-4 py-2.5 text-xs text-white transition hover:scale-[1.01]"
-                  >
-                    <BarChart3 size={13} />
-                    Registrations
-                  </button>
-
-                  <button
-                    onClick={() => openEditForm(event)}
-                    className="flex items-center justify-center gap-2 rounded-full border border-black/10 px-4 py-2.5 text-xs text-black transition hover:bg-black hover:text-white"
-                  >
-                    <Edit3 size={13} />
-                    Edit
-                  </button>
-
-                  <button
-                    onClick={() => deleteEvent(event)}
-                    className="col-span-2 flex items-center justify-center gap-2 rounded-full border border-red-100 px-4 py-2.5 text-xs text-red-500 transition hover:bg-red-50"
-                  >
-                    <Trash2 size={13} />
-                    Delete event
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* CREATE / EDIT MODAL */}
-
-      {showForm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
-          onClick={closeForm}
-        >
-          <div
-            className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[30px] bg-white p-7 md:p-9"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-8 flex items-start justify-between">
+            <div className="flex items-end justify-between">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.22em] text-black/35">
-                  Event management
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
+                  Event analytics
                 </p>
 
-                <h2 className="mt-2 text-3xl font-semibold text-black">
-                  {editingEvent
-                    ? "Edit event"
-                    : "Create event"}
+                <h2 className="mt-2 text-xl font-semibold">
+                  Registration breakdown
                 </h2>
               </div>
 
               <button
                 type="button"
-                onClick={closeForm}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-black/[0.05] text-black"
+                onClick={() =>
+                  setEventFilter(
+                    "all"
+                  )
+                }
+                className="text-xs text-black/35 hover:text-black"
               >
-                <X size={17} />
+                View all
               </button>
             </div>
 
-            {error && (
-              <div className="mb-6 rounded-2xl bg-red-50 p-4 text-sm text-red-700">
-                {error}
-              </div>
-            )}
-
-            <form onSubmit={saveEvent}>
-              <div className="grid gap-5 md:grid-cols-2">
-
-                <Field label="Event name">
-                  <input
-                    required
-                    value={form.name}
-                    onChange={(e) => {
-                      const value = e.target.value;
-
-                      updateForm("name", value);
-
-                      if (!editingEvent) {
-                        updateForm(
-                          "slug",
-                          createSlug(value)
-                        );
-                      }
-                    }}
-                    placeholder="Hackathon"
-                    className={inputClass}
-                  />
-                </Field>
-
-                <Field label="Event slug">
-                  <input
-                    required
-                    value={form.slug}
-                    onChange={(e) =>
-                      updateForm(
-                        "slug",
-                        createSlug(e.target.value)
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {eventAnalytics.map(
+                (event) => (
+                  <button
+                    type="button"
+                    key={event.id}
+                    onClick={() =>
+                      setEventFilter(
+                        eventFilter ===
+                          event.id
+                          ? "all"
+                          : event.id
                       )
                     }
-                    placeholder="hackathon"
-                    className={inputClass}
-                  />
-                </Field>
-
-                <Field label="Category">
-                  <input
-                    value={form.category}
-                    onChange={(e) =>
-                      updateForm(
-                        "category",
-                        e.target.value
-                      )
-                    }
-                    placeholder="Technical"
-                    className={inputClass}
-                  />
-                </Field>
-
-                <Field label="Venue">
-                  <input
-                    value={form.venue}
-                    onChange={(e) =>
-                      updateForm("venue", e.target.value)
-                    }
-                    placeholder="Main Auditorium"
-                    className={inputClass}
-                  />
-                </Field>
-
-                <Field label="Event date">
-                  <input
-                    type="date"
-                    value={form.event_date}
-                    onChange={(e) =>
-                      updateForm(
-                        "event_date",
-                        e.target.value
-                      )
-                    }
-                    className={inputClass}
-                  />
-                </Field>
-
-                <Field label="Start time">
-                  <input
-                    type="time"
-                    value={form.start_time}
-                    onChange={(e) =>
-                      updateForm(
-                        "start_time",
-                        e.target.value
-                      )
-                    }
-                    className={inputClass}
-                  />
-                </Field>
-
-                <Field label="Registration type">
-                  <select
-                    value={form.registration_type}
-                    onChange={(e) =>
-                      updateForm(
-                        "registration_type",
-                        e.target.value as
-                          | "individual"
-                          | "team"
-                      )
-                    }
-                    className={inputClass}
+                    className={`rounded-[20px] p-5 text-left transition ${
+                      eventFilter ===
+                      event.id
+                        ? "bg-black text-white"
+                        : "bg-black/[0.035] hover:bg-black/[0.06]"
+                    }`}
                   >
-                    <option value="individual">
-                      Individual
-                    </option>
+                    <p
+                      className={`truncate text-[10px] uppercase tracking-[0.16em] ${
+                        eventFilter ===
+                        event.id
+                          ? "text-white/40"
+                          : "text-black/40"
+                      }`}
+                    >
+                      {event.category ??
+                        "Event"}
+                    </p>
 
-                    <option value="team">
-                      Team
-                    </option>
-                  </select>
-                </Field>
+                    <p className="mt-2 truncate text-sm font-semibold">
+                      {event.name}
+                    </p>
 
-                <Field label="Registration limit">
-                  <input
-                    type="number"
-                    min="1"
-                    value={form.registration_limit}
-                    onChange={(e) =>
-                      updateForm(
-                        "registration_limit",
-                        e.target.value
-                      )
-                    }
-                    placeholder="Leave blank for unlimited"
-                    className={inputClass}
-                  />
-                </Field>
+                    <div className="mt-5 flex items-end justify-between">
+                      <p className="text-3xl font-semibold">
+                        {event.count}
+                      </p>
 
-                <Field label="Event fee">
-                  <select
-                    value={form.payment_type}
-                    onChange={(e) => {
-                      const value = e.target.value as
-                        | "free"
-                        | "paid";
-
-                      updateForm("payment_type", value);
-
-                      if (value === "free") {
-                        updateForm("registration_fee", "0");
-                      }
-                    }}
-                    className={inputClass}
-                  >
-                    <option value="free">Free</option>
-                    <option value="paid">Paid</option>
-                  </select>
-                </Field>
-
-                {form.payment_type === "paid" && (
-                  <>
-                    <Field label="Registration fee (₹)">
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        required
-                        value={form.registration_fee}
-                        onChange={(e) =>
-                          updateForm(
-                            "registration_fee",
-                            e.target.value
-                          )
-                        }
-                        placeholder="500"
-                        className={inputClass}
-                      />
-                    </Field>
-
-                    <Field label="Charge">
-                      <select
-                        value={form.payment_unit}
-                        onChange={(e) =>
-                          updateForm(
-                            "payment_unit",
-                            e.target.value as
-                              | "per_student"
-                              | "per_team"
-                          )
-                        }
-                        className={inputClass}
+                      <p
+                        className={`text-xs ${
+                          eventFilter ===
+                          event.id
+                            ? "text-white/40"
+                            : "text-black/35"
+                        }`}
                       >
-                        <option value="per_student">
-                          Per student
-                        </option>
-                        <option value="per_team">
-                          Per team
-                        </option>
-                      </select>
-                    </Field>
-                  </>
-                )}
+                        {event.checked}/
+                        {event.count} checked
+                      </p>
+                    </div>
+                  </button>
+                )
+              )}
+            </div>
+          </div>
+        )}
 
-                {form.registration_type === "team" && (
-                  <>
-                    <Field label="Minimum team size">
-                      <input
-                        type="number"
-                        min="1"
-                        value={form.min_team_size}
-                        onChange={(e) =>
-                          updateForm(
-                            "min_team_size",
-                            e.target.value
-                          )
-                        }
-                        placeholder="2"
-                        className={inputClass}
-                      />
-                    </Field>
+        {/* FILTERS */}
 
-                    <Field label="Maximum team size">
-                      <input
-                        type="number"
-                        min="1"
-                        value={form.max_team_size}
-                        onChange={(e) =>
-                          updateForm(
-                            "max_team_size",
-                            e.target.value
-                          )
-                        }
-                        placeholder="4"
-                        className={inputClass}
-                      />
-                    </Field>
-                  </>
-                )}
+        <div className="mb-5 rounded-[24px] bg-white p-3 shadow-[0_15px_50px_rgba(0,0,0,0.035)]">
+          <div className="flex flex-col gap-3 lg:flex-row">
 
-                <div className="md:col-span-2">
-                  <Field label="Description">
-                    <textarea
-                      value={form.description}
-                      onChange={(e) =>
-                        updateForm(
-                          "description",
-                          e.target.value
-                        )
-                      }
-                      rows={5}
-                      placeholder="Describe the event..."
-                      className={`${inputClass} resize-none`}
-                    />
-                  </Field>
-                </div>
-              </div>
+            <div className="flex flex-1 items-center gap-3 rounded-[18px] bg-black/[0.035] px-4 py-3">
+              <Search
+                size={17}
+                className="text-black/30"
+              />
 
-              {/* SETTINGS */}
+              <input
+                type="search"
+                value={search}
+                onChange={(e) =>
+                  setSearch(
+                    e.target.value
+                  )
+                }
+                placeholder="Search name, participant ID, event, college, email, phone, team..."
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-black/25"
+              />
 
-              <div className="mt-7 rounded-[22px] bg-black/[0.035] p-5">
-                <p className="mb-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-black/35">
-                  Event settings
-                </p>
-
-                <div className="space-y-4">
-                  <ToggleRow
-                    title="Registration open"
-                    description="Participants can register for this event."
-                    checked={form.registration_open}
-                    onChange={(value) =>
-                      updateForm(
-                        "registration_open",
-                        value
-                      )
-                    }
-                  />
-
-                  <ToggleRow
-                    title="Event active"
-                    description="Show this event on the public website."
-                    checked={form.active}
-                    onChange={(value) =>
-                      updateForm("active", value)
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="mt-8 flex justify-end gap-3">
+              {search && (
                 <button
                   type="button"
-                  onClick={closeForm}
-                  disabled={saving}
-                  className="rounded-full border border-black/10 px-6 py-3 text-sm text-black"
+                  onClick={() =>
+                    setSearch("")
+                  }
+                  className="text-black/30 hover:text-black"
                 >
-                  Cancel
+                  <X size={15} />
                 </button>
+              )}
+            </div>
 
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex min-w-[140px] items-center justify-center gap-2 rounded-full bg-black px-7 py-3 text-sm text-white disabled:opacity-50"
-                >
-                  {saving && (
-                    <RefreshCw
-                      size={14}
-                      className="animate-spin"
+            <select
+              value={eventFilter}
+              onChange={(e) =>
+                setEventFilter(
+                  e.target.value
+                )
+              }
+              className="rounded-[18px] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+            >
+              <option value="all">
+                All events
+              </option>
+
+              {events.map(
+                (event) => (
+                  <option
+                    key={event.id}
+                    value={event.id}
+                  >
+                    {event.name}
+                  </option>
+                )
+              )}
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(
+                  e.target
+                    .value as StatusFilter
+                )
+              }
+              className="rounded-[18px] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+            >
+              <option value="all">
+                All status
+              </option>
+
+              <option value="checked-in">
+                Checked in
+              </option>
+
+              <option value="pending">
+                Pending
+              </option>
+            </select>
+
+            <select
+              value={paymentFilter}
+              onChange={(e) =>
+                setPaymentFilter(
+                  e.target
+                    .value as PaymentFilter
+                )
+              }
+              className="rounded-[18px] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+            >
+              <option value="all">
+                All payments
+              </option>
+
+              <option value="paid">
+                Paid
+              </option>
+
+              <option value="pending">
+                Payment pending
+              </option>
+
+              <option value="not_required">
+                Not required
+              </option>
+            </select>
+
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="flex items-center justify-center gap-2 rounded-[18px] bg-black px-5 py-3 text-sm text-white"
+            >
+              <Download
+                size={15}
+              />
+
+              Export CSV
+            </button>
+          </div>
+
+          <div className="mt-3 px-2 text-[10px] uppercase tracking-[0.16em] text-black/30">
+            Showing{" "}
+            <span className="text-black/60">
+              {filteredRegistrations.length}
+            </span>{" "}
+            event registrations
+          </div>
+        </div>
+
+        {/* REGISTRATION TABLE */}
+
+        {loading ? (
+          <div className="rounded-[28px] bg-white px-6 py-20 text-center">
+            <RefreshCw
+              size={22}
+              className="mx-auto animate-spin text-black/25"
+            />
+
+            <p className="mt-4 text-sm text-black/40">
+              Loading registrations...
+            </p>
+          </div>
+        ) : participantGroups.length ===
+          0 ? (
+          <div className="rounded-[28px] bg-white px-6 py-20 text-center">
+            <Users
+              size={28}
+              className="mx-auto text-black/15"
+            />
+
+            <p className="mt-4 text-sm font-medium">
+              No registrations found
+            </p>
+
+            <p className="mt-2 text-xs text-black/35">
+              Registrations created through
+              the website will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-[28px] bg-white shadow-[0_20px_80px_rgba(0,0,0,0.035)]">
+
+            {/* DESKTOP HEADER */}
+
+            <div className="hidden border-b border-black/10 bg-black/[0.025] px-6 py-4 lg:grid lg:grid-cols-[1.25fr_1fr_1.6fr_1fr_auto] lg:gap-5">
+              <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
+                Participant
+              </span>
+
+              <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
+                Contact
+              </span>
+
+              <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
+                Events
+              </span>
+
+              <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
+                Status
+              </span>
+
+              <span />
+            </div>
+
+            <div className="divide-y divide-black/[0.07]">
+
+              {participantGroups.map(
+                (group) => {
+                  const participant =
+                    group[0].participant;
+
+                  const checked =
+                    group.filter(
+                      (item) =>
+                        item.registration
+                          .checked_in ===
+                        true
+                    ).length;
+
+                  return (
+                    <button
+                      type="button"
+                      key={
+                        participant.id
+                      }
+                      onClick={() =>
+                        openParticipant(
+                          group
+                        )
+                      }
+                      className="group grid w-full gap-5 px-6 py-5 text-left transition hover:bg-black/[0.018] lg:grid-cols-[1.25fr_1fr_1.6fr_1fr_auto] lg:items-center"
+                    >
+
+                      {/* PARTICIPANT */}
+
+                      <div className="flex min-w-0 items-center gap-3">
+
+                        {participant.photo_url ? (
+                          <img
+                            src={
+                              participant.photo_url
+                            }
+                            alt=""
+                            className="h-10 w-10 shrink-0 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black text-xs font-semibold text-white">
+                            {participant.name
+                              ?.charAt(
+                                0
+                              )
+                              .toUpperCase()}
+                          </div>
+                        )}
+
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">
+                            {
+                              participant.name
+                            }
+                          </p>
+
+                          <p className="mt-1 truncate font-mono text-[9px] text-black/35">
+                            {
+                              participant.participant_id
+                            }
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* CONTACT */}
+
+                      <div className="min-w-0">
+                        <p className="truncate text-xs text-black/60">
+                          {
+                            participant.email
+                          }
+                        </p>
+
+                        <p className="mt-1 truncate text-[10px] text-black/35">
+                          {
+                            participant.college
+                          }
+                        </p>
+                      </div>
+
+                      {/* EVENTS */}
+
+                      <div className="flex min-w-0 flex-wrap gap-1.5">
+                        {group
+                          .slice(0, 3)
+                          .map(
+                            (item) => (
+                              <span
+                                key={
+                                  item.registration
+                                    .id
+                                }
+                                className="rounded-full bg-black/[0.045] px-3 py-1.5 text-[9px] font-medium text-black/55"
+                              >
+                                {item.event
+                                  ?.name ??
+                                  "Unknown event"}
+                              </span>
+                            )
+                          )}
+
+                        {group.length >
+                          3 && (
+                          <span className="rounded-full bg-black px-3 py-1.5 text-[9px] text-white">
+                            +
+                            {group.length -
+                              3}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* STATUS */}
+
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="rounded-full border border-black/10 bg-black/[0.035] px-3 py-1.5 text-[9px] font-medium text-black/50">
+                          {checked}/
+                          {group.length}{" "}
+                          checked
+                        </span>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <span className="text-lg text-black/15 transition group-hover:translate-x-1 group-hover:text-black">
+                          →
+                        </span>
+                      </div>
+                    </button>
+                  );
+                }
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* =====================================================
+          DETAIL DRAWER
+      ===================================================== */}
+
+      {selectedParticipant && (
+        <div className="fixed inset-0 z-50">
+
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => {
+              setSelectedParticipant(
+                null
+              );
+              setSelectedParticipantEvents(
+                []
+              );
+            }}
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          />
+
+          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[620px] flex-col bg-[#f5f5f5] shadow-2xl">
+
+            {/* DRAWER HEADER */}
+
+            <div className="flex items-center justify-between border-b border-black/10 bg-white px-6 py-5">
+
+              <div>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30">
+                  Participant
+                </p>
+
+                <p className="mt-1 font-mono text-xs text-black/45">
+                  {
+                    selectedParticipant.participant_id
+                  }
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedParticipant(
+                    null
+                  );
+                  setSelectedParticipantEvents(
+                    []
+                  );
+                }}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-white hover:bg-black hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* DRAWER BODY */}
+
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+
+              {/* PROFILE */}
+
+              <div className="rounded-[28px] bg-black p-6 text-white">
+
+                <div className="flex items-center gap-4">
+
+                  {selectedParticipant.photo_url ? (
+                    <img
+                      src={
+                        selectedParticipant.photo_url
+                      }
+                      alt=""
+                      className="h-16 w-16 rounded-2xl object-cover"
                     />
+                  ) : (
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-xl font-semibold text-black">
+                      {selectedParticipant.name
+                        ?.charAt(
+                          0
+                        )
+                        .toUpperCase()}
+                    </div>
                   )}
 
-                  {saving
-                    ? "Saving..."
-                    : editingEvent
-                    ? "Save changes"
-                    : "Create event"}
-                </button>
+                  <div className="min-w-0">
+                    <h2 className="text-2xl font-semibold tracking-[-0.04em]">
+                      {
+                        selectedParticipant.name
+                      }
+                    </h2>
+
+                    <p className="mt-1 text-xs text-white/35">
+                      {
+                        selectedParticipant.college
+                      }
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-6 space-y-3">
+
+                  <DrawerInfo
+                    icon={
+                      <Mail
+                        size={14}
+                      />
+                    }
+                    value={
+                      selectedParticipant.email
+                    }
+                  />
+
+                  <DrawerInfo
+                    icon={
+                      <Phone
+                        size={14}
+                      />
+                    }
+                    value={
+                      selectedParticipant.phone ??
+                      "No phone"
+                    }
+                  />
+
+                  <DrawerInfo
+                    icon={
+                      <GraduationCap
+                        size={14}
+                      />
+                    }
+                    value={
+                      selectedParticipant.college ??
+                      "No college"
+                    }
+                  />
+                </div>
               </div>
-            </form>
-          </div>
+
+              {/* EVENT REGISTRATIONS */}
+
+              <div className="mt-7">
+
+                <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30">
+                  Registered events
+                </p>
+
+                <h3 className="mt-2 text-2xl font-semibold tracking-[-0.035em]">
+                  {
+                    selectedParticipantEvents.length
+                  }{" "}
+                  event
+                  {selectedParticipantEvents.length ===
+                  1
+                    ? ""
+                    : "s"}
+                </h3>
+
+                <div className="mt-4 space-y-3">
+
+                  {selectedParticipantEvents.map(
+                    (item) => (
+                      <div
+                        key={
+                          item.registration
+                            .id
+                        }
+                        className="rounded-[24px] border border-black/10 bg-white p-5"
+                      >
+
+                        <div className="flex items-start justify-between gap-4">
+
+                          <div>
+                            <p className="text-lg font-semibold">
+                              {
+                                item.event
+                                  ?.name ??
+                                "Unknown event"
+                              }
+                            </p>
+
+                            <p className="mt-1 text-[9px] uppercase tracking-[0.16em] text-black/30">
+                              {
+                                item.event
+                                  ?.category ??
+                                "Event"
+                              }
+                            </p>
+                          </div>
+
+                          <span
+                            className={`rounded-full border px-3 py-1.5 text-[9px] font-medium ${
+                              item.registration
+                                .checked_in
+                                ? "border-green-100 bg-green-50 text-green-700"
+                                : "border-black/10 bg-black/[0.035] text-black/45"
+                            }`}
+                          >
+                            {item.registration
+                              .checked_in
+                              ? "Checked in"
+                              : "Pending"}
+                          </span>
+                        </div>
+
+                        <div className="mt-5 grid grid-cols-2 gap-2">
+
+                          <SmallDetail
+                            label="Payment"
+                            value={paymentLabel(
+                              item.registration
+                                .payment_status
+                            )}
+                            className={paymentClass(
+                              item.registration
+                                .payment_status
+                            )}
+                          />
+
+                          <SmallDetail
+                            label="Amount"
+                            value={formatAmount(
+                              item.registration
+                                .payment_amount
+                            )}
+                          />
+
+                          <SmallDetail
+                            label="Team"
+                            value={
+                              item.registration
+                                .team_name ??
+                              "Individual"
+                            }
+                          />
+
+                          <SmallDetail
+                            label="Registered"
+                            value={formatDate(
+                              item.registration
+                                .created_at
+                            )}
+                          />
+                        </div>
+
+                        <div className="mt-5 flex gap-2 border-t border-black/10 pt-5">
+
+                          <button
+                            type="button"
+                            disabled={
+                              updatingId ===
+                              item.registration
+                                .id
+                            }
+                            onClick={() =>
+                              toggleCheckIn(
+                                item
+                              )
+                            }
+                            className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-xs font-medium disabled:opacity-50 ${
+                              item.registration
+                                .checked_in
+                                ? "border border-black/10 bg-white text-black/55 hover:bg-black hover:text-white"
+                                : "bg-black text-white hover:bg-black/80"
+                            }`}
+                          >
+                            <Check
+                              size={14}
+                            />
+
+                            {item.registration
+                              .checked_in
+                              ? "Undo check-in"
+                              : "Check in"}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={
+                              deletingId ===
+                              item.registration
+                                .id
+                            }
+                            onClick={() =>
+                              deleteRegistration(
+                                item
+                              )
+                            }
+                            className="flex h-11 w-11 items-center justify-center rounded-full border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50"
+                          >
+                            <Trash2
+                              size={14}
+                            />
+                          </button>
+                        </div>
+
+                        {item.registration
+                          .checked_in_at && (
+                          <p className="mt-3 text-[9px] text-black/30">
+                            Checked in{" "}
+                            {formatDate(
+                              item.registration
+                                .checked_in_at
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
       )}
     </main>
   );
 }
 
-const inputClass =
-  "w-full rounded-[14px] border border-black/[0.08] bg-black/[0.025] px-4 py-3.5 text-sm text-black placeholder:text-black/35 outline-none transition focus:border-black/25 focus:bg-white";
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.18em] text-black/40">
-        {label}
-      </span>
-
-      {children}
-    </label>
-  );
-}
+/* =========================================================
+   COMPONENTS
+========================================================= */
 
 function StatCard({
   title,
   value,
+  icon,
   dark = false,
 }: {
   title: string;
   value: number;
+  icon: ReactNode;
   dark?: boolean;
 }) {
   return (
     <div
-      className={`rounded-[24px] p-7 ${
+      className={`rounded-[28px] p-7 ${
         dark
           ? "bg-black text-white"
-          : "bg-white text-black shadow-[0_15px_50px_rgba(0,0,0,0.035)]"
+          : "bg-white"
       }`}
     >
+      <div
+        className={`flex h-10 w-10 items-center justify-center rounded-full ${
+          dark
+            ? "bg-white/10 text-white"
+            : "bg-black/[0.04] text-black"
+        }`}
+      >
+        {icon}
+      </div>
+
       <p
-        className={`text-[10px] uppercase tracking-[0.2em] ${
-          dark ? "text-white/40" : "text-black/40"
+        className={`mt-7 text-[9px] font-semibold uppercase tracking-[0.2em] ${
+          dark
+            ? "text-white/40"
+            : "text-black/35"
         }`}
       >
         {title}
       </p>
 
-      <p className="mt-4 text-4xl font-semibold">
+      <p className="mt-2 text-4xl font-semibold tracking-[-0.05em]">
         {value}
       </p>
     </div>
   );
 }
 
-function InfoRow({
+function DrawerInfo({
   icon,
   value,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   value: string;
 }) {
   return (
-    <div className="flex items-center gap-3 text-sm text-neutral-700">
-      <span className="text-neutral-500">{icon}</span>
-      <span>{value}</span>
+    <div className="flex items-center gap-3 text-xs text-white/55">
+      <span className="text-white/25">
+        {icon}
+      </span>
+
+      <span className="truncate">
+        {value}
+      </span>
     </div>
   );
 }
 
-function ToggleRow({
-  title,
-  description,
-  checked,
-  onChange,
+function SmallDetail({
+  label,
+  value,
+  className = "",
 }: {
-  title: string;
-  description: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
+  label: string;
+  value: string;
+  className?: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-5">
-      <div>
-        <p className="text-sm font-medium text-black">{title}</p>
+    <div className="rounded-xl bg-black/[0.035] px-3 py-3">
+      <p className="text-[8px] uppercase tracking-[0.14em] text-black/30">
+        {label}
+      </p>
 
-        <p className="mt-1 text-xs text-black/40">
-          {description}
-        </p>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => onChange(!checked)}
-        className={`relative h-7 w-12 shrink-0 rounded-full transition ${
-          checked ? "bg-black" : "bg-black/15"
-        }`}
+      <span
+        className={`mt-1 inline-block text-xs font-medium ${className}`}
       >
-        <span
-          className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
-            checked ? "left-6" : "left-1"
-          }`}
-        />
-      </button>
+        {value}
+      </span>
     </div>
-  );
-}
-
-function formatDate(date: string) {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(
-    "en-IN",
-    {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    }
   );
 }

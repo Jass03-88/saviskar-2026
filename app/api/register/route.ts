@@ -7,33 +7,68 @@ type MemberInput = {
   phone?: unknown;
 };
 
-type RegistrationInput = {
+type EventRegistrationInput = {
   eventId?: unknown;
-  name?: unknown;
-  college?: unknown;
-  email?: unknown;
-  phone?: unknown;
   team?: unknown;
   members?: unknown;
 };
 
-type EventRow = {
-  id: string;
-  active: boolean;
-  registration_open: boolean;
-  registration_type: string;
-  min_team_size: number | null;
-  max_team_size: number | null;
+type RegistrationInput = {
+  participantId?: unknown;
+
+  name?: unknown;
+  college?: unknown;
+  email?: unknown;
+  phone?: unknown;
+
+  events?: unknown;
+
+  // Legacy single-event compatibility
+  eventId?: unknown;
+  team?: unknown;
+  members?: unknown;
 };
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PARTICIPANT_ID_PATTERN =
+  /^SVK26-[A-Z0-9]{8}$/i;
 
-function cleanString(value: unknown, maxLength: number) {
-  if (typeof value !== "string") return "";
-  return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+const EMAIL_PATTERN =
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const MAX_REQUEST_BYTES = 48_000;
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 8;
+
+type RateEntry = {
+  count: number;
+  resetAt: number;
+};
+
+const globalForRateLimit = globalThis as typeof globalThis & {
+  __registrationRateLimit?: Map<string, RateEntry>;
+};
+
+const registrationRateLimit =
+  globalForRateLimit.__registrationRateLimit ??
+  (globalForRateLimit.__registrationRateLimit =
+    new Map<string, RateEntry>());
+
+function cleanString(
+  value: unknown,
+  maxLength: number
+) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, maxLength);
 }
 
 function cleanEmail(value: unknown) {
@@ -44,344 +79,671 @@ function cleanPhone(value: unknown) {
   return cleanString(value, 30);
 }
 
-function errorResponse(message: string, status: number) {
-  return NextResponse.json(
-    { success: false, error: message },
-    { status }
-  );
-}
-
-const MAX_REQUEST_BYTES = 24_000;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_REQUESTS = 8;
-
-type RateEntry = { count: number; resetAt: number };
-const globalForRateLimit = globalThis as typeof globalThis & {
-  __registrationRateLimit?: Map<string, RateEntry>;
-};
-const registrationRateLimit =
-  globalForRateLimit.__registrationRateLimit ??
-  (globalForRateLimit.__registrationRateLimit = new Map<string, RateEntry>());
-
-function getClientIp(request: NextRequest) {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]?.trim() || "unknown";
-  return request.headers.get("x-real-ip")?.trim() || "unknown";
-}
-
-function checkRateLimit(key: string) {
-  const now = Date.now();
-
-  if (registrationRateLimit.size > 1000) {
-    for (const [storedKey, entry] of registrationRateLimit) {
-      if (entry.resetAt <= now) registrationRateLimit.delete(storedKey);
-    }
-  }
-
-  const current = registrationRateLimit.get(key);
-  if (!current || current.resetAt <= now) {
-    registrationRateLimit.set(key, {
-      count: 1,
-      resetAt: now + RATE_LIMIT_WINDOW_MS,
-    });
-    return { allowed: true, retryAfter: 0 };
-  }
-
-  if (current.count >= RATE_LIMIT_MAX_REQUESTS) {
-    return {
-      allowed: false,
-      retryAfter: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
-    };
-  }
-
-  current.count += 1;
-  return { allowed: true, retryAfter: 0 };
-}
-
-function rateLimitResponse(retryAfter: number) {
+function errorResponse(
+  message: string,
+  status: number
+) {
   return NextResponse.json(
     {
       success: false,
-      error: "Too many registration attempts. Please wait a moment and try again.",
+      error: message,
     },
     {
-      status: 429,
+      status,
       headers: {
-        "Retry-After": String(retryAfter),
         "Cache-Control": "no-store",
       },
     }
   );
 }
 
-export async function POST(request: NextRequest) {
-  const clientIp = getClientIp(request);
-  const rateLimit = checkRateLimit(`register:${clientIp}`);
+function getClientIp(
+  request: NextRequest
+) {
+  const forwarded =
+    request.headers.get("x-forwarded-for");
 
-  if (!rateLimit.allowed) {
-    return rateLimitResponse(rateLimit.retryAfter);
+  if (forwarded) {
+    return (
+      forwarded.split(",")[0]?.trim() ||
+      "unknown"
+    );
   }
 
-  const contentLength = request.headers.get("content-length");
-  if (contentLength) {
-    const parsedLength = Number(contentLength);
-    if (Number.isFinite(parsedLength) && parsedLength > MAX_REQUEST_BYTES) {
-      return errorResponse("Registration request is too large.", 413);
+  return (
+    request.headers.get("x-real-ip")?.trim() ||
+    "unknown"
+  );
+}
+
+function checkRateLimit(
+  key: string
+) {
+  const now = Date.now();
+
+  if (registrationRateLimit.size > 1000) {
+    for (const [
+      storedKey,
+      entry,
+    ] of registrationRateLimit) {
+      if (entry.resetAt <= now) {
+        registrationRateLimit.delete(
+          storedKey
+        );
+      }
     }
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
+  const current =
+    registrationRateLimit.get(key);
 
-  if (!supabaseUrl || !supabaseSecretKey) {
+  if (
+    !current ||
+    current.resetAt <= now
+  ) {
+    registrationRateLimit.set(key, {
+      count: 1,
+      resetAt:
+        now + RATE_LIMIT_WINDOW_MS,
+    });
+
+    return {
+      allowed: true,
+      retryAfter: 0,
+    };
+  }
+
+  if (
+    current.count >=
+    RATE_LIMIT_MAX_REQUESTS
+  ) {
+    return {
+      allowed: false,
+      retryAfter: Math.max(
+        1,
+        Math.ceil(
+          (current.resetAt - now) /
+            1000
+        )
+      ),
+    };
+  }
+
+  current.count += 1;
+
+  return {
+    allowed: true,
+    retryAfter: 0,
+  };
+}
+
+function rateLimitResponse(
+  retryAfter: number
+) {
+  return NextResponse.json(
+    {
+      success: false,
+      error:
+        "Too many registration attempts. Please wait a moment and try again.",
+    },
+    {
+      status: 429,
+      headers: {
+        "Retry-After":
+          String(retryAfter),
+        "Cache-Control":
+          "no-store",
+      },
+    }
+  );
+}
+
+function normalizeMembers(
+  raw: unknown
+) {
+  const rawMembers =
+    Array.isArray(raw)
+      ? raw
+      : [];
+
+  if (rawMembers.length > 50) {
+    throw new Error(
+      "Too many team members were submitted."
+    );
+  }
+
+  return rawMembers.map(
+    (rawMember, index) => {
+      const member =
+        (rawMember ??
+          {}) as MemberInput;
+
+      return {
+        name: cleanString(
+          member.name,
+          120
+        ),
+
+        email: cleanEmail(
+          member.email
+        ),
+
+        phone: cleanPhone(
+          member.phone
+        ),
+
+        index,
+      };
+    }
+  );
+}
+
+export async function POST(
+  request: NextRequest
+) {
+  // =====================================================
+  // 1. RATE LIMIT
+  // =====================================================
+
+  const clientIp =
+    getClientIp(request);
+
+  const rateLimit =
+    checkRateLimit(
+      `register:${clientIp}`
+    );
+
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(
+      rateLimit.retryAfter
+    );
+  }
+
+  // =====================================================
+  // 2. REQUEST SIZE
+  // =====================================================
+
+  const contentLength =
+    request.headers.get(
+      "content-length"
+    );
+
+  if (contentLength) {
+    const parsedLength =
+      Number(contentLength);
+
+    if (
+      Number.isFinite(
+        parsedLength
+      ) &&
+      parsedLength >
+        MAX_REQUEST_BYTES
+    ) {
+      return errorResponse(
+        "Registration request is too large.",
+        413
+      );
+    }
+  }
+
+  // =====================================================
+  // 3. SUPABASE SERVER CONFIG
+  // =====================================================
+
+  const supabaseUrl =
+    process.env
+      .NEXT_PUBLIC_SUPABASE_URL;
+
+  const supabaseSecretKey =
+    process.env
+      .SUPABASE_SECRET_KEY;
+
+  if (
+    !supabaseUrl ||
+    !supabaseSecretKey
+  ) {
     console.error(
       "Registration API is missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SECRET_KEY."
     );
+
     return errorResponse(
       "Registration service is not configured.",
       500
     );
   }
 
+  const supabaseAdmin =
+    createClient(
+      supabaseUrl,
+      supabaseSecretKey,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      }
+    );
+
+  // =====================================================
+  // 4. PARSE REQUEST
+  // =====================================================
+
   let body: RegistrationInput;
 
   try {
-    const rawBody = await request.text();
+    const rawBody =
+      await request.text();
 
-    if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) {
-      return errorResponse("Registration request is too large.", 413);
+    if (
+      new TextEncoder()
+        .encode(rawBody)
+        .byteLength >
+      MAX_REQUEST_BYTES
+    ) {
+      return errorResponse(
+        "Registration request is too large.",
+        413
+      );
     }
 
-    body = JSON.parse(rawBody) as RegistrationInput;
+    body =
+      JSON.parse(
+        rawBody
+      ) as RegistrationInput;
   } catch {
-    return errorResponse("Invalid registration request.", 400);
-  }
-
-  const eventId = cleanString(body.eventId, 64);
-  const name = cleanString(body.name, 120);
-  const college = cleanString(body.college, 180);
-  const email = cleanEmail(body.email);
-  const phone = cleanPhone(body.phone);
-  const team = cleanString(body.team, 120);
-  const rawMembers = Array.isArray(body.members) ? body.members : [];
-
-  if (!UUID_PATTERN.test(eventId)) {
-    return errorResponse("Please select a valid event.", 400);
-  }
-
-  if (!name || !college || !email || !phone) {
     return errorResponse(
-      "Please complete your name, college, email and phone number.",
+      "Invalid registration request.",
       400
     );
   }
 
-  if (!EMAIL_PATTERN.test(email)) {
-    return errorResponse("Please enter a valid email address.", 400);
-  }
+  // =====================================================
+  // 5. PARTICIPANT ID
+  // =====================================================
 
-  if (rawMembers.length > 50) {
-    return errorResponse("Too many team members were submitted.", 400);
-  }
+  const participantId =
+    cleanString(
+      body.participantId,
+      40
+    ).toUpperCase();
 
-  const supabaseAdmin = createClient(
-    supabaseUrl,
-    supabaseSecretKey,
-    {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    }
-  );
-
-  const { data: eventData, error: eventError } =
-    await supabaseAdmin
-      .from("events")
-      .select(
-        "id, active, registration_open, registration_type, min_team_size, max_team_size"
-      )
-      .eq("id", eventId)
-      .maybeSingle();
-
-  if (eventError) {
-    console.error("Registration event lookup failed:", eventError);
+  if (
+    participantId &&
+    !PARTICIPANT_ID_PATTERN.test(
+      participantId
+    )
+  ) {
     return errorResponse(
-      "We couldn't verify the selected event.",
-      500
-    );
-  }
-
-  if (!eventData) {
-    return errorResponse("Selected event was not found.", 404);
-  }
-
-  const selectedEvent = eventData as EventRow;
-
-  if (!selectedEvent.active) {
-    return errorResponse(
-      "This event is currently unavailable.",
+      "Invalid Participant ID.",
       400
     );
   }
 
-  if (!selectedEvent.registration_open) {
-    return errorResponse(
-      "Registration for this event is currently closed.",
-      400
+  // =====================================================
+  // 6. PERSONAL INFORMATION
+  // =====================================================
+
+  const name =
+    cleanString(
+      body.name,
+      120
     );
-  }
 
-  const isTeamEvent =
-    selectedEvent.registration_type?.toLowerCase().trim() ===
-    "team";
-
-  const members = rawMembers.map((raw, index) => {
-    const member = (raw ?? {}) as MemberInput;
-    return {
-      name: cleanString(member.name, 120),
-      email: cleanEmail(member.email),
-      phone: cleanPhone(member.phone),
-      index,
-    };
-  });
-
-  if (!isTeamEvent && members.length > 0) {
-    return errorResponse(
-      "Team members cannot be added to an individual event.",
-      400
+  const college =
+    cleanString(
+      body.college,
+      180
     );
-  }
 
-  if (isTeamEvent) {
-    const minTeamSize = Math.max(
-      1,
-      selectedEvent.min_team_size ?? 1
+  const email =
+    cleanEmail(
+      body.email
     );
-    const maxTeamSize = Math.max(
-      minTeamSize,
-      selectedEvent.max_team_size ?? minTeamSize
+
+  const phone =
+    cleanPhone(
+      body.phone
     );
-    const totalParticipants = members.length + 1;
-
-    if (!team) {
-      return errorResponse("Please enter your team name.", 400);
-    }
-
-    if (totalParticipants < minTeamSize) {
-      return errorResponse(
-        `This event requires at least ${minTeamSize} team members including the team leader.`,
-        400
-      );
-    }
-
-    if (totalParticipants > maxTeamSize) {
-      return errorResponse(
-        `This event allows a maximum of ${maxTeamSize} team members including the team leader.`,
-        400
-      );
-    }
-
-    for (const member of members) {
-      if (!member.name || !member.email || !member.phone) {
-        return errorResponse(
-          `Please complete all details for Team Member ${member.index + 2}.`,
-          400
-        );
-      }
-
-      if (!EMAIL_PATTERN.test(member.email)) {
-        return errorResponse(
-          `Please enter a valid email for Team Member ${member.index + 2}.`,
-          400
-        );
-      }
-    }
-
-    const allEmails = [
-      email,
-      ...members.map((member) => member.email),
-    ];
-
-    if (new Set(allEmails).size !== allEmails.length) {
-      return errorResponse(
-        "Each participant must use a different email address.",
-        400
-      );
-    }
-  }
 
   /*
-   * Friendly duplicate check for a useful response before attempting the
-   * write. The database unique index remains the race-safe final guard.
-   */
-  const { data: existingRegistration, error: duplicateError } =
-    await supabaseAdmin
-      .from("registrations")
-      .select("id")
-      .eq("event_id", eventId)
-      .ilike("email", email)
-      .limit(1)
-      .maybeSingle();
-
-  if (duplicateError) {
-    console.error(
-      "Duplicate registration lookup failed:",
-      duplicateError
-    );
-    return errorResponse(
-      "We couldn't verify your registration status.",
-      500
-    );
-  }
-
-  if (existingRegistration) {
-    return errorResponse(
-      "This email is already registered for the selected event.",
-      409
-    );
-  }
-
-  /*
-   * Atomic registration write.
+   * New participant:
+   * all personal details are required.
    *
-   * The PostgreSQL function creates the registration and all team members
-   * inside one database transaction. If any insert fails, PostgreSQL rolls
-   * back the entire operation automatically.
+   * Existing participant:
+   * Participant ID identifies the person.
+   * The supplied personal details are still passed
+   * to the database function for compatibility.
    */
-  const { data: registrationId, error: registrationError } =
-    await supabaseAdmin.rpc("create_event_registration", {
-      p_event_id: eventId,
-      p_name: name,
-      p_college: college,
-      p_email: email,
-      p_phone: phone,
-      p_team: isTeamEvent ? team : "",
-      p_members: isTeamEvent
-        ? members.map((member) => ({
-            name: member.name,
-            email: member.email,
-            phone: member.phone,
-          }))
-        : [],
-    });
-
-  if (registrationError) {
-    // PostgreSQL 23505 = unique constraint violation.
-    if (registrationError.code === "23505") {
+  if (!participantId) {
+    if (
+      !name ||
+      !college ||
+      !email ||
+      !phone
+    ) {
       return errorResponse(
-        "This email is already registered for the selected event.",
-        409
+        "Please complete your name, college, email and phone number.",
+        400
       );
     }
 
-    console.error("Atomic registration RPC failed:", {
-      code: registrationError.code,
-      message: registrationError.message,
-      details: registrationError.details,
-      hint: registrationError.hint,
-    });
+    if (
+      !EMAIL_PATTERN.test(
+        email
+      )
+    ) {
+      return errorResponse(
+        "Please enter a valid email address.",
+        400
+      );
+    }
+  }
+
+  // =====================================================
+  // 7. BUILD EVENT LIST
+  // =====================================================
+
+  let rawEvents: unknown[];
+
+  if (
+    Array.isArray(
+      body.events
+    )
+  ) {
+    rawEvents =
+      body.events;
+  } else if (
+    body.eventId
+  ) {
+    /*
+     * Legacy single-event request.
+     */
+    rawEvents = [
+      {
+        eventId:
+          body.eventId,
+
+        team:
+          body.team,
+
+        members:
+          body.members,
+      },
+    ];
+  } else {
+    rawEvents = [];
+  }
+
+  if (
+    rawEvents.length === 0
+  ) {
+    return errorResponse(
+      "Please select at least one event.",
+      400
+    );
+  }
+
+  if (
+    rawEvents.length > 20
+  ) {
+    return errorResponse(
+      "You can select a maximum of 20 events.",
+      400
+    );
+  }
+
+  // =====================================================
+  // 8. NORMALIZE EVENTS
+  // =====================================================
+
+  let events: Array<{
+    eventId: string;
+    team: string;
+    members: ReturnType<
+      typeof normalizeMembers
+    >;
+  }>;
+
+  try {
+    events =
+      rawEvents.map(
+        (
+          rawEvent,
+          eventIndex
+        ) => {
+          const event =
+            (rawEvent ??
+              {}) as EventRegistrationInput;
+
+          const eventId =
+            cleanString(
+              event.eventId,
+              64
+            );
+
+          if (
+            !UUID_PATTERN.test(
+              eventId
+            )
+          ) {
+            throw new Error(
+              `Please select a valid event for selection ${
+                eventIndex + 1
+              }.`
+            );
+          }
+
+          const team =
+            cleanString(
+              event.team,
+              120
+            );
+
+          const members =
+            normalizeMembers(
+              event.members
+            );
+
+          return {
+            eventId,
+            team,
+            members,
+          };
+        }
+      );
+  } catch (error) {
+    return errorResponse(
+      error instanceof Error
+        ? error.message
+        : "Invalid event information.",
+      400
+    );
+  }
+
+  // =====================================================
+  // 9. PREVENT DUPLICATE EVENTS
+  // =====================================================
+
+  const uniqueEventIds =
+    new Set(
+      events.map(
+        (event) =>
+          event.eventId.toLowerCase()
+      )
+    );
+
+  if (
+    uniqueEventIds.size !==
+    events.length
+  ) {
+    return errorResponse(
+      "The same event cannot be selected more than once.",
+      400
+    );
+  }
+
+  // =====================================================
+  // 10. NORMALIZE FOR DATABASE RPC
+  // =====================================================
+
+  const rpcEvents =
+    events.map(
+      (event) => ({
+        event_id:
+          event.eventId,
+
+        team:
+          event.team,
+
+        members:
+          event.members.map(
+            (member) => ({
+              name:
+                member.name,
+
+              email:
+                member.email,
+
+              phone:
+                member.phone,
+            })
+          ),
+      })
+    );
+
+  // =====================================================
+  // 11. ATOMIC MULTI-EVENT REGISTRATION
+  // =====================================================
+
+  const {
+    data: rpcData,
+    error: rpcError,
+  } =
+    await supabaseAdmin.rpc(
+      "register_participant_events",
+      {
+        p_participant_id:
+          participantId || null,
+
+        p_name:
+          name || null,
+
+        p_college:
+          college || null,
+
+        p_email:
+          email || null,
+
+        p_phone:
+          phone || null,
+
+        p_events:
+          rpcEvents,
+      }
+    );
+
+  if (rpcError) {
+    console.error(
+      "Multi-event registration RPC failed:",
+      {
+        code:
+          rpcError.code,
+
+        message:
+          rpcError.message,
+
+        details:
+          rpcError.details,
+
+        hint:
+          rpcError.hint,
+      }
+    );
+
+    const message =
+      rpcError.message ||
+      "We couldn't save your registration.";
+
+    if (
+      message.includes(
+        "Participant ID was not found"
+      )
+    ) {
+      return errorResponse(
+        "That Participant ID was not found.",
+        404
+      );
+    }
+
+    if (
+      message.includes(
+        "Please enter your team name"
+      )
+    ) {
+      return errorResponse(
+        "Please enter your team name.",
+        400
+      );
+    }
+
+    if (
+      message.includes(
+        "requires at least"
+      )
+    ) {
+      return errorResponse(
+        message,
+        400
+      );
+    }
+
+    if (
+      message.includes(
+        "allows a maximum"
+      )
+    ) {
+      return errorResponse(
+        message,
+        400
+      );
+    }
+
+    if (
+      message.includes(
+        "different email"
+      )
+    ) {
+      return errorResponse(
+        message,
+        400
+      );
+    }
+
+    if (
+      message.includes(
+        "registration"
+      ) &&
+      message.includes(
+        "closed"
+      )
+    ) {
+      return errorResponse(
+        message,
+        400
+      );
+    }
+
+    if (
+      message.includes(
+        "not active"
+      )
+    ) {
+      return errorResponse(
+        message,
+        400
+      );
+    }
 
     return errorResponse(
       "We couldn't save your registration. Please try again.",
@@ -389,26 +751,256 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (
-    typeof registrationId !== "string" ||
-    !UUID_PATTERN.test(registrationId)
-  ) {
-    console.error(
-      "Atomic registration RPC returned an invalid registration ID:",
-      registrationId
-    );
+  // =====================================================
+  // 12. NORMALIZE RPC RESPONSE
+  // =====================================================
 
+  const results =
+    Array.isArray(rpcData)
+      ? rpcData
+      : [];
+
+  if (
+    results.length === 0
+  ) {
     return errorResponse(
-      "We couldn't confirm your registration. Please try again.",
+      "No registration was created.",
       500
     );
   }
 
+  const returnedParticipantId =
+    cleanString(
+      results[0]?.participant_id,
+      40
+    );
+
+  if (
+    !returnedParticipantId
+  ) {
+    console.error(
+      "Registration RPC returned no participant ID:",
+      results
+    );
+
+    return errorResponse(
+      "Registration was processed but no Participant ID was returned.",
+      500
+    );
+  }
+
+  // =====================================================
+  // 13. GET CREATED EVENT RECORDS
+  // =====================================================
+
+  const eventIds =
+    events.map(
+      (event) =>
+        event.eventId
+    );
+
+  const {
+    data: participant,
+    error:
+      participantLookupError,
+  } =
+    await supabaseAdmin
+      .from("participants")
+      .select("id")
+      .eq(
+        "participant_id",
+        returnedParticipantId
+      )
+      .maybeSingle();
+
+  if (
+    participantLookupError
+  ) {
+    console.error(
+      "Participant lookup after registration failed:",
+      participantLookupError
+    );
+  }
+
+  const {
+    data:
+      participantEventRows,
+    error:
+      participantEventsError,
+  } =
+    participant?.id
+      ? await supabaseAdmin
+          .from(
+            "participant_events"
+          )
+          .select(
+            `
+              id,
+              participant_id,
+              event_id,
+              registration_status,
+              payment_status,
+              payment_amount,
+              payment_id,
+              team_name,
+              checked_in,
+              checked_in_at,
+              events (
+                id,
+                name,
+                registration_fee,
+                payment_type,
+                payment_unit
+              )
+            `
+          )
+          .eq(
+            "participant_id",
+            participant.id
+          )
+          .in(
+            "event_id",
+            eventIds
+          )
+      : {
+          data: [],
+          error: null,
+        };
+
+  if (
+    participantEventsError
+  ) {
+    /*
+     * Registration has already succeeded.
+     * Do not tell the user it failed.
+     */
+    console.error(
+      "Participant event lookup after registration failed:",
+      participantEventsError
+    );
+  }
+
+  // =====================================================
+  // 14. BUILD EVENT RESULTS
+  // =====================================================
+
+  const eventResults =
+    results.map(
+      (result: any) => ({
+        participantEventId:
+          result.participant_event_id,
+
+        eventId:
+          result.event_id,
+
+        eventName:
+          result.event_name,
+
+        status:
+          result.status,
+      })
+    );
+
+  // =====================================================
+  // 15. CALCULATE NEW PAYMENT TOTAL
+  // =====================================================
+
+  const addedEventIds =
+    new Set(
+      results
+        .filter(
+          (result: any) =>
+            result.status ===
+            "added"
+        )
+        .map(
+          (result: any) =>
+            String(
+              result.event_id
+            )
+        )
+    );
+
+  let totalAmount = 0;
+
+  const paymentEvents =
+    Array.isArray(
+      participantEventRows
+    )
+      ? participantEventRows
+      : [];
+
+  for (
+    const row of paymentEvents as any[]
+  ) {
+    if (
+      addedEventIds.has(
+        String(
+          row.event_id
+        )
+      )
+    ) {
+      totalAmount +=
+        Number(
+          row.payment_amount
+        ) || 0;
+    }
+  }
+
+  // =====================================================
+  // 16. RESPONSE
+  // =====================================================
+
+  const addedEvents =
+    eventResults.filter(
+      (event) =>
+        event.status ===
+        "added"
+    );
+
+  const alreadyRegisteredEvents =
+    eventResults.filter(
+      (event) =>
+        event.status ===
+        "already_registered"
+    );
+
   return NextResponse.json(
     {
       success: true,
-      registrationId,
+
+      participantId:
+        returnedParticipantId,
+
+      events:
+        eventResults,
+
+      addedEvents,
+
+      alreadyRegisteredEvents,
+
+      totalAmount,
+
+      paymentRequired:
+        totalAmount > 0,
+
+      /*
+       * Payment is deliberately not started here.
+       * Step 6 will handle payment creation,
+       * gateway redirection and webhook verification.
+       */
+      paymentStatus:
+        totalAmount > 0
+          ? "pending"
+          : "not_required",
     },
-    { status: 201 }
+    {
+      status: 201,
+
+      headers: {
+        "Cache-Control":
+          "no-store",
+      },
+    }
   );
 }
