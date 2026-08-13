@@ -98,7 +98,31 @@ export async function DELETE(request: Request) {
   const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
   if (!supabaseUrl || !supabaseSecretKey) return NextResponse.json({ error: "Registration service is not configured." }, { status: 500 });
   const supabaseAdmin = createSupabaseClient(supabaseUrl, supabaseSecretKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { error } = await supabaseAdmin.from("participant_events").delete().eq("id", participantEventId);
-  if (error) return NextResponse.json({ error: "Could not delete the event registration." }, { status: 500 });
+  const { error: memberError } = await supabaseAdmin
+    .from("participant_event_members")
+    .delete()
+    .eq("participant_event_id", participantEventId);
+
+  if (memberError) {
+    console.error("Admin registration member delete failed:", memberError);
+    return NextResponse.json(
+      { error: "Could not remove the team members for this registration." },
+      { status: 500 }
+    );
+  }
+
+  const { error } = await supabaseAdmin
+    .from("participant_events")
+    .delete()
+    .eq("id", participantEventId);
+
+  if (error) {
+    console.error("Admin registration delete failed:", error);
+    return NextResponse.json(
+      { error: "Could not delete the event registration." },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({ success: true });
 }
