@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
@@ -81,7 +81,10 @@ type ParticipantLookupResponse = {
 
 export default function RegistrationForm() {
   const searchParams = useSearchParams();
-  const selectedEventParam = searchParams.get("event") ?? "";
+const router = useRouter();
+
+const selectedEventParam = searchParams.get("event") ?? "";
+const fromAdmin = searchParams.get("from") === "admin";
 
   const [eventOptions, setEventOptions] = useState<EventOption[]>([]);
   const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
@@ -769,6 +772,15 @@ const [eventCategory, setEventCategory] = useState("All");
             >
               Register another participant
             </button>
+            {fromAdmin && (
+  <button
+    type="button"
+    onClick={() => router.push("/admin")}
+    className="mt-3 rounded-full bg-white px-6 py-3 text-sm font-medium text-black transition hover:bg-white/90"
+  >
+    ← Back to Admin Panel
+  </button>
+)}
           </div>
         </div>
       </section>

@@ -13,19 +13,35 @@ function RegistrationFormLoading() {
   );
 }
 
-export default function RegisterPage() {
+export default async function RegisterPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string }>;
+}) {
+  const params = await searchParams;
+  const fromAdmin = params.from === "admin";
   return (
     <main className="min-h-screen bg-[#f5f5f7] text-black">
       {/* Top Navigation */}
       <header className="px-6 py-7 md:px-10">
         <div className="mx-auto flex max-w-[1400px] items-center justify-between">
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-sm text-black/45 transition hover:text-black"
-          >
-            <ArrowLeft size={15} />
-            Saviskar
-          </Link>
+          {fromAdmin ? (
+  <Link
+    href="/admin"
+    className="flex items-center gap-2 text-sm text-black/45 transition hover:text-black"
+  >
+    <ArrowLeft size={15} />
+    Back to Admin
+  </Link>
+) : (
+  <Link
+    href="/"
+    className="flex items-center gap-2 text-sm text-black/45 transition hover:text-black"
+  >
+    <ArrowLeft size={15} />
+    Saviskar
+  </Link>
+)}
 
           <span className="text-[11px] font-semibold uppercase tracking-[0.2em]">
             Registration

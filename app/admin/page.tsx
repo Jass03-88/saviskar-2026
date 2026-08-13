@@ -879,10 +879,10 @@ export default function AdminPage() {
               type="button"
               onClick={() =>
                 router.push(
-                  "/register"
+                  "/register?from=admin"
                 )
               }
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03]"
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] text-black/70"
             >
               <ExternalLink
                 size={15}
@@ -928,7 +928,7 @@ export default function AdminPage() {
             <button
               type="button"
               onClick={logout}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03]"
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-black px-5 py-3 text-sm transition hover:bg-black/[0.03]"
             >
               <LogOut
                 size={15}
@@ -1009,7 +1009,7 @@ export default function AdminPage() {
                   Event analytics
                 </p>
 
-                <h2 className="mt-2 text-xl font-semibold">
+                <h2 className="mt-2 text-xl font-semibold text-black md:text-2xl">
                   Registration breakdown
                 </h2>
               </div>
@@ -1021,7 +1021,7 @@ export default function AdminPage() {
                     "all"
                   )
                 }
-                className="text-xs text-black/35 hover:text-black"
+                className="text-xs text-black hover:text-black"
               >
                 View all
               </button>
@@ -1060,14 +1060,26 @@ export default function AdminPage() {
                         "Event"}
                     </p>
 
-                    <p className="mt-2 truncate text-sm font-semibold">
-                      {event.name}
-                    </p>
+                    <p
+  className={`mt-2 truncate text-sm font-semibold ${
+    eventFilter === event.id
+      ? "text-white"
+      : "text-black"
+  }`}
+>
+  {event.name}
+</p>
 
                     <div className="mt-5 flex items-end justify-between">
-                      <p className="text-3xl font-semibold">
-                        {event.count}
-                      </p>
+                      <p
+  className={`text-3xl font-semibold ${
+    eventFilter === event.id
+      ? "text-white"
+      : "text-black"
+  }`}
+>
+  {event.count}
+</p>
 
                       <p
                         className={`text-xs ${
@@ -1108,7 +1120,7 @@ export default function AdminPage() {
                   )
                 }
                 placeholder="Search name, participant ID, event, college, email, phone, team..."
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-black/25"
+                className="min-w-0 flex-1 bg-transparent text-sm text-black outline-none placeholder:text-black/25"
               />
 
               {search && (
@@ -1131,7 +1143,7 @@ export default function AdminPage() {
                   e.target.value
                 )
               }
-              className="rounded-[18px] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+              className="rounded-[18px] border border-black/10 bg-black px-4 py-3 text-sm outline-none"
             >
               <option value="all">
                 All events
@@ -1157,7 +1169,7 @@ export default function AdminPage() {
                     .value as StatusFilter
                 )
               }
-              className="rounded-[18px] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+              className="rounded-[18px] border border-black/10 bg-black px-4 py-3 text-sm outline-none"
             >
               <option value="all">
                 All status
@@ -1180,7 +1192,7 @@ export default function AdminPage() {
                     .value as PaymentFilter
                 )
               }
-              className="rounded-[18px] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+              className="rounded-[18px] border border-black/10 bg-black px-4 py-3 text-sm outline-none"
             >
               <option value="all">
                 All payments
@@ -1328,7 +1340,7 @@ export default function AdminPage() {
                         )}
 
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold">
+                          <p className="truncate text-sm font-semibold text-black">
                             {
                               participant.name
                             }
@@ -1462,7 +1474,7 @@ export default function AdminPage() {
                     []
                   );
                 }}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-white hover:bg-black hover:text-white"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-black hover:bg-black hover:text-white"
               >
                 <X size={16} />
               </button>
@@ -1503,7 +1515,7 @@ export default function AdminPage() {
                       }
                     </h2>
 
-                    <p className="mt-1 text-xs text-white/35">
+                    <p className="mt-1 text-xs text-white/70">
                       {
                         selectedParticipant.college
                       }
@@ -1558,7 +1570,7 @@ export default function AdminPage() {
                   Registered events
                 </p>
 
-                <h3 className="mt-2 text-2xl font-semibold tracking-[-0.035em]">
+                <h3 className="mt-2 text-2xl font-semibold tracking-[-0.035em] text-black">
                   {
                     selectedParticipantEvents.length
                   }{" "}
@@ -1578,7 +1590,7 @@ export default function AdminPage() {
                           item.registration
                             .id
                         }
-                        className="rounded-[24px] border border-black/10 bg-white p-5"
+                        className="rounded-[24px] border border-black/10 bg-white p-5 text-black"
                       >
 
                         <div className="flex items-start justify-between gap-4">
@@ -1773,9 +1785,13 @@ function StatCard({
         {title}
       </p>
 
-      <p className="mt-2 text-4xl font-semibold tracking-[-0.05em]">
-        {value}
-      </p>
+      <p
+  className={`mt-2 text-4xl font-semibold tracking-[-0.05em] ${
+    dark ? "text-white" : "text-black"
+  }`}
+>
+  {value}
+</p>
     </div>
   );
 }
@@ -1788,8 +1804,8 @@ function DrawerInfo({
   value: string;
 }) {
   return (
-    <div className="flex items-center gap-3 text-xs text-white/55">
-      <span className="text-white/25">
+    <div className="flex items-center gap-3 text-xs text-white/80">
+      <span className="text-white/80">
         {icon}
       </span>
 
