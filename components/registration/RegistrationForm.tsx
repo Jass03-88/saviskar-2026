@@ -38,12 +38,14 @@ type EventOption = {
 
 type TeamMember = {
   name: string;
+  college: string;
   email: string;
   phone: string;
 };
 
 type EventRegistrationState = {
   teamName: string;
+  isTeamHead: boolean;
   members: TeamMember[];
 };
 
@@ -51,6 +53,14 @@ type RegistrationResponse = {
   success?: boolean;
   error?: string;
   participantId?: string;
+  teamMembers?: Array<{
+    participantId: string;
+    name: string;
+    college: string | null;
+    email: string;
+    phone: string | null;
+    isTeamHead: boolean;
+  }>;
 };
 
 type ParticipantLookupEvent = {
@@ -79,6 +89,13 @@ type ParticipantLookupResponse = {
   events?: ParticipantLookupEvent[];
 };
 
+class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
 export default function RegistrationForm() {
   const searchParams = useSearchParams();
 const router = useRouter();
@@ -101,6 +118,9 @@ const [eventCategory, setEventCategory] = useState("All");
 
   const [participantId, setParticipantId] = useState("");
   const [qrCode, setQrCode] = useState("");
+  const [teamMembers, setTeamMembers] = useState<
+    NonNullable<RegistrationResponse["teamMembers"]>
+  >([]);
 
   /*
    * Optional existing participant ID.
@@ -193,6 +213,17 @@ const [eventCategory, setEventCategory] = useState("All");
     [eventOptions, selectedEventIds]
   );
 
+  const hasTeamEvent = useMemo(
+    () => selectedEvents.some((event) => isTeamEvent(event)),
+    [selectedEvents]
+  );
+
+  const firstTeamEventId = useMemo(
+    () =>
+      selectedEvents.find((event) => isTeamEvent(event))?.id ?? null,
+    [selectedEvents]
+  );
+
   const eventCategories = useMemo(() => {
     const categories = Array.from(
       new Set(
@@ -243,6 +274,7 @@ const [eventCategory, setEventCategory] = useState("All");
         if (!next[eventId]) {
           next[eventId] = {
             teamName: "",
+            isTeamHead: false,
             members: [],
           };
         }
@@ -356,6 +388,7 @@ const [eventCategory, setEventCategory] = useState("All");
     return (
       eventState[eventId] ?? {
         teamName: "",
+        isTeamHead: false,
         members: [],
       }
     );
@@ -370,7 +403,18 @@ const [eventCategory, setEventCategory] = useState("All");
       },
     }));
   }
-
+function updateTeamHead(
+    eventId: string,
+    value: boolean
+  ) {
+    setEventState((current) => ({
+      ...current,
+      [eventId]: {
+        ...getTeamState(eventId),
+        isTeamHead: value,
+      },
+    }));
+  }
   function addTeamMember(event: EventOption) {
     if (!event.max_team_size) return;
 
@@ -390,21 +434,36 @@ const [eventCategory, setEventCategory] = useState("All");
         members: [
           ...getTeamState(event.id).members,
           {
-            name: "",
-            email: "",
-            phone: "",
-          },
+  name: "",
+  college: "",
+  email: "",
+  phone: "",
+},
         ],
       },
     }));
   }
 
   function removeTeamMember(eventId: string, index: number) {
+    const event = eventOptions.find((e) => e.id === eventId);
+    const currentMembers = getTeamState(eventId).members;
+
+    /*
+     * Don't allow removal below the minimum required members.
+     * Leader = member 1, so minimum additional = min_team_size - 1.
+     */
+    if (
+      event?.min_team_size &&
+      currentMembers.length <= event.min_team_size - 1
+    ) {
+      return;
+    }
+
     setEventState((current) => ({
       ...current,
       [eventId]: {
         ...getTeamState(eventId),
-        members: getTeamState(eventId).members.filter(
+        members: currentMembers.filter(
           (_, memberIndex) => memberIndex !== index
         ),
       },
@@ -443,6 +502,59 @@ const [eventCategory, setEventCategory] = useState("All");
     setSelectedEventIds((current) => {
       if (current.includes(eventId)) {
         return current.filter((id) => id !== eventId);
+      }
+
+      /*
+       * When a team event is first selected, pre-populate the
+       * minimum required member slots so the user immediately
+       * sees how many teammates they need to fill in.
+       *
+       * Leader counts as member 1, so we create
+       * (min_team_size - 1) empty slots.
+       */
+      const event = eventOptions.find((e) => e.id === eventId);
+
+      if (
+        event &&
+        event.registration_type === "team" &&
+        event.min_team_size &&
+        event.min_team_size > 1
+      ) {
+        const existingMembers =
+          eventState[eventId]?.members ?? [];
+
+        const requiredAdditional =
+          event.min_team_size - 1;
+
+        if (existingMembers.length < requiredAdditional) {
+          const slotsToAdd =
+            requiredAdditional - existingMembers.length;
+
+          const newMembers: TeamMember[] = Array.from(
+            { length: slotsToAdd },
+            () => ({
+              name: "",
+              college: "",
+              email: "",
+              phone: "",
+            })
+          );
+
+          setEventState((currentState) => ({
+            ...currentState,
+            [eventId]: {
+              ...(currentState[eventId] ?? {
+                teamName: "",
+                isTeamHead: false,
+                members: [],
+              }),
+              members: [
+                ...existingMembers,
+                ...newMembers,
+              ],
+            },
+          }));
+        }
       }
 
       return [...current, eventId];
@@ -502,7 +614,7 @@ const [eventCategory, setEventCategory] = useState("All");
 
     try {
       if (selectedEventIds.length === 0) {
-        throw new Error(
+        throw new ValidationError(
           "Please select at least one event before continuing."
         );
       }
@@ -532,7 +644,7 @@ const [eventCategory, setEventCategory] = useState("All");
 
         if (isTeamEvent(selectedEvent)) {
           if (!state.teamName.trim()) {
-            throw new Error(
+            throw new ValidationError(
               `Please enter a team name for ${selectedEvent.name}.`
             );
           }
@@ -546,7 +658,7 @@ const [eventCategory, setEventCategory] = useState("All");
             selectedEvent.min_team_size &&
             totalTeamSize < selectedEvent.min_team_size
           ) {
-            throw new Error(
+            throw new ValidationError(
               `${selectedEvent.name} requires at least ${selectedEvent.min_team_size} team members.`
             );
           }
@@ -555,7 +667,7 @@ const [eventCategory, setEventCategory] = useState("All");
             selectedEvent.max_team_size &&
             totalTeamSize > selectedEvent.max_team_size
           ) {
-            throw new Error(
+            throw new ValidationError(
               `${selectedEvent.name} allows a maximum of ${selectedEvent.max_team_size} team members.`
             );
           }
@@ -569,7 +681,7 @@ const [eventCategory, setEventCategory] = useState("All");
               !member.email.trim() ||
               !member.phone.trim()
             ) {
-              throw new Error(
+              throw new ValidationError(
                 `Please complete all member details for ${selectedEvent.name}.`
               );
             }
@@ -586,7 +698,7 @@ const [eventCategory, setEventCategory] = useState("All");
           if (
             new Set(teamEmails).size !== teamEmails.length
           ) {
-            throw new Error(
+            throw new ValidationError(
               `Each member of ${selectedEvent.name} must use a different email address.`
             );
           }
@@ -598,9 +710,14 @@ const [eventCategory, setEventCategory] = useState("All");
             ? state.teamName.trim()
             : null,
 
+          isTeamHead: isTeamEvent(selectedEvent)
+            ? state.isTeamHead
+            : false,
+
           members: isTeamEvent(selectedEvent)
             ? state.members.map((member) => ({
                 name: member.name.trim(),
+                college: college || participantLookup?.college || "",
                 email: member.email.trim().toLowerCase(),
                 phone: member.phone.trim(),
               }))
@@ -676,6 +793,7 @@ const [eventCategory, setEventCategory] = useState("All");
       );
 
       setParticipantId(result.participantId);
+      setTeamMembers(result.teamMembers ?? []);
       setQrCode(generatedQr);
       setSubmitted(true);
 
@@ -685,13 +803,16 @@ const [eventCategory, setEventCategory] = useState("All");
       setEventState({});
       setExistingParticipantId("");
     } catch (error) {
-      console.error("Registration error:", error);
-
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "We couldn't complete your registration. Please try again."
-      );
+      if (error instanceof ValidationError) {
+        setErrorMessage(error.message);
+      } else {
+        console.error("Registration error:", error);
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "We couldn't complete your registration. Please try again."
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -751,6 +872,37 @@ const [eventCategory, setEventCategory] = useState("All");
                 <p className="break-all font-mono text-xs text-white/80 md:text-sm">
                   {participantId}
                 </p>
+              </div>
+            )}
+
+            {teamMembers.length > 0 && (
+              <div className="mt-6 w-full max-w-xl rounded-[20px] border border-white/10 bg-white/[0.04] p-5 text-left">
+                <p className="text-[9px] uppercase tracking-[0.2em] text-white/40">
+                  Team Participant IDs
+                </p>
+
+                <div className="mt-4 space-y-3">
+                  {teamMembers.map((member) => (
+                    <div
+                      key={member.participantId}
+                      className="flex flex-col gap-1 rounded-[14px] border border-white/10 bg-white/[0.03] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-white">
+                          {member.name}
+                          {member.isTeamHead ? " · Team Head" : ""}
+                        </p>
+                        <p className="mt-1 text-xs text-white/45">
+                          {member.email}
+                        </p>
+                      </div>
+
+                      <p className="font-mono text-xs text-white/80">
+                        {member.participantId}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1346,6 +1498,110 @@ const [eventCategory, setEventCategory] = useState("All");
                             />
                           </Field>
 
+                          {event.id === firstTeamEventId && (
+                            <div className="rounded-[22px] border border-black/10 bg-white p-6 md:p-8">
+                              <div className="mb-7">
+                                <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30">
+                                  Member 1 — Your details
+                                </p>
+
+                                <h5 className="mt-2 text-xl font-semibold">
+                                  Enter your personal details.
+                                </h5>
+
+                                <p className="mt-2 text-sm leading-5 text-black/40">
+                                  You are Member 1 of the team. These details will be used to create or identify your permanent Participant ID.
+                                </p>
+                              </div>
+
+                              <div className="grid gap-8 md:grid-cols-2">
+                                <Field label="Full name">
+                                  <input
+                                    key={`team-name-${participantLookup?.participantId ?? "new"}`}
+                                    type="text"
+                                    name="name"
+                                    defaultValue={participantLookup?.name ?? ""}
+                                    placeholder="Your name"
+                                    required
+                                    minLength={2}
+                                    readOnly={Boolean(participantLookup)}
+                                    className={`w-full border-b border-black/15 bg-transparent py-4 text-lg outline-none transition placeholder:text-black/25 focus:border-black ${participantLookup ? "text-black/55" : ""}`}
+                                  />
+                                </Field>
+
+                                <Field label="College / University">
+                                  <input
+                                    key={`team-college-${participantLookup?.participantId ?? "new"}`}
+                                    type="text"
+                                    name="college"
+                                    defaultValue={participantLookup?.college ?? ""}
+                                    placeholder="Your institution"
+                                    required
+                                    minLength={2}
+                                    readOnly={Boolean(participantLookup)}
+                                    className={`w-full border-b border-black/15 bg-transparent py-4 text-lg outline-none transition placeholder:text-black/25 focus:border-black ${participantLookup ? "text-black/55" : ""}`}
+                                  />
+                                </Field>
+
+                                <Field label="Email">
+                                  <input
+                                    key={`team-email-${participantLookup?.participantId ?? "new"}`}
+                                    type="email"
+                                    name="email"
+                                    defaultValue={participantLookup?.email ?? ""}
+                                    placeholder="you@example.com"
+                                    required
+                                    readOnly={Boolean(participantLookup)}
+                                    className={`w-full border-b border-black/15 bg-transparent py-4 text-lg outline-none transition placeholder:text-black/25 focus:border-black ${participantLookup ? "text-black/55" : ""}`}
+                                  />
+                                </Field>
+
+                                <Field label="Phone">
+                                  <input
+                                    key={`team-phone-${participantLookup?.participantId ?? "new"}`}
+                                    type="tel"
+                                    name="phone"
+                                    defaultValue={participantLookup?.phone ?? ""}
+                                    placeholder="+91 98765 43210"
+                                    required
+                                    pattern="[0-9+\-\s]{10,18}"
+                                    readOnly={Boolean(participantLookup)}
+                                    className={`w-full border-b border-black/15 bg-transparent py-4 text-lg outline-none transition placeholder:text-black/25 focus:border-black ${participantLookup ? "text-black/55" : ""}`}
+                                  />
+                                </Field>
+                              </div>
+
+                              <div className="mt-8 border-t border-black/10 pt-6">
+                                <label
+                                  htmlFor={`team-head-${event.id}`}
+                                  className="flex cursor-pointer items-start gap-3"
+                                >
+                                  <input
+                                    id={`team-head-${event.id}`}
+                                    type="checkbox"
+                                    checked={state.isTeamHead}
+                                    onChange={(e) =>
+                                      updateTeamHead(
+                                        event.id,
+                                        e.target.checked
+                                      )
+                                    }
+                                    className="mt-1 h-4 w-4 cursor-pointer accent-black"
+                                  />
+
+                                  <span>
+                                    <span className="block text-sm font-semibold text-black">
+                                      I am the Team Head
+                                    </span>
+                                    <span className="mt-1 block text-sm leading-5 text-black/40">
+                                      Select this if you are responsible for this team.
+                                    </span>
+                                  </span>
+                                </label>
+                              </div>
+                            </div>
+                          )}
+
                           <div className="border-t border-black/10 pt-8">
                             <div className="flex items-end justify-between gap-4">
                               <div>
@@ -1358,8 +1614,7 @@ const [eventCategory, setEventCategory] = useState("All");
                                 </h5>
 
                                 <p className="mt-2 text-sm text-black/40">
-                                  You are automatically counted
-                                  as Member 1.
+                                  Add the remaining members of your team below.
                                 </p>
                               </div>
 
@@ -1390,23 +1645,31 @@ const [eventCategory, setEventCategory] = useState("All");
                                         </h6>
                                       </div>
 
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          removeTeamMember(
-                                            event.id,
-                                            index
-                                          )
-                                        }
-                                        className="flex h-9 w-9 items-center justify-center rounded-full border border-red-200 text-red-500 transition hover:bg-red-50"
-                                      >
-                                        <Trash2
-                                          size={15}
-                                        />
-                                      </button>
+                                      {event.min_team_size &&
+                                      state.members.length <=
+                                        event.min_team_size - 1 ? (
+                                        <span className="text-[9px] font-semibold uppercase tracking-[0.15em] text-black/25">
+                                          Required
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            removeTeamMember(
+                                              event.id,
+                                              index
+                                            )
+                                          }
+                                          className="flex h-9 w-9 items-center justify-center rounded-full border border-red-200 text-red-500 transition hover:bg-red-50"
+                                        >
+                                          <Trash2
+                                            size={15}
+                                          />
+                                        </button>
+                                      )}
                                     </div>
 
-                                    <div className="grid gap-8 md:grid-cols-3">
+                                    <div className="grid gap-8 md:grid-cols-2">
                                       <Field label="Full name">
                                         <input
                                           type="text"
@@ -1495,8 +1758,10 @@ const [eventCategory, setEventCategory] = useState("All");
               </div>
             )}
 
-            {/* PERSONAL INFORMATION */}
-            <div className="space-y-8 border-t border-black/10 pt-12">
+            {/* PERSONAL INFORMATION — shown separately for normal/individual registration.
+                For team registration, Member 1 details are collected inside the team section above. */}
+            {!hasTeamEvent && (
+              <div className="space-y-8 border-t border-black/10 pt-12">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
                   Participant details
@@ -1566,6 +1831,8 @@ const [eventCategory, setEventCategory] = useState("All");
                 </Field>
               </div>
             </div>
+
+            )}
 
             {/* PAYMENT SUMMARY */}
             {selectedEvents.length > 0 && (

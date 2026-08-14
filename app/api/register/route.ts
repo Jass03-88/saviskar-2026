@@ -4,6 +4,7 @@ import { sendRegistrationEmail } from "@/lib/send-registration-email";
 
 type MemberInput = {
   name?: unknown;
+  college?: unknown;
   email?: unknown;
   phone?: unknown;
 };
@@ -11,6 +12,7 @@ type MemberInput = {
 type EventRegistrationInput = {
   eventId?: unknown;
   team?: unknown;
+  isTeamHead?: unknown;
   members?: unknown;
 };
 
@@ -220,19 +222,10 @@ function normalizeMembers(
           {}) as MemberInput;
 
       return {
-        name: cleanString(
-          member.name,
-          120
-        ),
-
-        email: cleanEmail(
-          member.email
-        ),
-
-        phone: cleanPhone(
-          member.phone
-        ),
-
+        name: cleanString(member.name, 120),
+        college: cleanString(member.college, 180),
+        email: cleanEmail(member.email),
+        phone: cleanPhone(member.phone),
         index,
       };
     }
@@ -498,13 +491,14 @@ export async function POST(
   // 8. NORMALIZE EVENTS
   // =====================================================
 
-  let events: Array<{
+  type NormalizedEvent = {
     eventId: string;
     team: string;
-    members: ReturnType<
-      typeof normalizeMembers
-    >;
-  }>;
+    isTeamHead: boolean;
+    members: ReturnType<typeof normalizeMembers>;
+  };
+
+  let events: NormalizedEvent[];
 
   try {
     events =
@@ -548,6 +542,8 @@ export async function POST(
           return {
             eventId,
             team,
+            isTeamHead:
+              event.isTeamHead === true,
             members,
           };
         }
@@ -596,11 +592,17 @@ export async function POST(
         team:
           event.team,
 
+        is_team_head:
+          event.isTeamHead,
+
         members:
           event.members.map(
             (member) => ({
               name:
                 member.name,
+
+              college:
+                member.college,
 
               email:
                 member.email,
@@ -969,6 +971,51 @@ export async function POST(
       ? (participantEventRows as any[])
       : [];
 
+  const addedParticipantEventIds =
+    peRows
+      .filter((row: any) =>
+        addedEventIds.has(String(row.event_id))
+      )
+      .map((row: any) => row.id)
+      .filter(Boolean);
+
+  const {
+    data: teamMemberRows,
+    error: teamMemberLookupError,
+  } =
+    addedParticipantEventIds.length > 0
+      ? await supabaseAdmin
+        .from("participant_event_members")
+        .select(
+          `
+            participant_event_id,
+            participant_id,
+            name,
+            email,
+            phone,
+            is_team_leader,
+            participants (
+              participant_id,
+              college
+            )
+          `
+        )
+        .in(
+          "participant_event_id",
+          addedParticipantEventIds
+        )
+      : {
+        data: [],
+        error: null,
+      };
+
+  if (teamMemberLookupError) {
+    console.error(
+      "Team member lookup after registration failed:",
+      teamMemberLookupError
+    );
+  }
+
   for (const result of results as any[]) {
     if (
       result.status !== "added"
@@ -1014,10 +1061,61 @@ export async function POST(
       );
 
     try {
+      const teamRowsForEvent =
+        (Array.isArray(teamMemberRows)
+          ? (teamMemberRows as any[])
+          : []
+        ).filter(
+          (row: any) =>
+            String(row.participant_event_id) ===
+            String(peRow.id)
+        );
+
+      const mainParticipantId =
+        returnedParticipantId;
+
+      const emailMembers =
+        isTeam
+          ? teamRowsForEvent
+            .filter(
+              (row: any) =>
+                String(
+                  row.participant_id
+                ) !== String(
+                  participant?.id ?? ""
+                )
+            )
+            .map(
+              (row: any) => ({
+                participantId:
+                  String(
+                    row.participants?.participant_id ??
+                    ""
+                  ),
+                name:
+                  String(row.name ?? ""),
+                college:
+                  String(
+                    row.participants?.college ??
+                    ""
+                  ),
+                email:
+                  String(row.email ?? ""),
+                phone:
+                  String(row.phone ?? ""),
+                isTeamLeader:
+                  row.is_team_leader === true,
+              })
+            )
+          : [];
+
       const emailResult =
         await sendRegistrationEmail({
           registrationId:
             String(peRow.id),
+
+          participantId:
+            mainParticipantId,
 
           eventName:
             result.event_name ||
@@ -1047,9 +1145,13 @@ export async function POST(
 
           isTeamEvent: isTeam,
 
-          members: isTeam
-            ? (matchedEvent?.members ?? [])
-            : [],
+          isTeamHead:
+            isTeam
+              ? matchedEvent?.isTeamHead === true
+              : false,
+
+          members:
+            emailMembers,
         });
 
       if (!emailResult.success) {
@@ -1122,6 +1224,25 @@ export async function POST(
         totalAmount > 0
           ? "pending"
           : "not_required",
+
+      teamMembers:
+        Array.isArray(teamMemberRows)
+          ? (teamMemberRows as any[]).map(
+            (row: any) => ({
+              participantId:
+                row.participants?.participant_id ??
+                null,
+              name:
+                row.name ?? "",
+              email:
+                row.email ?? "",
+              isTeamLeader:
+                row.is_team_leader === true,
+              participantEventId:
+                row.participant_event_id ?? null,
+            })
+          )
+          : [],
     },
     {
       status: 201,

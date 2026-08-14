@@ -14,6 +14,11 @@ type Member = {
   email: string | null;
   phone: string | null;
   is_team_leader: boolean | null;
+  participant_id: string | null;
+  participants: {
+    participant_id: string;
+    college: string | null;
+  } | null;
 };
 
 export async function GET() {
@@ -36,7 +41,7 @@ export async function GET() {
     supabaseAdmin.from("participants").select("id, participant_id, name, college, email, phone, photo_url, created_at").order("created_at", { ascending: false }),
     supabaseAdmin.from("participant_events").select("id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, created_at").order("created_at", { ascending: false }),
     supabaseAdmin.from("events").select("id, name, category").order("name", { ascending: true }),
-    supabaseAdmin.from("participant_event_members").select("id, participant_event_id, name, email, phone, is_team_leader"),
+    supabaseAdmin.from("participant_event_members").select("id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college)"),
   ]);
   const queryError = participantsResult.error ?? participantEventsResult.error ?? eventsResult.error ?? membersResult.error;
   if (queryError) {
@@ -47,7 +52,25 @@ export async function GET() {
   const participants = (participantsResult.data ?? []) as Participant[];
   const participantEvents = (participantEventsResult.data ?? []) as ParticipantEvent[];
   const events = (eventsResult.data ?? []) as EventRecord[];
-  const members = (membersResult.data ?? []) as Member[];
+  const rawMembers = (membersResult.data ?? []) as any[];
+  const members = rawMembers.map((member) => {
+    const p = Array.isArray(member.participants)
+      ? member.participants[0]
+      : member.participants;
+    return {
+      id: member.id,
+      participant_event_id: member.participant_event_id,
+      name: member.name,
+      email: member.email,
+      phone: member.phone,
+      is_team_leader: member.is_team_leader,
+      participant_id: member.participant_id,
+      participants: p ? {
+        participant_id: String(p.participant_id || ""),
+        college: p.college ? String(p.college) : null
+      } : null,
+    };
+  }) as Member[];
   const participantsById = new Map(participants.map((participant) => [participant.id, participant]));
   const eventsById = new Map(events.map((event) => [event.id, event]));
   const membersByParticipantEventId = new Map<string, Member[]>();

@@ -63,10 +63,25 @@ type EventRecord = {
   category: string | null;
 };
 
+type RegistrationMember = {
+  id: string;
+  participant_event_id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  is_team_leader: boolean | null;
+  participant_id: string | null;
+  participants: {
+    participant_id: string;
+    college: string | null;
+  } | null;
+};
+
 type Registration = {
   participant: Participant;
   event: EventRecord | null;
   registration: ParticipantEvent;
+  members?: RegistrationMember[];
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
@@ -1667,6 +1682,46 @@ export default function AdminPage() {
                             )}
                           />
                         </div>
+
+                        {item.members && item.members.length > 0 && (
+                          <div className="mt-5 border-t border-black/10 pt-4">
+                            <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35 mb-3">
+                              Team Members
+                            </p>
+                            <div className="space-y-2">
+                              {item.members.map((member, idx) => (
+                                <div
+                                  key={member.id}
+                                  className="rounded-[18px] border border-black/5 bg-black/[0.01] p-4 text-xs"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-semibold text-black">
+                                      {member.name}
+                                    </span>
+                                    {member.is_team_leader ? (
+                                      <span className="rounded-full bg-black px-2 py-0.5 text-[8px] font-semibold text-white">
+                                        Leader
+                                      </span>
+                                    ) : (
+                                      <span className="font-mono text-[10px] font-bold text-black/45">
+                                        {member.participants?.participant_id || "No ID"}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="mt-1.5 flex flex-col gap-0.5 text-[10px] text-black/40">
+                                    {member.email && <span>{member.email}</span>}
+                                    {member.phone && <span>{member.phone}</span>}
+                                    {member.participants?.college && (
+                                      <span className="italic mt-0.5">
+                                        {member.participants.college}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         <div className="mt-5 flex gap-2 border-t border-black/10 pt-5">
 

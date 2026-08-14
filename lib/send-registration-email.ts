@@ -1,13 +1,18 @@
 import { Resend } from "resend";
+import QRCode from "qrcode";
 
 export type TeamMember = {
+  participantId: string;
   name: string;
+  college?: string;
   email: string;
   phone?: string;
+  isTeamLeader?: boolean;
 };
 
 export type RegistrationEmailData = {
   registrationId: string;
+  participantId: string;
   eventName: string;
   eventCategory?: string | null;
 
@@ -18,6 +23,7 @@ export type RegistrationEmailData = {
 
   team?: string | null;
   isTeamEvent?: boolean;
+  isTeamHead?: boolean;
   members?: TeamMember[];
 };
 
@@ -85,6 +91,7 @@ export async function sendRegistrationEmail(
 
   const {
     registrationId,
+    participantId,
     eventName,
     eventCategory,
     name,
@@ -93,6 +100,7 @@ export async function sendRegistrationEmail(
     phone,
     team,
     isTeamEvent = false,
+    isTeamHead = false,
     members = [],
   } = data;
 
@@ -114,16 +122,27 @@ export async function sendRegistrationEmail(
   const resend = new Resend(apiKey);
 
   /*
-   * The scanner reads the registration UUID directly
-   * from the QR code.
+   * Generate QR code as a base64 data URI server-side.
+   * This avoids depending on an external API (api.qrserver.com)
+   * which could be down or rate-limited during registration spikes.
    */
-  const qrUrl =
-    "https://api.qrserver.com/v1/create-qr-code/?" +
-    new URLSearchParams({
-      size: "500x500",
-      data: registrationId,
-      margin: "10",
-    }).toString();
+  let qrUrl: string;
+  try {
+    qrUrl = await QRCode.toDataURL(registrationId, {
+      width: 500,
+      margin: 2,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+  } catch {
+    // Fallback to external API if local generation fails
+    qrUrl =
+      "https://api.qrserver.com/v1/create-qr-code/?" +
+      new URLSearchParams({
+        size: "500x500",
+        data: registrationId,
+        margin: "10",
+      }).toString();
+  }
 
   const safeEventName = escapeHtml(eventName);
   const safeCollege = escapeHtml(college);
@@ -138,9 +157,13 @@ export async function sendRegistrationEmail(
   const allTeamMembers: TeamMember[] = isTeamEvent
     ? [
         {
+          participantId,
           name,
+          college,
           email,
           phone,
+          isTeamLeader:
+            isTeamHead === true,
         },
         ...members,
       ]
@@ -153,23 +176,34 @@ export async function sendRegistrationEmail(
   const recipients = isTeamEvent
     ? [
         {
+          participantId,
           name,
+          college,
           email,
           phone,
-          role: "Team Leader",
+          isTeamLeader: false,
+          role: "Team Member",
         },
         ...members.map((member) => ({
+          participantId: member.participantId,
           name: member.name,
+          college: member.college,
           email: member.email,
           phone: member.phone,
-          role: "Team Member",
+          isTeamLeader: member.isTeamLeader,
+          role: member.isTeamLeader
+            ? "Team Head"
+            : "Team Member",
         })),
       ]
     : [
         {
+          participantId,
           name,
+          college,
           email,
           phone,
+          isTeamLeader: false,
           role: "Participant",
         },
       ];
@@ -195,6 +229,10 @@ export async function sendRegistrationEmail(
     const safeRecipientName = escapeHtml(recipient.name);
     const safeRecipientEmail = escapeHtml(recipient.email);
     const safeRecipientPhone = escapeHtml(recipient.phone);
+    const safeRecipientParticipantId =
+      escapeHtml(recipient.participantId);
+    const safeRecipientCollege =
+      escapeHtml(recipient.college);
 
     /*
      * Team member list shown inside EVERY team member's email.
@@ -252,8 +290,8 @@ export async function sendRegistrationEmail(
                           "
                         >
                           ${
-                            index === 0
-                              ? "Member 1 · Team Leader"
+                            member.isTeamLeader
+                              ? `Member ${index + 1} · Team Head`
                               : `Member ${index + 1}`
                           }
 
@@ -299,6 +337,18 @@ export async function sendRegistrationEmail(
                             `
                             : ""
                         }
+
+                        <div
+                          style="
+                            margin-top: 8px;
+                            font-family: monospace;
+                            font-size: 11px;
+                            color: #111111;
+                            font-weight: 600;
+                          "
+                        >
+                          ${escapeHtml(member.participantId)}
+                        </div>
 
                       </div>
                     `;
@@ -513,6 +563,18 @@ export async function sendRegistrationEmail(
                     `
                     : ""
                 }
+
+                <div
+                  style="
+                    margin-top: 10px;
+                    font-family: monospace;
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #111111;
+                  "
+                >
+                  Participant ID: ${safeRecipientParticipantId}
+                </div>
 
               </div>
 

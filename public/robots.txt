@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api
+Disallow: /_next
+
+Sitemap: https://saviskar-2026.vercel.app/sitemap.xml

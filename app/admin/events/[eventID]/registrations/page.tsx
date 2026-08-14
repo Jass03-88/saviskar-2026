@@ -45,6 +45,11 @@ type RegistrationMember = {
   email: string;
   phone: string;
   is_team_leader: boolean;
+  participant_id: string | null;
+  participants: {
+    participant_id: string;
+    college: string | null;
+  } | null;
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
@@ -259,11 +264,22 @@ export default function AdminPage() {
     setRegistrationMembers([]);
 
     const { data, error } = await supabase
-      .from("registration_members")
-      .select(
-        "id, created_at, registration_id, name, email, phone, is_team_leader"
-      )
-      .eq("registration_id", registrationId)
+      .from("participant_event_members")
+      .select(`
+        id,
+        created_at,
+        participant_event_id,
+        name,
+        email,
+        phone,
+        is_team_leader,
+        participant_id,
+        participants (
+          participant_id,
+          college
+        )
+      `)
+      .eq("participant_event_id", registrationId)
       .order("created_at", { ascending: true });
 
     if (error) {
@@ -273,7 +289,12 @@ export default function AdminPage() {
       return;
     }
 
-    setRegistrationMembers((data as RegistrationMember[]) || []);
+    const mapped = (data || []).map((m: any) => ({
+      ...m,
+      registration_id: m.participant_event_id,
+    }));
+
+    setRegistrationMembers(mapped as RegistrationMember[]);
     setMembersLoading(false);
   }
 
@@ -426,11 +447,11 @@ export default function AdminPage() {
     setDeletingId(id);
 
     // Remove child team-member rows first so this also works when
-    // registration_members.registration_id has a restrictive foreign key.
+    // participant_event_members.participant_event_id has a restrictive foreign key.
     const { error: memberDeleteError } = await supabase
-      .from("registration_members")
+      .from("participant_event_members")
       .delete()
-      .eq("registration_id", id);
+      .eq("participant_event_id", id);
 
     if (memberDeleteError) {
       console.error("MEMBER DELETE ERROR:", memberDeleteError);
@@ -1326,9 +1347,16 @@ export default function AdminPage() {
                                 ? "Team leader"
                                 : `Member ${index + 2}`}
                             </p>
-                            <p className="mt-2 font-medium">
-                              {member.name || "—"}
-                            </p>
+                            <div className="mt-2 flex items-center gap-2">
+                              <p className="font-medium">
+                                {member.name || "—"}
+                              </p>
+                              {!member.is_team_leader && member.participants?.participant_id && (
+                                <span className="rounded-[4px] bg-black/[0.05] px-1.5 py-0.5 font-mono text-[10px] font-bold text-black/45">
+                                  {member.participants.participant_id}
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           {member.is_team_leader && (
@@ -1341,6 +1369,7 @@ export default function AdminPage() {
                         <div className="mt-4 grid gap-4 sm:grid-cols-2">
                           <Detail title="Email" value={member.email} />
                           <Detail title="Phone" value={member.phone} />
+                          <Detail title="College / University" value={member.participants?.college || "—"} />
                         </div>
                       </div>
                     ))}
