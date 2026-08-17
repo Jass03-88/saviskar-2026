@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
   RefreshCw,
@@ -15,36 +15,51 @@ import {
   QrCode,
   CheckCircle2,
   Clock3,
+  ArrowLeft,
 } from "lucide-react";
 
-type Registration = {
+/* =========================================================
+   TYPES
+========================================================= */
+
+type Participant = {
   id: string;
-  created_at: string;
-  event_id: string;
+  participant_id: string;
   name: string;
-  college: string;
+  college: string | null;
   email: string;
-  phone: string;
-  team: string | null;
-  checked_in: boolean;
+  phone: string | null;
+  photo_url: string | null;
+  created_at: string;
+};
+
+type ParticipantEvent = {
+  id: string;
+  participant_id: string;
+  event_id: string;
+  registration_status: string | null;
+  payment_status: string | null;
+  payment_amount: number | null;
+  payment_id: string | null;
+  team_name: string | null;
+  checked_in: boolean | null;
   checked_in_at: string | null;
+  created_at: string;
 };
 
 type EventRecord = {
   id: string;
   name: string;
-  slug: string;
   category: string | null;
 };
 
 type RegistrationMember = {
   id: string;
-  created_at: string;
-  registration_id: string;
+  participant_event_id: string;
   name: string;
-  email: string;
-  phone: string;
-  is_team_leader: boolean;
+  email: string | null;
+  phone: string | null;
+  is_team_leader: boolean | null;
   participant_id: string | null;
   participants: {
     participant_id: string;
@@ -52,39 +67,99 @@ type RegistrationMember = {
   } | null;
 };
 
+type Registration = {
+  participant: Participant;
+  event: EventRecord | null;
+  registration: ParticipantEvent;
+  members?: RegistrationMember[];
+};
+
 type StatusFilter = "all" | "checked-in" | "pending";
 
-export default function AdminPage() {
-  const router = useRouter();
+/* =========================================================
+   HELPERS
+========================================================= */
 
-  const [registrations, setRegistrations] = useState<Registration[]>([]);
-  const [eventRecords, setEventRecords] = useState<EventRecord[]>([]);
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatAmount(value: number | null) {
+  const amount = Number(value || 0);
+
+  return amount > 0
+    ? `₹${amount.toLocaleString("en-IN")}`
+    : "Free";
+}
+
+function paymentLabel(value: string | null) {
+  if (!value) return "—";
+
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function paymentClass(value: string | null) {
+  const status = value?.toLowerCase();
+
+  if (status === "paid") {
+    return "bg-green-50 text-green-700 border-green-100";
+  }
+
+  if (status === "pending") {
+    return "bg-amber-50 text-amber-700 border-amber-100";
+  }
+
+  return "bg-black/[0.04] text-black/45 border-black/10";
+}
+
+function escapeCsv(value: unknown) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+/* =========================================================
+   PAGE
+========================================================= */
+
+export default function EventRegistrationsPage() {
+  const router = useRouter();
+  const params = useParams<{ eventID: string }>();
+  const eventID = params.eventID;
+
+  const [allRegistrations, setAllRegistrations] = useState<Registration[]>([]);
+  const [allEvents, setAllEvents] = useState<EventRecord[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const [search, setSearch] = useState("");
-  const [eventFilter, setEventFilter] = useState("all");
-  const [statusFilter, setStatusFilter] =
-    useState<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const [selectedRegistration, setSelectedRegistration] =
     useState<Registration | null>(null);
 
-  const [registrationMembers, setRegistrationMembers] =
-    useState<RegistrationMember[]>([]);
-  const [membersLoading, setMembersLoading] = useState(false);
-  const [membersError, setMembersError] = useState("");
-
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [checkingInId, setCheckingInId] = useState<string | null>(null);
-  const [checkingOutId, setCheckingOutId] = useState<string | null>(null);
 
   // ---------------------------------------------------------
   // AUTH
   // ---------------------------------------------------------
 
-  async function checkAuth() {
+  const checkAuth = useCallback(async () => {
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -95,155 +170,149 @@ export default function AdminPage() {
     }
 
     return true;
-  }
+  }, [router]);
 
   // ---------------------------------------------------------
-  // LOAD EVENTS
+  // CURRENT EVENT NAME
   // ---------------------------------------------------------
 
-  async function loadEvents() {
-    const { data, error } = await supabase
-      .from("events")
-      .select("id, name, slug, category");
+  const currentEvent = useMemo(() => {
+    return allEvents.find((event) => event.id === eventID) ?? null;
+  }, [allEvents, eventID]);
 
-    if (error) {
-      console.error("EVENT LOAD ERROR:", error);
-      return;
-    }
-
-    setEventRecords((data as EventRecord[]) || []);
-  }
+  const currentEventName = currentEvent?.name ?? "Event";
 
   // ---------------------------------------------------------
-  // LOAD REGISTRATIONS
+  // LOAD DATA
   // ---------------------------------------------------------
 
-  async function loadRegistrations() {
-    setLoading(true);
-    setError("");
+  const loadData = useCallback(
+    async (refresh = false) => {
+      if (refresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
 
-    const { data, error } = await supabase
-      .from("registrations")
-      .select("*")
-      .order("created_at", { ascending: false });
+      setError("");
 
-    if (error) {
-      console.error("ADMIN ERROR:", error);
-      setError(error.message);
-      setLoading(false);
-      return;
-    }
+      try {
+        const response = await fetch("/api/admin/registrations", {
+          cache: "no-store",
+        });
 
-    setRegistrations((data as Registration[]) || []);
-    setLoading(false);
-  }
+        if (
+          response.status === 401 ||
+          response.status === 403
+        ) {
+          router.replace("/admin/login");
+          return;
+        }
+
+        const payload = (await response.json()) as {
+          registrations?: Registration[];
+          events?: EventRecord[];
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(
+            payload.error ?? "Could not load registrations."
+          );
+        }
+
+        setAllRegistrations(payload.registrations ?? []);
+        setAllEvents(payload.events ?? []);
+      } catch (loadError) {
+        console.error("EVENT REGISTRATIONS LOAD ERROR:", loadError);
+
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load registrations."
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [router]
+  );
 
   // ---------------------------------------------------------
-  // EVENT NAME RESOLVER
+  // SCOPED REGISTRATIONS (for this event only)
   // ---------------------------------------------------------
 
-  function getEventName(eventId: string) {
-    if (!eventId) {
-      return "Unknown event";
-    }
+  const registrations = useMemo(() => {
+    if (!eventID) return allRegistrations;
 
-    const event = eventRecords.find(
-      (item) =>
-        item.id === eventId ||
-        item.slug?.toLowerCase() === eventId.toLowerCase()
+    return allRegistrations.filter(
+      (item) => item.registration.event_id === eventID
     );
-
-    if (event) {
-      return event.name;
-    }
-
-    // Fallback for older registrations where event_id
-    // contains a slug rather than the Supabase UUID.
-    return eventId
-      .split("-")
-      .map(
-        (word) =>
-          word.charAt(0).toUpperCase() +
-          word.slice(1)
-      )
-      .join(" ");
-  }
+  }, [allRegistrations, eventID]);
 
   // ---------------------------------------------------------
   // INITIALISE + REALTIME
   // ---------------------------------------------------------
 
   useEffect(() => {
-    let registrationChannel:
-      | ReturnType<typeof supabase.channel>
-      | null = null;
+    void loadData();
 
-    let eventChannel:
-      | ReturnType<typeof supabase.channel>
-      | null = null;
+    const channelInstanceId = `${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
 
-    async function initialise() {
-      const authenticated = await checkAuth();
+    const participantChannel = supabase
+      .channel(`event-reg-participants-${channelInstanceId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "participants",
+        },
+        () => {
+          void loadData(true);
+        }
+      )
+      .subscribe();
 
-      if (!authenticated) return;
+    const participantEventChannel = supabase
+      .channel(`event-reg-participant-events-${channelInstanceId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "participant_events",
+        },
+        () => {
+          void loadData(true);
+        }
+      )
+      .subscribe();
 
-      await Promise.all([
-        loadRegistrations(),
-        loadEvents(),
-      ]);
-
-      // Use unique channel names for this mounted AdminPage instance.
-      // This prevents Next.js development remounts / Fast Refresh from reusing
-      // an already-subscribed channel and then trying to add callbacks to it.
-      const channelInstanceId = `${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2)}`;
-
-      registrationChannel = supabase
-        .channel(`admin-registration-changes-${channelInstanceId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "registrations",
-          },
-          () => {
-            void loadRegistrations();
-          }
-        );
-
-      registrationChannel.subscribe();
-
-      eventChannel = supabase
-        .channel(`admin-event-changes-${channelInstanceId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "events",
-          },
-          () => {
-            void loadEvents();
-          }
-        );
-
-      eventChannel.subscribe();
-    }
-
-    initialise();
+    const eventChannel = supabase
+      .channel(`event-reg-events-${channelInstanceId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "events",
+        },
+        () => {
+          void loadData(true);
+        }
+      )
+      .subscribe();
 
     return () => {
-      if (registrationChannel) {
-        supabase.removeChannel(registrationChannel);
-      }
-
-      if (eventChannel) {
-        supabase.removeChannel(eventChannel);
-      }
+      void supabase.removeChannel(participantChannel);
+      void supabase.removeChannel(participantEventChannel);
+      void supabase.removeChannel(eventChannel);
     };
-  }, []);
+  }, [loadData]);
 
   // ---------------------------------------------------------
   // LOGOUT
@@ -255,251 +324,151 @@ export default function AdminPage() {
   }
 
   // ---------------------------------------------------------
-  // REGISTRATION MEMBERS
+  // TOGGLE CHECK IN
   // ---------------------------------------------------------
 
-  async function loadRegistrationMembers(registrationId: string) {
-    setMembersLoading(true);
-    setMembersError("");
-    setRegistrationMembers([]);
+  async function toggleCheckIn(registration: Registration) {
+    const next = registration.registration.checked_in !== true;
 
-    const { data, error } = await supabase
-      .from("participant_event_members")
-      .select(`
-        id,
-        created_at,
-        participant_event_id,
-        name,
-        email,
-        phone,
-        is_team_leader,
-        participant_id,
-        participants (
-          participant_id,
-          college
+    setUpdatingId(registration.registration.id);
+
+    try {
+      const response = await fetch("/api/admin/registrations", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          participantEventId: registration.registration.id,
+          checkedIn: next,
+        }),
+      });
+
+      const payload = (await response.json()) as {
+        registration?: {
+          checked_in: boolean;
+          checked_in_at: string | null;
+        };
+        error?: string;
+      };
+
+      if (!response.ok || !payload.registration) {
+        throw new Error(
+          payload.error ?? "Could not update check-in status."
+        );
+      }
+
+      setAllRegistrations((current) =>
+        current.map((item) =>
+          item.registration.id === registration.registration.id
+            ? {
+                ...item,
+                registration: {
+                  ...item.registration,
+                  ...payload.registration,
+                },
+              }
+            : item
         )
-      `)
-      .eq("participant_event_id", registrationId)
-      .order("created_at", { ascending: true });
+      );
 
-    if (error) {
-      console.error("MEMBER LOAD ERROR:", error);
-      setMembersError(error.message);
-      setMembersLoading(false);
-      return;
+      if (
+        selectedRegistration?.registration.id ===
+        registration.registration.id
+      ) {
+        setSelectedRegistration((current) =>
+          current
+            ? {
+                ...current,
+                registration: {
+                  ...current.registration,
+                  ...payload.registration,
+                },
+              }
+            : current
+        );
+      }
+    } catch (updateError) {
+      console.error("CHECK-IN ERROR:", updateError);
+
+      setError(
+        updateError instanceof Error
+          ? updateError.message
+          : "Could not update check-in status."
+      );
+    } finally {
+      setUpdatingId(null);
     }
-
-    const mapped = (data || []).map((m: any) => ({
-      ...m,
-      registration_id: m.participant_event_id,
-    }));
-
-    setRegistrationMembers(mapped as RegistrationMember[]);
-    setMembersLoading(false);
-  }
-
-  function openRegistration(registration: Registration) {
-    setSelectedRegistration(registration);
-    loadRegistrationMembers(registration.id);
-  }
-
-  function closeRegistration() {
-    setSelectedRegistration(null);
-    setRegistrationMembers([]);
-    setMembersError("");
-    setMembersLoading(false);
-  }
-
-  // ---------------------------------------------------------
-  // MANUAL CHECK IN
-  // ---------------------------------------------------------
-
-  async function checkInRegistration(id: string) {
-    if (checkingInId) return;
-
-    const registration = registrations.find((item) => item.id === id);
-
-    if (!registration) {
-      alert("Registration not found.");
-      return;
-    }
-
-    if (registration.checked_in) {
-      alert("This participant is already checked in.");
-      return;
-    }
-
-    setCheckingInId(id);
-    const checkedInAt = new Date().toISOString();
-
-    const { error } = await supabase
-      .from("registrations")
-      .update({
-        checked_in: true,
-        checked_in_at: checkedInAt,
-      })
-      .eq("id", id)
-      .eq("checked_in", false);
-
-    if (error) {
-      console.error("MANUAL CHECK IN ERROR:", error);
-      alert(`Could not check in participant: ${error.message}`);
-      setCheckingInId(null);
-      return;
-    }
-
-    setRegistrations((current) =>
-      current.map((item) =>
-        item.id === id
-          ? { ...item, checked_in: true, checked_in_at: checkedInAt }
-          : item
-      )
-    );
-
-    setSelectedRegistration((current) =>
-      current?.id === id
-        ? { ...current, checked_in: true, checked_in_at: checkedInAt }
-        : current
-    );
-
-    setCheckingInId(null);
-  }
-
-  // ---------------------------------------------------------
-  // UNDO CHECK IN
-  // ---------------------------------------------------------
-
-  async function undoCheckInRegistration(id: string) {
-    if (checkingOutId) return;
-
-    const registration = registrations.find((item) => item.id === id);
-
-    if (!registration) {
-      alert("Registration not found.");
-      return;
-    }
-
-    if (!registration.checked_in) {
-      alert("This participant is already pending.");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      "Undo this participant's check-in? They will return to Pending status and can be checked in again."
-    );
-
-    if (!confirmed) return;
-
-    setCheckingOutId(id);
-
-    const { error } = await supabase
-      .from("registrations")
-      .update({
-        checked_in: false,
-        checked_in_at: null,
-      })
-      .eq("id", id)
-      .eq("checked_in", true);
-
-    if (error) {
-      console.error("UNDO CHECK IN ERROR:", error);
-      alert(`Could not undo check-in: ${error.message}`);
-      setCheckingOutId(null);
-      return;
-    }
-
-    setRegistrations((current) =>
-      current.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              checked_in: false,
-              checked_in_at: null,
-            }
-          : item
-      )
-    );
-
-    setSelectedRegistration((current) =>
-      current?.id === id
-        ? {
-            ...current,
-            checked_in: false,
-            checked_in_at: null,
-          }
-        : current
-    );
-
-    setCheckingOutId(null);
   }
 
   // ---------------------------------------------------------
   // DELETE REGISTRATION
   // ---------------------------------------------------------
 
-  async function deleteRegistration(id: string) {
+  async function deleteRegistration(registration: Registration) {
     const confirmed = window.confirm(
-      "Are you sure you want to permanently delete this registration?"
+      `Remove ${registration.participant.name} from ${currentEventName}?\n\nTheir Participant ID will remain available for other events.`
     );
 
     if (!confirmed) return;
 
-    setDeletingId(id);
+    setDeletingId(registration.registration.id);
 
-    // Remove child team-member rows first so this also works when
-    // participant_event_members.participant_event_id has a restrictive foreign key.
-    const { error: memberDeleteError } = await supabase
-      .from("participant_event_members")
-      .delete()
-      .eq("participant_event_id", id);
-
-    if (memberDeleteError) {
-      console.error("MEMBER DELETE ERROR:", memberDeleteError);
-      alert(
-        `Could not delete registration members: ${memberDeleteError.message}`
+    try {
+      const response = await fetch(
+        `/api/admin/registrations?participantEventId=${encodeURIComponent(
+          registration.registration.id
+        )}`,
+        { method: "DELETE" }
       );
+
+      const payload = (await response.json()) as {
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ?? "Could not delete the event registration."
+        );
+      }
+
+      setAllRegistrations((current) =>
+        current.filter(
+          (item) =>
+            item.registration.id !== registration.registration.id
+        )
+      );
+
+      if (
+        selectedRegistration?.registration.id ===
+        registration.registration.id
+      ) {
+        closeRegistration();
+      }
+    } catch (deleteError) {
+      console.error("REGISTRATION DELETE ERROR:", deleteError);
+
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete the event registration."
+      );
+    } finally {
       setDeletingId(null);
-      return;
     }
-
-    const { error } = await supabase
-      .from("registrations")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      console.error("DELETE ERROR:", error);
-      alert(`Could not delete registration: ${error.message}`);
-      setDeletingId(null);
-      return;
-    }
-
-    setRegistrations((current) =>
-      current.filter((registration) => registration.id !== id)
-    );
-
-    if (selectedRegistration?.id === id) {
-      closeRegistration();
-    }
-
-    setDeletingId(null);
   }
 
   // ---------------------------------------------------------
-  // EVENTS USED IN REGISTRATIONS
+  // REGISTRATION DETAIL
   // ---------------------------------------------------------
 
-  const events = useMemo(() => {
-    return Array.from(
-      new Set(
-        registrations
-          .map((registration) => registration.event_id)
-          .filter(Boolean)
-      )
-    ).sort((a, b) =>
-      getEventName(a).localeCompare(getEventName(b))
-    );
-  }, [registrations, eventRecords]);
+  function openRegistration(registration: Registration) {
+    setSelectedRegistration(registration);
+  }
+
+  function closeRegistration() {
+    setSelectedRegistration(null);
+  }
 
   // ---------------------------------------------------------
   // FILTERED REGISTRATIONS
@@ -508,84 +477,39 @@ export default function AdminPage() {
   const filteredRegistrations = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return registrations.filter((registration) => {
-      const eventName = getEventName(
-        registration.event_id
-      ).toLowerCase();
+    return registrations.filter((item) => {
+      const participant = item.participant;
 
       const matchesSearch =
         !query ||
-        registration.name?.toLowerCase().includes(query) ||
-        registration.college?.toLowerCase().includes(query) ||
-        registration.email?.toLowerCase().includes(query) ||
-        registration.phone?.toLowerCase().includes(query) ||
-        registration.team?.toLowerCase().includes(query) ||
-        registration.event_id?.toLowerCase().includes(query) ||
-        eventName.includes(query) ||
-        registration.id?.toLowerCase().includes(query);
-
-      const matchesEvent =
-        eventFilter === "all" ||
-        registration.event_id === eventFilter;
+        participant.name?.toLowerCase().includes(query) ||
+        participant.college?.toLowerCase().includes(query) ||
+        participant.email?.toLowerCase().includes(query) ||
+        participant.phone?.toLowerCase().includes(query) ||
+        participant.participant_id?.toLowerCase().includes(query) ||
+        item.registration.team_name?.toLowerCase().includes(query) ||
+        item.registration.id?.toLowerCase().includes(query);
 
       const matchesStatus =
         statusFilter === "all" ||
         (statusFilter === "checked-in" &&
-          registration.checked_in === true) ||
+          item.registration.checked_in === true) ||
         (statusFilter === "pending" &&
-          registration.checked_in !== true);
+          item.registration.checked_in !== true);
 
-      return (
-        matchesSearch &&
-        matchesEvent &&
-        matchesStatus
-      );
+      return matchesSearch && matchesStatus;
     });
-  }, [
-    registrations,
-    search,
-    eventFilter,
-    statusFilter,
-    eventRecords,
-  ]);
-
-  // ---------------------------------------------------------
-  // EVENT ANALYTICS
-  // ---------------------------------------------------------
-
-  const eventBreakdown = useMemo(() => {
-    return events.map((eventId) => {
-      const count = registrations.filter(
-        (registration) =>
-          registration.event_id === eventId
-      ).length;
-
-      const percentage =
-        registrations.length > 0
-          ? Math.round(
-              (count / registrations.length) * 100
-            )
-          : 0;
-
-      return {
-        eventId,
-        eventName: getEventName(eventId),
-        count,
-        percentage,
-      };
-    });
-  }, [events, registrations, eventRecords]);
+  }, [registrations, search, statusFilter]);
 
   // ---------------------------------------------------------
   // STATS
   // ---------------------------------------------------------
 
   const totalCheckedIn = registrations.filter(
-    (registration) => registration.checked_in
+    (item) => item.registration.checked_in === true
   ).length;
 
-  const totalPending =
-    registrations.length - totalCheckedIn;
+  const totalPending = registrations.length - totalCheckedIn;
 
   // ---------------------------------------------------------
   // CSV EXPORT
@@ -594,63 +518,45 @@ export default function AdminPage() {
   function exportCSV() {
     const rows = [
       [
-        "Registration ID",
+        "Participant ID",
         "Name",
         "Event",
-        "Event ID",
         "College",
         "Email",
         "Phone",
         "Team",
-        "Registered",
-        "Status",
+        "Registration Status",
+        "Payment Status",
+        "Payment Amount",
+        "Payment ID",
+        "Checked In",
         "Checked In At",
+        "Registered At",
       ],
 
-      ...filteredRegistrations.map(
-        (registration) => [
-          registration.id,
-          registration.name,
-          getEventName(registration.event_id),
-          registration.event_id,
-          registration.college,
-          registration.email,
-          registration.phone,
-          registration.team || "Individual",
-
-          registration.created_at
-            ? new Date(
-                registration.created_at
-              ).toLocaleString()
-            : "",
-
-          registration.checked_in
-            ? "Checked In"
-            : "Pending",
-
-          registration.checked_in_at
-            ? new Date(
-                registration.checked_in_at
-              ).toLocaleString()
-            : "",
-        ]
-      ),
+      ...filteredRegistrations.map((item) => [
+        escapeCsv(item.participant.participant_id),
+        escapeCsv(item.participant.name),
+        escapeCsv(item.event?.name ?? item.registration.event_id),
+        escapeCsv(item.participant.college ?? ""),
+        escapeCsv(item.participant.email),
+        escapeCsv(item.participant.phone ?? ""),
+        escapeCsv(item.registration.team_name ?? "Individual"),
+        escapeCsv(item.registration.registration_status ?? ""),
+        escapeCsv(item.registration.payment_status ?? ""),
+        escapeCsv(item.registration.payment_amount ?? 0),
+        escapeCsv(item.registration.payment_id ?? ""),
+        escapeCsv(item.registration.checked_in ? "Yes" : "No"),
+        escapeCsv(
+          item.registration.checked_in_at
+            ? formatDate(item.registration.checked_in_at)
+            : ""
+        ),
+        escapeCsv(formatDate(item.registration.created_at)),
+      ]),
     ];
 
-    const csv = rows
-      .map((row) =>
-        row
-          .map((value) => {
-            const stringValue = String(value ?? "");
-
-            return `"${stringValue.replace(
-              /"/g,
-              '""'
-            )}"`;
-          })
-          .join(",")
-      )
-      .join("\n");
+    const csv = rows.map((row) => row.join(",")).join("\n");
 
     const blob = new Blob([csv], {
       type: "text/csv;charset=utf-8;",
@@ -662,7 +568,9 @@ export default function AdminPage() {
 
     link.href = url;
 
-    link.download = `saviskar-registrations-${new Date()
+    link.download = `saviskar-${currentEventName
+      .toLowerCase()
+      .replace(/\s+/g, "-")}-registrations-${new Date()
       .toISOString()
       .slice(0, 10)}.csv`;
 
@@ -687,16 +595,24 @@ export default function AdminPage() {
 
         <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
+            <button
+              onClick={() => router.push("/admin/events")}
+              className="mb-4 flex items-center gap-2 text-sm text-black/45 transition hover:text-black"
+            >
+              <ArrowLeft size={15} />
+              Back to events
+            </button>
+
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
               Saviskar 2026
             </p>
 
             <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl">
-              Registrations
+              {currentEventName}
             </h1>
 
             <p className="mt-4 text-sm text-black/45">
-              Manage registrations and participant entry.
+              Manage registrations and participant entry for this event.
             </p>
           </div>
 
@@ -713,19 +629,14 @@ export default function AdminPage() {
             </button>
 
             <button
-              onClick={async () => {
-                await Promise.all([
-                  loadRegistrations(),
-                  loadEvents(),
-                ]);
-              }}
-              disabled={loading}
+              onClick={() => void loadData(true)}
+              disabled={loading || refreshing}
               className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] disabled:opacity-50"
             >
               <RefreshCw
                 size={15}
                 className={
-                  loading ? "animate-spin" : ""
+                  loading || refreshing ? "animate-spin" : ""
                 }
               />
 
@@ -768,51 +679,6 @@ export default function AdminPage() {
 
         </div>
 
-        {/* EVENT ANALYTICS */}
-
-        {registrations.length > 0 && (
-          <div className="mb-8 rounded-[28px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.04)] md:p-8">
-
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
-              Event analytics
-            </p>
-
-            <h2 className="mt-2 text-xl font-semibold">
-              Registration breakdown
-            </h2>
-
-            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-
-              {eventBreakdown.map((item) => (
-                <div
-                  key={item.eventId}
-                  className="rounded-[20px] bg-black/[0.035] p-5"
-                >
-
-                  <p className="text-[10px] uppercase tracking-[0.16em] text-black/40">
-                    {item.eventName}
-                  </p>
-
-                  <div className="mt-4 flex items-end justify-between">
-
-                    <p className="text-3xl font-semibold">
-                      {item.count}
-                    </p>
-
-                    <p className="text-xs text-black/35">
-                      {item.percentage}%
-                    </p>
-
-                  </div>
-
-                </div>
-              ))}
-
-            </div>
-
-          </div>
-        )}
-
         {/* FILTERS */}
 
         <div className="mb-5 rounded-[24px] bg-white p-3 shadow-[0_15px_50px_rgba(0,0,0,0.035)]">
@@ -831,34 +697,11 @@ export default function AdminPage() {
                 onChange={(event) =>
                   setSearch(event.target.value)
                 }
-                placeholder="Search name, event, college, email, phone, team..."
+                placeholder="Search name, college, email, phone, team, participant ID..."
                 className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-black/70"
               />
 
             </div>
-
-            <select
-              value={eventFilter}
-              onChange={(event) =>
-                setEventFilter(event.target.value)
-              }
-              className="rounded-full bg-black/[0.035] px-5 py-3 text-sm outline-none"
-            >
-
-              <option value="all">
-                All events
-              </option>
-
-              {events.map((eventId) => (
-                <option
-                  key={eventId}
-                  value={eventId}
-                >
-                  {getEventName(eventId)}
-                </option>
-              ))}
-
-            </select>
 
             <select
               value={statusFilter}
@@ -943,7 +786,9 @@ export default function AdminPage() {
                 </p>
 
                 <p className="mt-2 text-sm text-black/40">
-                  Try changing your filters.
+                  {registrations.length === 0
+                    ? "No one has registered for this event yet."
+                    : "Try changing your filters."}
                 </p>
 
               </div>
@@ -964,10 +809,6 @@ export default function AdminPage() {
                     </TableHead>
 
                     <TableHead>
-                      Event
-                    </TableHead>
-
-                    <TableHead>
                       College
                     </TableHead>
 
@@ -977,6 +818,10 @@ export default function AdminPage() {
 
                     <TableHead>
                       Team
+                    </TableHead>
+
+                    <TableHead>
+                      Payment
                     </TableHead>
 
                     <TableHead>
@@ -997,61 +842,59 @@ export default function AdminPage() {
                 <tbody>
 
                   {filteredRegistrations.map(
-                    (registration) => (
+                    (item) => (
 
                       <tr
-                        key={registration.id}
+                        key={item.registration.id}
                         className="border-b border-black/[0.06] transition hover:bg-black/[0.02]"
                       >
 
                         <td className="px-6 py-5">
 
                           <p className="font-medium">
-                            {registration.name}
+                            {item.participant.name}
                           </p>
 
                           <p className="mt-1 max-w-[170px] truncate font-mono text-[10px] text-black/35">
-                            {registration.id}
+                            {item.participant.participant_id}
                           </p>
-
-                        </td>
-
-                        {/* FIXED EVENT NAME */}
-
-                        <td className="px-6 py-5">
-
-                          <span className="rounded-full bg-black/[0.05] px-3 py-1.5 text-xs">
-                            {getEventName(
-                              registration.event_id
-                            )}
-                          </span>
 
                         </td>
 
                         <td className="px-6 py-5 text-sm text-black/60">
-                          {registration.college}
+                          {item.participant.college || "—"}
                         </td>
 
                         <td className="px-6 py-5">
 
                           <p className="text-sm">
-                            {registration.email}
+                            {item.participant.email}
                           </p>
 
                           <p className="mt-1 text-xs text-black/40">
-                            {registration.phone}
+                            {item.participant.phone || "—"}
                           </p>
 
                         </td>
 
                         <td className="px-6 py-5 text-sm text-black/60">
-                          {registration.team ||
+                          {item.registration.team_name ||
                             "Individual"}
                         </td>
 
                         <td className="px-6 py-5">
+                          <span
+                            className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium ${paymentClass(
+                              item.registration.payment_status
+                            )}`}
+                          >
+                            {paymentLabel(item.registration.payment_status)}
+                          </span>
+                        </td>
 
-                          {registration.checked_in ? (
+                        <td className="px-6 py-5">
+
+                          {item.registration.checked_in ? (
 
                             <div>
 
@@ -1060,12 +903,12 @@ export default function AdminPage() {
                                 Checked in
                               </span>
 
-                              {registration.checked_in_at && (
+                              {item.registration.checked_in_at && (
 
                                 <p className="mt-2 text-[10px] text-black/35">
-                                  {new Date(
-                                    registration.checked_in_at
-                                  ).toLocaleString()}
+                                  {formatDate(
+                                    item.registration.checked_in_at
+                                  )}
                                 </p>
 
                               )}
@@ -1085,11 +928,7 @@ export default function AdminPage() {
 
                         <td className="px-6 py-5 text-sm text-black/45">
 
-                          {registration.created_at
-                            ? new Date(
-                                registration.created_at
-                              ).toLocaleString()
-                            : "—"}
+                          {formatDate(item.registration.created_at)}
 
                         </td>
 
@@ -1099,7 +938,7 @@ export default function AdminPage() {
 
                             <button
                               onClick={() =>
-                                openRegistration(registration)
+                                openRegistration(item)
                               }
                               className="flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs transition hover:bg-black hover:text-white"
                             >
@@ -1109,19 +948,17 @@ export default function AdminPage() {
 
                             <button
                               onClick={() =>
-                                deleteRegistration(
-                                  registration.id
-                                )
+                                deleteRegistration(item)
                               }
                               disabled={
                                 deletingId ===
-                                registration.id
+                                item.registration.id
                               }
                               className="flex h-9 w-9 items-center justify-center rounded-full border border-red-100 text-red-500 transition hover:bg-red-50 disabled:opacity-40"
                             >
 
                               {deletingId ===
-                              registration.id ? (
+                              item.registration.id ? (
 
                                 <RefreshCw
                                   size={13}
@@ -1191,7 +1028,7 @@ export default function AdminPage() {
                 </p>
 
                 <h2 className="mt-2 text-3xl font-semibold">
-                  {selectedRegistration.name}
+                  {selectedRegistration.participant.name}
                 </h2>
 
               </div>
@@ -1208,11 +1045,11 @@ export default function AdminPage() {
             <div className="mb-7 rounded-[20px] bg-black p-5 text-white">
 
               <p className="text-[9px] uppercase tracking-[0.2em] text-white/40">
-                Registration ID
+                Participant ID
               </p>
 
               <p className="mt-2 break-all font-mono text-sm">
-                {selectedRegistration.id}
+                {selectedRegistration.participant.participant_id}
               </p>
 
             </div>
@@ -1221,73 +1058,81 @@ export default function AdminPage() {
 
               <Detail
                 title="Full name"
-                value={selectedRegistration.name}
+                value={selectedRegistration.participant.name}
               />
 
               <Detail
                 title="Event"
-                value={getEventName(
-                  selectedRegistration.event_id
-                )}
+                value={
+                  selectedRegistration.event?.name ??
+                  selectedRegistration.registration.event_id
+                }
               />
 
               <Detail
                 title="College / University"
-                value={selectedRegistration.college}
+                value={selectedRegistration.participant.college ?? ""}
               />
 
               <Detail
                 title="Team"
                 value={
-                  selectedRegistration.team ||
+                  selectedRegistration.registration.team_name ||
                   "Individual"
                 }
               />
 
               <Detail
                 title="Email"
-                value={selectedRegistration.email}
+                value={selectedRegistration.participant.email}
               />
 
               <Detail
                 title="Phone"
-                value={selectedRegistration.phone}
+                value={selectedRegistration.participant.phone ?? ""}
+              />
+
+              <Detail
+                title="Payment"
+                value={`${paymentLabel(
+                  selectedRegistration.registration.payment_status
+                )} — ${formatAmount(
+                  selectedRegistration.registration.payment_amount
+                )}`}
               />
 
               <Detail
                 title="Registered"
-                value={
-                  selectedRegistration.created_at
-                    ? new Date(
-                        selectedRegistration.created_at
-                      ).toLocaleString()
-                    : "—"
-                }
+                value={formatDate(
+                  selectedRegistration.registration.created_at
+                )}
               />
 
               <Detail
                 title="Entry status"
                 value={
-                  selectedRegistration.checked_in
+                  selectedRegistration.registration.checked_in
                     ? "Checked in"
                     : "Pending"
                 }
               />
 
-              {selectedRegistration.checked_in_at && (
+              {selectedRegistration.registration.checked_in_at && (
 
                 <Detail
                   title="Checked in at"
-                  value={new Date(
-                    selectedRegistration.checked_in_at
-                  ).toLocaleString()}
+                  value={formatDate(
+                    selectedRegistration.registration.checked_in_at
+                  )}
                 />
 
               )}
 
             </div>
 
-            {selectedRegistration.team && (
+            {selectedRegistration.registration.team_name &&
+              selectedRegistration.members &&
+              selectedRegistration.members.length > 0 && (
               <div className="mt-8 border-t border-black/[0.08] pt-8">
                 <div className="mb-5 flex items-end justify-between gap-4">
                   <div>
@@ -1295,102 +1140,76 @@ export default function AdminPage() {
                       Team members
                     </p>
                     <h3 className="mt-2 text-xl font-semibold">
-                      {selectedRegistration.team}
+                      {selectedRegistration.registration.team_name}
                     </h3>
                   </div>
 
-                  {!membersLoading && !membersError && (
-                    <span className="rounded-full bg-black/[0.05] px-3 py-1.5 text-xs text-black/50">
-                      {registrationMembers.length} additional{" "}
-                      {registrationMembers.length === 1 ? "member" : "members"}
-                    </span>
-                  )}
+                  <span className="rounded-full bg-black/[0.05] px-3 py-1.5 text-xs text-black/50">
+                    {selectedRegistration.members.length}{" "}
+                    {selectedRegistration.members.length === 1
+                      ? "member"
+                      : "members"}
+                  </span>
                 </div>
 
-                <div className="mb-4 rounded-[18px] bg-black/[0.035] p-5">
-                  <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35">
-                    Team leader
-                  </p>
-                  <p className="mt-2 font-medium">
-                    {selectedRegistration.name}
-                  </p>
-                  <div className="mt-2 flex flex-col gap-1 text-xs text-black/45 sm:flex-row sm:gap-4">
-                    <span>{selectedRegistration.email || "—"}</span>
-                    <span>{selectedRegistration.phone || "—"}</span>
-                  </div>
-                </div>
-
-                {membersLoading ? (
-                  <div className="flex items-center gap-3 rounded-[18px] border border-black/[0.07] p-5 text-sm text-black/45">
-                    <RefreshCw size={15} className="animate-spin" />
-                    Loading team members...
-                  </div>
-                ) : membersError ? (
-                  <div className="rounded-[18px] bg-red-50 p-5 text-sm text-red-700">
-                    Could not load team members: {membersError}
-                  </div>
-                ) : registrationMembers.length === 0 ? (
-                  <div className="rounded-[18px] border border-black/[0.07] p-5 text-sm text-black/45">
-                    No additional team members are stored for this registration.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {registrationMembers.map((member, index) => (
-                      <div
-                        key={member.id}
-                        className="rounded-[18px] border border-black/[0.07] p-5"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35">
-                              {member.is_team_leader
-                                ? "Team leader"
-                                : `Member ${index + 2}`}
+                <div className="space-y-3">
+                  {selectedRegistration.members.map((member, index) => (
+                    <div
+                      key={member.id}
+                      className="rounded-[18px] border border-black/[0.07] p-5"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35">
+                            {member.is_team_leader
+                              ? "Team leader"
+                              : `Member ${index + 1}`}
+                          </p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <p className="font-medium">
+                              {member.name || "—"}
                             </p>
-                            <div className="mt-2 flex items-center gap-2">
-                              <p className="font-medium">
-                                {member.name || "—"}
-                              </p>
-                              {!member.is_team_leader && member.participants?.participant_id && (
-                                <span className="rounded-[4px] bg-black/[0.05] px-1.5 py-0.5 font-mono text-[10px] font-bold text-black/45">
-                                  {member.participants.participant_id}
-                                </span>
-                              )}
-                            </div>
+                            {member.participants?.participant_id && (
+                              <span className="rounded-[4px] bg-black/[0.05] px-1.5 py-0.5 font-mono text-[10px] font-bold text-black/45">
+                                {member.participants.participant_id}
+                              </span>
+                            )}
                           </div>
-
-                          {member.is_team_leader && (
-                            <span className="rounded-full bg-black px-3 py-1 text-[10px] text-white">
-                              Leader
-                            </span>
-                          )}
                         </div>
 
-                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                          <Detail title="Email" value={member.email} />
-                          <Detail title="Phone" value={member.phone} />
-                          <Detail title="College / University" value={member.participants?.college || "—"} />
-                        </div>
+                        {member.is_team_leader && (
+                          <span className="rounded-full bg-black px-3 py-1 text-[10px] text-white">
+                            Leader
+                          </span>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                )}
+
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        <Detail title="Email" value={member.email ?? ""} />
+                        <Detail title="Phone" value={member.phone ?? ""} />
+                        <Detail
+                          title="College / University"
+                          value={member.participants?.college ?? "—"}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <button
                 onClick={() =>
-                  deleteRegistration(selectedRegistration.id)
+                  deleteRegistration(selectedRegistration)
                 }
                 disabled={
-                  deletingId === selectedRegistration.id ||
-                  checkingInId === selectedRegistration.id ||
-                  checkingOutId === selectedRegistration.id
+                  deletingId === selectedRegistration.registration.id ||
+                  updatingId === selectedRegistration.registration.id
                 }
                 className="flex items-center justify-center gap-2 rounded-full border border-red-100 px-5 py-3 text-sm text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {deletingId === selectedRegistration.id ? (
+                {deletingId === selectedRegistration.registration.id ? (
                   <RefreshCw size={14} className="animate-spin" />
                 ) : (
                   <Trash2 size={14} />
@@ -1399,43 +1218,43 @@ export default function AdminPage() {
               </button>
 
               <div className="flex flex-col gap-3 sm:flex-row">
-                {!selectedRegistration.checked_in ? (
+                {!selectedRegistration.registration.checked_in ? (
                   <button
                     onClick={() =>
-                      checkInRegistration(selectedRegistration.id)
+                      toggleCheckIn(selectedRegistration)
                     }
                     disabled={
-                      checkingInId === selectedRegistration.id ||
-                      deletingId === selectedRegistration.id
+                      updatingId === selectedRegistration.registration.id ||
+                      deletingId === selectedRegistration.registration.id
                     }
                     className="flex items-center justify-center gap-2 rounded-full bg-green-600 px-6 py-3 text-sm font-medium text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {checkingInId === selectedRegistration.id ? (
+                    {updatingId === selectedRegistration.registration.id ? (
                       <RefreshCw size={15} className="animate-spin" />
                     ) : (
                       <CheckCircle2 size={15} />
                     )}
-                    {checkingInId === selectedRegistration.id
+                    {updatingId === selectedRegistration.registration.id
                       ? "Checking in..."
                       : "Check In"}
                   </button>
                 ) : (
                   <button
                     onClick={() =>
-                      undoCheckInRegistration(selectedRegistration.id)
+                      toggleCheckIn(selectedRegistration)
                     }
                     disabled={
-                      checkingOutId === selectedRegistration.id ||
-                      deletingId === selectedRegistration.id
+                      updatingId === selectedRegistration.registration.id ||
+                      deletingId === selectedRegistration.registration.id
                     }
                     className="flex items-center justify-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-6 py-3 text-sm font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {checkingOutId === selectedRegistration.id ? (
+                    {updatingId === selectedRegistration.registration.id ? (
                       <RefreshCw size={15} className="animate-spin" />
                     ) : (
                       <Clock3 size={15} />
                     )}
-                    {checkingOutId === selectedRegistration.id
+                    {updatingId === selectedRegistration.registration.id
                       ? "Undoing..."
                       : "Undo Check-In"}
                   </button>
@@ -1444,9 +1263,8 @@ export default function AdminPage() {
                 <button
                   onClick={closeRegistration}
                   disabled={
-                    checkingInId === selectedRegistration.id ||
-                    checkingOutId === selectedRegistration.id ||
-                    deletingId === selectedRegistration.id
+                    updatingId === selectedRegistration.registration.id ||
+                    deletingId === selectedRegistration.registration.id
                   }
                   className="rounded-full bg-black px-7 py-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
