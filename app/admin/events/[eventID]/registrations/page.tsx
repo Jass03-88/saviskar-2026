@@ -799,7 +799,7 @@ export default function EventRegistrationsPage() {
               Saviskar 2026
             </p>
 
-            <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl">
+            <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl text-black">
               {currentEventName}
             </h1>
 
@@ -850,7 +850,7 @@ export default function EventRegistrationsPage() {
                 loading ||
                 refreshing
               }
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] disabled:opacity-50"
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] disabled:opacity-50 text-black"
             >
               <RefreshCw
                 size={15}
@@ -867,7 +867,7 @@ export default function EventRegistrationsPage() {
 
             <button
               onClick={logout}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03]"
+              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] text-black"
             >
               <LogOut size={15} />
               Logout
@@ -913,7 +913,7 @@ export default function EventRegistrationsPage() {
 
         {/* FILTERS */}
 
-        <div className="mb-5 rounded-[24px] bg-white p-3 shadow-[0_15px_50px_rgba(0,0,0,0.035)]">
+        <div className="mb-5 rounded-[24px] bg-white p-3 shadow-[0_15px_50px_rgba(0,0,0,0.035)] text-sm text-black/70">
 
           <div className="flex flex-col gap-3 lg:flex-row">
 
@@ -1017,7 +1017,7 @@ export default function EventRegistrationsPage() {
                   className="mx-auto mb-4 text-black/25"
                 />
 
-                <p className="font-medium">
+                <p className="font-medium text-black">
                   No registrations found
                 </p>
 

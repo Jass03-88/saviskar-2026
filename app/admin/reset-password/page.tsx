@@ -53,6 +53,19 @@ export default function ResetPasswordPage() {
   useEffect(() => {
     let mounted = true;
 
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!mounted) return;
+
+        if (event === "PASSWORD_RECOVERY" && session?.user) {
+          setEmail(session.user.email ?? "");
+          setState("ready");
+        }
+      }
+    );
+
     async function initialize() {
       try {
         const {
@@ -60,20 +73,17 @@ export default function ResetPasswordPage() {
           error: sessionError,
         } = await supabase.auth.getSession();
 
-        if (!mounted) {
-          return;
-        }
+        if (!mounted) return;
 
         if (sessionError) {
           console.error(
-            "INVITATION/RESET SESSION ERROR:",
+            "RESET SESSION ERROR:",
             sessionError
           );
 
           setError(
             "Could not verify your session. Please open the newest email link again."
           );
-
           setState("error");
           return;
         }
@@ -82,30 +92,18 @@ export default function ResetPasswordPage() {
           setError(
             "This link is missing or has expired. Please request a new link."
           );
-
           setState("error");
           return;
         }
 
-        setEmail(
-          session.user.email ?? ""
-        );
-
+        setEmail(session.user.email ?? "");
         setState("ready");
-      } catch (initializeError) {
-        console.error(
-          "INITIALIZATION ERROR:",
-          initializeError
-        );
+      } catch (error) {
+        console.error("RESET INITIALIZATION ERROR:", error);
 
-        if (!mounted) {
-          return;
-        }
+        if (!mounted) return;
 
-        setError(
-          "Could not verify this link."
-        );
-
+        setError("Could not verify this link.");
         setState("error");
       }
     }
@@ -114,6 +112,7 @@ export default function ResetPasswordPage() {
 
     return () => {
       mounted = false;
+      subscription.unsubscribe();
     };
   }, [supabase]);
 

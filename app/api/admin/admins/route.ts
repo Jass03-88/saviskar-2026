@@ -381,11 +381,12 @@ export async function POST(request: Request) {
        another invitation to an Auth user that already exists.
     ----------------------------------------------------- */
 
-    const requestOrigin =
+    const siteUrl =
+      process.env.NEXT_PUBLIC_SITE_URL ??
       new URL(request.url).origin;
 
     const redirectTo =
-      `${requestOrigin}/admin/reset-password`;
+      `${siteUrl}/admin/reset-password`;
 
     console.log(
       "========================================"
@@ -471,11 +472,12 @@ export async function POST(request: Request) {
      - User lands on /admin/invite
   ======================================================= */
 
-  const requestOrigin =
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ??
     new URL(request.url).origin;
 
   const redirectTo =
-    `${requestOrigin}/admin/reset-password`;
+    `${siteUrl}/admin/reset-password`;
 
   console.log(
     "========================================"

@@ -476,7 +476,7 @@ export default function AdminManagementPage() {
 
         <section className="mb-8">
 
-          <div className="mb-4 flex items-center gap-3">
+          <div className="mb-4 flex items-center gap-3 text-black">
 
             <Crown size={18} />
 
@@ -521,7 +521,7 @@ export default function AdminManagementPage() {
 
         <section>
 
-          <div className="mb-4 flex items-center gap-3">
+          <div className="mb-4 flex items-center gap-3 text-black">
 
             <ShieldCheck size={18} />
 
@@ -600,7 +600,7 @@ function AdminRow({
   removing?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between">
+    <div className="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between text-black">
 
       <div className="flex min-w-0 items-center gap-4">
 
