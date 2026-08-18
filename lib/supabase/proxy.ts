@@ -54,7 +54,7 @@ export async function updateSession(request: NextRequest) {
 
   const { data: adminRow, error: adminError } = await supabase
     .from("admins")
-    .select("user_id")
+    .select("user_id, role")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -80,11 +80,29 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
 
+  const isInvitePath = pathname === "/admin/invite";
+  const isResetPath = pathname === "/admin/reset-password";
+  const isMfaPath = pathname === "/admin/login/mfa";
+  const isExemptPath = isLoginPath || isInvitePath || isResetPath || isMfaPath;
+
+  if (adminRow?.role === "master" && !isExemptPath) {
+    const { data: mfaData, error: mfaError } =
+      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+    if (mfaError || mfaData?.currentLevel !== "aal2") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/admin/login";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+  }
+
   if (isLoginPath) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/admin";
-    url.search = "";
-    return NextResponse.redirect(url);
+    // If an authenticated user hits /admin/login, we do NOT redirect them server-side.
+    // If they are clicking a password recovery link, the hash (#access_token) is
+    // only available on the client. Redirecting them here would drop the hash
+    // and break the recovery flow.
+    return response;
   }
 
   return response;

@@ -20,117 +20,147 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [checkingRecovery, setCheckingRecovery] =
-    useState(true);
-
-  /*
-   * =====================================================
-   * DETECT SUPABASE PASSWORD RESET / INVITATION LINK
-   *
-   * If the user arrives here from an email containing:
-   *
-   * /admin/login#access_token=...
-   *
-   * we must NOT show the normal login form.
-   *
-   * Instead, send the user to:
-   *
-   * /admin/invite
-   *
-   * where they can create their password.
-   * =====================================================
-   */
+  const [checkingRecovery, setCheckingRecovery] = useState(true);
 
   useEffect(() => {
     const supabase = createClient();
 
-    let redirected = false;
+    let mounted = true;
+    let handledRecovery = false;
 
-    async function checkRecoverySession() {
-      /*
-       * Supabase puts the recovery token in the URL hash.
-       */
-      const hash = window.location.hash;
+    async function handleRecoverySession() {
+      if (!mounted || handledRecovery) return;
 
-      const hasAccessToken =
-        hash.includes("access_token=");
-
-      const hasRecoveryType =
-        hash.includes("type=recovery");
+      handledRecovery = true;
 
       /*
-       * Older invitation/recovery links may only contain
-       * access_token and not explicitly contain type=recovery.
+       * The recovery link from Supabase contains the tokens
+       * in the URL hash:
        *
-       * Therefore access_token alone is enough for us to
-       * treat this as a password setup/reset flow.
+       * #access_token=...
+       * &refresh_token=...
+       * &type=recovery
+       *
+       * The hash is only available in the browser.
        */
-      if (hasAccessToken || hasRecoveryType) {
-        redirected = true;
+      const hash =
+        typeof window !== "undefined"
+          ? window.location.hash
+          : "";
+
+      if (!hash) {
+        if (mounted) {
+          setCheckingRecovery(false);
+        }
+        return;
+      }
+
+      const params = new URLSearchParams(
+        hash.startsWith("#") ? hash.substring(1) : hash
+      );
+
+      const type = params.get("type");
+      const accessToken = params.get("access_token");
+      const refreshToken = params.get("refresh_token");
+
+      if (
+        type === "recovery" &&
+        accessToken &&
+        refreshToken
+      ) {
+        /*
+         * Explicitly establish the Supabase recovery session.
+         * This prevents the normal login form from trying to
+         * authenticate the user with a password that doesn't
+         * exist yet.
+         */
+        const { error } =
+          await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+
+        if (error) {
+          if (mounted) {
+            setErrorMessage(
+              "This password reset link is invalid or has expired. Please request a new one."
+            );
+            setCheckingRecovery(false);
+          }
+
+          return;
+        }
 
         /*
-         * Give Supabase a moment to process the hash and
-         * establish the recovery session.
+         * Remove the sensitive token hash from the browser URL
+         * before navigating away.
          */
-        setTimeout(() => {
-          router.replace("/admin/invite");
-        }, 300);
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname
+        );
 
+        /*
+         * Send the user to the actual password setup page.
+         */
+        router.replace("/admin/reset-password");
         return;
       }
 
       /*
-       * Also listen for Supabase's PASSWORD_RECOVERY event.
-       * This handles cases where Supabase processes the hash
-       * before our initial check.
-       */
-
-      const {
-        data: { subscription },
-      } = supabase.auth.onAuthStateChange(
-        (event) => {
-          if (
-            event === "PASSWORD_RECOVERY" &&
-            !redirected
-          ) {
-            redirected = true;
-
-            router.replace("/admin/invite");
-          }
-        }
-      );
-
-      /*
-       * Check the current session as a fallback.
+       * Some Supabase flows may already have established the
+       * session before this component checks the URL.
        */
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
-      if (
-        session &&
-        !redirected &&
-        window.location.hash
-          .includes("access_token=")
-      ) {
-        redirected = true;
+      if (session && type === "recovery") {
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname
+        );
 
-        router.replace("/admin/invite");
+        router.replace("/admin/reset-password");
+        return;
       }
 
-      setCheckingRecovery(false);
+      if (session && type !== "recovery") {
+        router.replace("/admin");
+        return;
+      }
 
-      return () => {
-        subscription.unsubscribe();
-      };
+      if (mounted) {
+        setCheckingRecovery(false);
+      }
     }
 
-    checkRecoverySession();
+    /*
+     * Listen for Supabase's recovery event as well.
+     */
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      (event) => {
+        if (event === "PASSWORD_RECOVERY") {
+          handleRecoverySession();
+        }
+      }
+    );
+
+    handleRecoverySession();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [router]);
 
   /*
    * =====================================================
-   * NORMAL ADMIN LOGIN
+   * NORMAL LOGIN
    * =====================================================
    */
 
@@ -151,10 +181,7 @@ export default function AdminLoginPage() {
       });
 
     if (error) {
-      setErrorMessage(
-        "Invalid email or password."
-      );
-
+      setErrorMessage("Invalid email or password.");
       setLoading(false);
       return;
     }
@@ -176,10 +203,8 @@ export default function AdminLoginPage() {
     }
 
     /*
-     * Check that this Auth user is actually a
-     * Saviskar administrator.
+     * Check Saviskar admin access.
      */
-
     const {
       data: adminRow,
       error: adminError,
@@ -203,7 +228,6 @@ export default function AdminLoginPage() {
     /*
      * Master Admin → MFA
      */
-
     if (adminRow.role === "master") {
       router.replace("/admin/login/mfa");
       router.refresh();
@@ -211,16 +235,15 @@ export default function AdminLoginPage() {
     }
 
     /*
-     * Normal Admin → Admin dashboard
+     * Normal Admin → Dashboard
      */
-
     router.replace("/admin");
     router.refresh();
   }
 
   /*
    * =====================================================
-   * WHILE SUPABASE IS PROCESSING A RECOVERY LINK
+   * RECOVERY CHECK
    * =====================================================
    */
 
@@ -232,7 +255,7 @@ export default function AdminLoginPage() {
             <Lock size={18} />
           </div>
 
-          <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-black">
             Saviskar 2026
           </p>
 
@@ -253,6 +276,7 @@ export default function AdminLoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f5f5f5] px-6 py-16">
       <div className="w-full max-w-[480px]">
+
         <div className="mb-8 text-center">
           <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.3em] text-black">
             Saviskar 2026
@@ -268,6 +292,7 @@ export default function AdminLoginPage() {
         </div>
 
         <div className="rounded-[32px] bg-white p-7 shadow-[0_30px_100px_rgba(0,0,0,0.06)] md:p-10">
+
           <div className="mb-10 flex h-12 w-12 items-center justify-center rounded-full bg-black text-white">
             <Lock size={18} />
           </div>
@@ -276,6 +301,7 @@ export default function AdminLoginPage() {
             onSubmit={handleLogin}
             className="space-y-8"
           >
+
             <label className="block">
               <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-black/40">
                 Email
@@ -316,7 +342,9 @@ export default function AdminLoginPage() {
               <div className="flex items-center gap-3 rounded-2xl bg-red-50 px-4 py-4 text-sm text-red-700">
                 <AlertCircle size={17} />
 
-                <span>{errorMessage}</span>
+                <span>
+                  {errorMessage}
+                </span>
               </div>
             )}
 
@@ -341,12 +369,14 @@ export default function AdminLoginPage() {
                 </>
               )}
             </button>
+
           </form>
         </div>
 
         <p className="mt-6 text-center text-[10px] uppercase tracking-[0.18em] text-black/25">
           Authorized access only
         </p>
+
       </div>
     </main>
   );

@@ -11,7 +11,7 @@ export type TeamMember = {
 };
 
 export type RegistrationEmailData = {
-  registrationId: string;
+  registrationId?: string;
   participantId: string;
   eventName: string;
   eventCategory?: string | null;
@@ -105,7 +105,7 @@ export async function sendRegistrationEmail(
   } = data;
 
   if (
-    !registrationId ||
+    !participantId ||
     !eventName ||
     !name ||
     !college ||
@@ -128,7 +128,7 @@ export async function sendRegistrationEmail(
    */
   let qrUrl: string;
   try {
-    qrUrl = await QRCode.toDataURL(registrationId, {
+    qrUrl = await QRCode.toDataURL(participantId, {
       width: 500,
       margin: 2,
       color: { dark: "#000000", light: "#ffffff" },
@@ -139,7 +139,7 @@ export async function sendRegistrationEmail(
       "https://api.qrserver.com/v1/create-qr-code/?" +
       new URLSearchParams({
         size: "500x500",
-        data: registrationId,
+        data: participantId,
         margin: "10",
       }).toString();
   }
@@ -148,7 +148,7 @@ export async function sendRegistrationEmail(
   const safeCollege = escapeHtml(college);
   const safeTeam = escapeHtml(team);
   const safeCategory = escapeHtml(eventCategory);
-  const safeRegistrationId = escapeHtml(registrationId);
+  const safeParticipantId = escapeHtml(participantId);
 
   /*
    * Build the complete team list.
@@ -720,7 +720,7 @@ export async function sendRegistrationEmail(
                     word-break: break-all;
                   "
                 >
-                  ${safeRegistrationId}
+                  ${safeParticipantId}
                 </div>
 
               </div>

@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   Clock3,
   ArrowLeft,
+  ShieldCheck,
 } from "lucide-react";
 
 /* =========================================================
@@ -75,6 +76,8 @@ type Registration = {
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
+
+type AdminRole = "master" | "admin";
 
 /* =========================================================
    HELPERS
@@ -139,15 +142,21 @@ export default function EventRegistrationsPage() {
   const params = useParams<{ eventID: string }>();
   const eventID = params.eventID;
 
-  const [allRegistrations, setAllRegistrations] = useState<Registration[]>([]);
+  const [allRegistrations, setAllRegistrations] = useState<
+    Registration[]
+  >([]);
+
   const [allEvents, setAllEvents] = useState<EventRecord[]>([]);
+
+  const [role, setRole] = useState<AdminRole | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] =
+    useState<StatusFilter>("all");
 
   const [selectedRegistration, setSelectedRegistration] =
     useState<Registration | null>(null);
@@ -177,7 +186,9 @@ export default function EventRegistrationsPage() {
   // ---------------------------------------------------------
 
   const currentEvent = useMemo(() => {
-    return allEvents.find((event) => event.id === eventID) ?? null;
+    return (
+      allEvents.find((event) => event.id === eventID) ?? null
+    );
   }, [allEvents, eventID]);
 
   const currentEventName = currentEvent?.name ?? "Event";
@@ -197,34 +208,64 @@ export default function EventRegistrationsPage() {
       setError("");
 
       try {
-        const response = await fetch("/api/admin/registrations", {
-          cache: "no-store",
-        });
+        const authenticated = await checkAuth();
 
-        if (
-          response.status === 401 ||
-          response.status === 403
-        ) {
+        if (!authenticated) {
+          return;
+        }
+
+        const response = await fetch(
+          "/api/admin/registrations",
+          {
+            cache: "no-store",
+          }
+        );
+
+        if (response.status === 401) {
           router.replace("/admin/login");
+          return;
+        }
+
+        if (response.status === 403) {
+          router.replace("/admin");
           return;
         }
 
         const payload = (await response.json()) as {
           registrations?: Registration[];
           events?: EventRecord[];
+          role?: AdminRole;
           error?: string;
         };
 
         if (!response.ok) {
           throw new Error(
-            payload.error ?? "Could not load registrations."
+            payload.error ??
+              "Could not load registrations."
           );
         }
 
-        setAllRegistrations(payload.registrations ?? []);
-        setAllEvents(payload.events ?? []);
+        setAllRegistrations(
+          payload.registrations ?? []
+        );
+
+        setAllEvents(
+          payload.events ?? []
+        );
+
+        if (
+          payload.role === "master" ||
+          payload.role === "admin"
+        ) {
+          setRole(payload.role);
+        } else {
+          setRole(null);
+        }
       } catch (loadError) {
-        console.error("EVENT REGISTRATIONS LOAD ERROR:", loadError);
+        console.error(
+          "EVENT REGISTRATIONS LOAD ERROR:",
+          loadError
+        );
 
         setError(
           loadError instanceof Error
@@ -236,18 +277,19 @@ export default function EventRegistrationsPage() {
         setRefreshing(false);
       }
     },
-    [router]
+    [checkAuth, router]
   );
 
   // ---------------------------------------------------------
-  // SCOPED REGISTRATIONS (for this event only)
+  // SCOPED REGISTRATIONS
   // ---------------------------------------------------------
 
   const registrations = useMemo(() => {
     if (!eventID) return allRegistrations;
 
     return allRegistrations.filter(
-      (item) => item.registration.event_id === eventID
+      (item) =>
+        item.registration.event_id === eventID
     );
   }, [allRegistrations, eventID]);
 
@@ -263,7 +305,9 @@ export default function EventRegistrationsPage() {
       .slice(2)}`;
 
     const participantChannel = supabase
-      .channel(`event-reg-participants-${channelInstanceId}`)
+      .channel(
+        `event-reg-participants-${channelInstanceId}`
+      )
       .on(
         "postgres_changes",
         {
@@ -278,7 +322,9 @@ export default function EventRegistrationsPage() {
       .subscribe();
 
     const participantEventChannel = supabase
-      .channel(`event-reg-participant-events-${channelInstanceId}`)
+      .channel(
+        `event-reg-participant-events-${channelInstanceId}`
+      )
       .on(
         "postgres_changes",
         {
@@ -293,7 +339,9 @@ export default function EventRegistrationsPage() {
       .subscribe();
 
     const eventChannel = supabase
-      .channel(`event-reg-events-${channelInstanceId}`)
+      .channel(
+        `event-reg-events-${channelInstanceId}`
+      )
       .on(
         "postgres_changes",
         {
@@ -308,9 +356,17 @@ export default function EventRegistrationsPage() {
       .subscribe();
 
     return () => {
-      void supabase.removeChannel(participantChannel);
-      void supabase.removeChannel(participantEventChannel);
-      void supabase.removeChannel(eventChannel);
+      void supabase.removeChannel(
+        participantChannel
+      );
+
+      void supabase.removeChannel(
+        participantEventChannel
+      );
+
+      void supabase.removeChannel(
+        eventChannel
+      );
     };
   }, [loadData]);
 
@@ -327,69 +383,90 @@ export default function EventRegistrationsPage() {
   // TOGGLE CHECK IN
   // ---------------------------------------------------------
 
-  async function toggleCheckIn(registration: Registration) {
-    const next = registration.registration.checked_in !== true;
+  async function toggleCheckIn(
+    registration: Registration
+  ) {
+    const next =
+      registration.registration.checked_in !== true;
 
-    setUpdatingId(registration.registration.id);
+    setUpdatingId(
+      registration.registration.id
+    );
 
     try {
-      const response = await fetch("/api/admin/registrations", {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          participantEventId: registration.registration.id,
-          checkedIn: next,
-        }),
-      });
+      const response = await fetch(
+        "/api/admin/registrations",
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            participantEventId:
+              registration.registration.id,
+            checkedIn: next,
+          }),
+        }
+      );
 
-      const payload = (await response.json()) as {
-        registration?: {
-          checked_in: boolean;
-          checked_in_at: string | null;
+      const payload =
+        (await response.json()) as {
+          registration?: {
+            checked_in: boolean;
+            checked_in_at: string | null;
+          };
+          error?: string;
         };
-        error?: string;
-      };
 
-      if (!response.ok || !payload.registration) {
+      if (
+        !response.ok ||
+        !payload.registration
+      ) {
         throw new Error(
-          payload.error ?? "Could not update check-in status."
+          payload.error ??
+            "Could not update check-in status."
         );
       }
 
-      setAllRegistrations((current) =>
-        current.map((item) =>
-          item.registration.id === registration.registration.id
-            ? {
-                ...item,
-                registration: {
-                  ...item.registration,
-                  ...payload.registration,
-                },
-              }
-            : item
-        )
+      setAllRegistrations(
+        (current) =>
+          current.map((item) =>
+            item.registration.id ===
+            registration.registration.id
+              ? {
+                  ...item,
+                  registration: {
+                    ...item.registration,
+                    ...payload.registration,
+                  },
+                }
+              : item
+          )
       );
 
       if (
         selectedRegistration?.registration.id ===
         registration.registration.id
       ) {
-        setSelectedRegistration((current) =>
-          current
-            ? {
-                ...current,
-                registration: {
-                  ...current.registration,
-                  ...payload.registration,
-                },
-              }
-            : current
+        setSelectedRegistration(
+          (current) =>
+            current
+              ? {
+                  ...current,
+                  registration: {
+                    ...current.registration,
+                    ...payload.registration,
+                  },
+                }
+              : current
         );
       }
     } catch (updateError) {
-      console.error("CHECK-IN ERROR:", updateError);
+      console.error(
+        "CHECK-IN ERROR:",
+        updateError
+      );
 
       setError(
         updateError instanceof Error
@@ -405,38 +482,48 @@ export default function EventRegistrationsPage() {
   // DELETE REGISTRATION
   // ---------------------------------------------------------
 
-  async function deleteRegistration(registration: Registration) {
+  async function deleteRegistration(
+    registration: Registration
+  ) {
     const confirmed = window.confirm(
       `Remove ${registration.participant.name} from ${currentEventName}?\n\nTheir Participant ID will remain available for other events.`
     );
 
     if (!confirmed) return;
 
-    setDeletingId(registration.registration.id);
+    setDeletingId(
+      registration.registration.id
+    );
 
     try {
       const response = await fetch(
         `/api/admin/registrations?participantEventId=${encodeURIComponent(
           registration.registration.id
         )}`,
-        { method: "DELETE" }
+        {
+          method: "DELETE",
+        }
       );
 
-      const payload = (await response.json()) as {
-        error?: string;
-      };
+      const payload =
+        (await response.json()) as {
+          error?: string;
+        };
 
       if (!response.ok) {
         throw new Error(
-          payload.error ?? "Could not delete the event registration."
+          payload.error ??
+            "Could not delete the event registration."
         );
       }
 
-      setAllRegistrations((current) =>
-        current.filter(
-          (item) =>
-            item.registration.id !== registration.registration.id
-        )
+      setAllRegistrations(
+        (current) =>
+          current.filter(
+            (item) =>
+              item.registration.id !==
+              registration.registration.id
+          )
       );
 
       if (
@@ -446,7 +533,10 @@ export default function EventRegistrationsPage() {
         closeRegistration();
       }
     } catch (deleteError) {
-      console.error("REGISTRATION DELETE ERROR:", deleteError);
+      console.error(
+        "REGISTRATION DELETE ERROR:",
+        deleteError
+      );
 
       setError(
         deleteError instanceof Error
@@ -462,8 +552,12 @@ export default function EventRegistrationsPage() {
   // REGISTRATION DETAIL
   // ---------------------------------------------------------
 
-  function openRegistration(registration: Registration) {
-    setSelectedRegistration(registration);
+  function openRegistration(
+    registration: Registration
+  ) {
+    setSelectedRegistration(
+      registration
+    );
   }
 
   function closeRegistration() {
@@ -474,42 +568,76 @@ export default function EventRegistrationsPage() {
   // FILTERED REGISTRATIONS
   // ---------------------------------------------------------
 
-  const filteredRegistrations = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  const filteredRegistrations =
+    useMemo(() => {
+      const query =
+        search.trim().toLowerCase();
 
-    return registrations.filter((item) => {
-      const participant = item.participant;
+      return registrations.filter(
+        (item) => {
+          const participant =
+            item.participant;
 
-      const matchesSearch =
-        !query ||
-        participant.name?.toLowerCase().includes(query) ||
-        participant.college?.toLowerCase().includes(query) ||
-        participant.email?.toLowerCase().includes(query) ||
-        participant.phone?.toLowerCase().includes(query) ||
-        participant.participant_id?.toLowerCase().includes(query) ||
-        item.registration.team_name?.toLowerCase().includes(query) ||
-        item.registration.id?.toLowerCase().includes(query);
+          const matchesSearch =
+            !query ||
+            participant.name
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.college
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.email
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.phone
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.participant_id
+              ?.toLowerCase()
+              .includes(query) ||
+            item.registration.team_name
+              ?.toLowerCase()
+              .includes(query) ||
+            item.registration.id
+              ?.toLowerCase()
+              .includes(query);
 
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "checked-in" &&
-          item.registration.checked_in === true) ||
-        (statusFilter === "pending" &&
-          item.registration.checked_in !== true);
+          const matchesStatus =
+            statusFilter === "all" ||
+            (statusFilter ===
+              "checked-in" &&
+              item.registration
+                .checked_in === true) ||
+            (statusFilter === "pending" &&
+              item.registration
+                .checked_in !== true);
 
-      return matchesSearch && matchesStatus;
-    });
-  }, [registrations, search, statusFilter]);
+          return (
+            matchesSearch &&
+            matchesStatus
+          );
+        }
+      );
+    }, [
+      registrations,
+      search,
+      statusFilter,
+    ]);
 
   // ---------------------------------------------------------
   // STATS
   // ---------------------------------------------------------
 
-  const totalCheckedIn = registrations.filter(
-    (item) => item.registration.checked_in === true
-  ).length;
+  const totalCheckedIn =
+    registrations.filter(
+      (item) =>
+        item.registration.checked_in ===
+        true
+    ).length;
 
-  const totalPending = registrations.length - totalCheckedIn;
+  const totalPending =
+    registrations.length -
+    totalCheckedIn;
 
   // ---------------------------------------------------------
   // CSV EXPORT
@@ -534,37 +662,96 @@ export default function EventRegistrationsPage() {
         "Registered At",
       ],
 
-      ...filteredRegistrations.map((item) => [
-        escapeCsv(item.participant.participant_id),
-        escapeCsv(item.participant.name),
-        escapeCsv(item.event?.name ?? item.registration.event_id),
-        escapeCsv(item.participant.college ?? ""),
-        escapeCsv(item.participant.email),
-        escapeCsv(item.participant.phone ?? ""),
-        escapeCsv(item.registration.team_name ?? "Individual"),
-        escapeCsv(item.registration.registration_status ?? ""),
-        escapeCsv(item.registration.payment_status ?? ""),
-        escapeCsv(item.registration.payment_amount ?? 0),
-        escapeCsv(item.registration.payment_id ?? ""),
-        escapeCsv(item.registration.checked_in ? "Yes" : "No"),
-        escapeCsv(
-          item.registration.checked_in_at
-            ? formatDate(item.registration.checked_in_at)
-            : ""
-        ),
-        escapeCsv(formatDate(item.registration.created_at)),
-      ]),
+      ...filteredRegistrations.map(
+        (item) => [
+          escapeCsv(
+            item.participant
+              .participant_id
+          ),
+          escapeCsv(
+            item.participant.name
+          ),
+          escapeCsv(
+            item.event?.name ??
+              item.registration
+                .event_id
+          ),
+          escapeCsv(
+            item.participant.college ??
+              ""
+          ),
+          escapeCsv(
+            item.participant.email
+          ),
+          escapeCsv(
+            item.participant.phone ??
+              ""
+          ),
+          escapeCsv(
+            item.registration
+              .team_name ??
+              "Individual"
+          ),
+          escapeCsv(
+            item.registration
+              .registration_status ??
+              ""
+          ),
+          escapeCsv(
+            item.registration
+              .payment_status ??
+              ""
+          ),
+          escapeCsv(
+            item.registration
+              .payment_amount ?? 0
+          ),
+          escapeCsv(
+            item.registration
+              .payment_id ?? ""
+          ),
+          escapeCsv(
+            item.registration
+              .checked_in
+              ? "Yes"
+              : "No"
+          ),
+          escapeCsv(
+            item.registration
+              .checked_in_at
+              ? formatDate(
+                  item.registration
+                    .checked_in_at
+                )
+              : ""
+          ),
+          escapeCsv(
+            formatDate(
+              item.registration
+                .created_at
+            )
+          ),
+        ]
+      ),
     ];
 
-    const csv = rows.map((row) => row.join(",")).join("\n");
+    const csv = rows
+      .map((row) => row.join(","))
+      .join("\n");
 
-    const blob = new Blob([csv], {
-      type: "text/csv;charset=utf-8;",
-    });
+    const blob = new Blob(
+      [csv],
+      {
+        type:
+          "text/csv;charset=utf-8;",
+      }
+    );
 
-    const url = URL.createObjectURL(blob);
+    const url =
+      URL.createObjectURL(blob);
 
-    const link = document.createElement("a");
+    const link =
+      document.createElement("a");
 
     link.href = url;
 
@@ -594,9 +781,14 @@ export default function EventRegistrationsPage() {
         {/* HEADER */}
 
         <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+
           <div>
             <button
-              onClick={() => router.push("/admin/events")}
+              onClick={() =>
+                router.push(
+                  "/admin/events"
+                )
+              }
               className="mb-4 flex items-center gap-2 text-sm text-black/45 transition hover:text-black"
             >
               <ArrowLeft size={15} />
@@ -612,15 +804,37 @@ export default function EventRegistrationsPage() {
             </h1>
 
             <p className="mt-4 text-sm text-black/45">
-              Manage registrations and participant entry for this event.
+              Manage registrations and
+              participant entry for this
+              event.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
 
+            {/* MASTER ADMIN ONLY */}
+
+            {role === "master" && (
+              <button
+                onClick={() =>
+                  router.push(
+                    "/admin/admins"
+                  )
+                }
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm text-black transition hover:bg-black hover:text-white"
+              >
+                <ShieldCheck
+                  size={15}
+                />
+                Manage Admins
+              </button>
+            )}
+
             <button
               onClick={() =>
-                router.push("/admin/scanner")
+                router.push(
+                  "/admin/scanner"
+                )
               }
               className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
             >
@@ -629,14 +843,22 @@ export default function EventRegistrationsPage() {
             </button>
 
             <button
-              onClick={() => void loadData(true)}
-              disabled={loading || refreshing}
+              onClick={() =>
+                void loadData(true)
+              }
+              disabled={
+                loading ||
+                refreshing
+              }
               className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] disabled:opacity-50"
             >
               <RefreshCw
                 size={15}
                 className={
-                  loading || refreshing ? "animate-spin" : ""
+                  loading ||
+                  refreshing
+                    ? "animate-spin"
+                    : ""
                 }
               />
 
@@ -660,21 +882,31 @@ export default function EventRegistrationsPage() {
 
           <StatCard
             title="Total registrations"
-            value={registrations.length}
-            icon={<Users size={18} />}
+            value={
+              registrations.length
+            }
+            icon={
+              <Users size={18} />
+            }
             dark
           />
 
           <StatCard
             title="Checked in"
             value={totalCheckedIn}
-            icon={<CheckCircle2 size={18} />}
+            icon={
+              <CheckCircle2
+                size={18}
+              />
+            }
           />
 
           <StatCard
             title="Pending"
             value={totalPending}
-            icon={<Clock3 size={18} />}
+            icon={
+              <Clock3 size={18} />
+            }
           />
 
         </div>
@@ -695,7 +927,9 @@ export default function EventRegistrationsPage() {
               <input
                 value={search}
                 onChange={(event) =>
-                  setSearch(event.target.value)
+                  setSearch(
+                    event.target.value
+                  )
                 }
                 placeholder="Search name, college, email, phone, team, participant ID..."
                 className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-black/70"
@@ -707,7 +941,8 @@ export default function EventRegistrationsPage() {
               value={statusFilter}
               onChange={(event) =>
                 setStatusFilter(
-                  event.target.value as StatusFilter
+                  event.target
+                    .value as StatusFilter
                 )
               }
               className="rounded-full bg-black/[0.035] px-5 py-3 text-sm outline-none"
@@ -770,7 +1005,8 @@ export default function EventRegistrationsPage() {
 
             </div>
 
-          ) : filteredRegistrations.length === 0 ? (
+          ) : filteredRegistrations.length ===
+            0 ? (
 
             <div className="flex min-h-[350px] items-center justify-center text-center">
 
@@ -786,7 +1022,8 @@ export default function EventRegistrationsPage() {
                 </p>
 
                 <p className="mt-2 text-sm text-black/40">
-                  {registrations.length === 0
+                  {registrations.length ===
+                  0
                     ? "No one has registered for this event yet."
                     : "Try changing your filters."}
                 </p>
@@ -845,69 +1082,110 @@ export default function EventRegistrationsPage() {
                     (item) => (
 
                       <tr
-                        key={item.registration.id}
+                        key={
+                          item.registration.id
+                        }
                         className="border-b border-black/[0.06] transition hover:bg-black/[0.02]"
                       >
 
                         <td className="px-6 py-5">
 
                           <p className="font-medium">
-                            {item.participant.name}
+                            {
+                              item
+                                .participant
+                                .name
+                            }
                           </p>
 
                           <p className="mt-1 max-w-[170px] truncate font-mono text-[10px] text-black/35">
-                            {item.participant.participant_id}
+                            {
+                              item
+                                .participant
+                                .participant_id
+                            }
                           </p>
 
                         </td>
 
                         <td className="px-6 py-5 text-sm text-black/60">
-                          {item.participant.college || "—"}
+                          {
+                            item.participant
+                              .college ||
+                            "—"
+                          }
                         </td>
 
                         <td className="px-6 py-5">
 
                           <p className="text-sm">
-                            {item.participant.email}
+                            {
+                              item
+                                .participant
+                                .email
+                            }
                           </p>
 
                           <p className="mt-1 text-xs text-black/40">
-                            {item.participant.phone || "—"}
+                            {
+                              item
+                                .participant
+                                .phone ||
+                              "—"
+                            }
                           </p>
 
                         </td>
 
                         <td className="px-6 py-5 text-sm text-black/60">
-                          {item.registration.team_name ||
-                            "Individual"}
+                          {
+                            item.registration
+                              .team_name ||
+                            "Individual"
+                          }
                         </td>
 
                         <td className="px-6 py-5">
+
                           <span
                             className={`inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium ${paymentClass(
-                              item.registration.payment_status
+                              item
+                                .registration
+                                .payment_status
                             )}`}
                           >
-                            {paymentLabel(item.registration.payment_status)}
+                            {paymentLabel(
+                              item
+                                .registration
+                                .payment_status
+                            )}
                           </span>
+
                         </td>
 
                         <td className="px-6 py-5">
 
-                          {item.registration.checked_in ? (
+                          {item.registration
+                            .checked_in ? (
 
                             <div>
 
                               <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700">
-                                <CheckCircle2 size={13} />
+                                <CheckCircle2
+                                  size={13}
+                                />
                                 Checked in
                               </span>
 
-                              {item.registration.checked_in_at && (
+                              {item
+                                .registration
+                                .checked_in_at && (
 
                                 <p className="mt-2 text-[10px] text-black/35">
                                   {formatDate(
-                                    item.registration.checked_in_at
+                                    item
+                                      .registration
+                                      .checked_in_at
                                   )}
                                 </p>
 
@@ -918,7 +1196,9 @@ export default function EventRegistrationsPage() {
                           ) : (
 
                             <span className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.045] px-3 py-1.5 text-xs text-black/55">
-                              <Clock3 size={13} />
+                              <Clock3
+                                size={13}
+                              />
                               Pending
                             </span>
 
@@ -928,7 +1208,10 @@ export default function EventRegistrationsPage() {
 
                         <td className="px-6 py-5 text-sm text-black/45">
 
-                          {formatDate(item.registration.created_at)}
+                          {formatDate(
+                            item.registration
+                              .created_at
+                          )}
 
                         </td>
 
@@ -938,27 +1221,37 @@ export default function EventRegistrationsPage() {
 
                             <button
                               onClick={() =>
-                                openRegistration(item)
+                                openRegistration(
+                                  item
+                                )
                               }
                               className="flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs transition hover:bg-black hover:text-white"
                             >
-                              <Eye size={13} />
+                              <Eye
+                                size={13}
+                              />
                               View
                             </button>
 
                             <button
                               onClick={() =>
-                                deleteRegistration(item)
+                                deleteRegistration(
+                                  item
+                                )
                               }
                               disabled={
                                 deletingId ===
-                                item.registration.id
+                                item
+                                  .registration
+                                  .id
                               }
                               className="flex h-9 w-9 items-center justify-center rounded-full border border-red-100 text-red-500 transition hover:bg-red-50 disabled:opacity-40"
                             >
 
                               {deletingId ===
-                              item.registration.id ? (
+                              item
+                                .registration
+                                .id ? (
 
                                 <RefreshCw
                                   size={13}
@@ -967,7 +1260,9 @@ export default function EventRegistrationsPage() {
 
                               ) : (
 
-                                <Trash2 size={13} />
+                                <Trash2
+                                  size={13}
+                                />
 
                               )}
 
@@ -995,8 +1290,13 @@ export default function EventRegistrationsPage() {
         {!loading && (
 
           <p className="mt-4 text-right text-xs text-black/35">
-            Showing {filteredRegistrations.length} of{" "}
-            {registrations.length} registrations
+            Showing{" "}
+            {
+              filteredRegistrations.length
+            }{" "}
+            of{" "}
+            {registrations.length}{" "}
+            registrations
           </p>
 
         )}
@@ -1009,7 +1309,9 @@ export default function EventRegistrationsPage() {
 
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
-          onClick={closeRegistration}
+          onClick={
+            closeRegistration
+          }
         >
 
           <div
@@ -1028,13 +1330,18 @@ export default function EventRegistrationsPage() {
                 </p>
 
                 <h2 className="mt-2 text-3xl font-semibold">
-                  {selectedRegistration.participant.name}
+                  {
+                    selectedRegistration
+                      .participant.name
+                  }
                 </h2>
 
               </div>
 
               <button
-                onClick={closeRegistration}
+                onClick={
+                  closeRegistration
+                }
                 className="flex h-10 w-10 items-center justify-center rounded-full bg-black/[0.05]"
               >
                 <X size={17} />
@@ -1049,7 +1356,11 @@ export default function EventRegistrationsPage() {
               </p>
 
               <p className="mt-2 break-all font-mono text-sm">
-                {selectedRegistration.participant.participant_id}
+                {
+                  selectedRegistration
+                    .participant
+                    .participant_id
+                }
               </p>
 
             </div>
@@ -1058,71 +1369,102 @@ export default function EventRegistrationsPage() {
 
               <Detail
                 title="Full name"
-                value={selectedRegistration.participant.name}
+                value={
+                  selectedRegistration
+                    .participant.name
+                }
               />
 
               <Detail
                 title="Event"
                 value={
-                  selectedRegistration.event?.name ??
-                  selectedRegistration.registration.event_id
+                  selectedRegistration
+                    .event?.name ??
+                  selectedRegistration
+                    .registration
+                    .event_id
                 }
               />
 
               <Detail
                 title="College / University"
-                value={selectedRegistration.participant.college ?? ""}
+                value={
+                  selectedRegistration
+                    .participant
+                    .college ?? ""
+                }
               />
 
               <Detail
                 title="Team"
                 value={
-                  selectedRegistration.registration.team_name ||
+                  selectedRegistration
+                    .registration
+                    .team_name ||
                   "Individual"
                 }
               />
 
               <Detail
                 title="Email"
-                value={selectedRegistration.participant.email}
+                value={
+                  selectedRegistration
+                    .participant.email
+                }
               />
 
               <Detail
                 title="Phone"
-                value={selectedRegistration.participant.phone ?? ""}
+                value={
+                  selectedRegistration
+                    .participant
+                    .phone ?? ""
+                }
               />
 
               <Detail
                 title="Payment"
                 value={`${paymentLabel(
-                  selectedRegistration.registration.payment_status
+                  selectedRegistration
+                    .registration
+                    .payment_status
                 )} — ${formatAmount(
-                  selectedRegistration.registration.payment_amount
+                  selectedRegistration
+                    .registration
+                    .payment_amount
                 )}`}
               />
 
               <Detail
                 title="Registered"
                 value={formatDate(
-                  selectedRegistration.registration.created_at
+                  selectedRegistration
+                    .registration
+                    .created_at
                 )}
               />
 
               <Detail
                 title="Entry status"
                 value={
-                  selectedRegistration.registration.checked_in
+                  selectedRegistration
+                    .registration
+                    .checked_in
                     ? "Checked in"
                     : "Pending"
                 }
               />
 
-              {selectedRegistration.registration.checked_in_at && (
+              {selectedRegistration
+                .registration
+                .checked_in_at && (
 
                 <Detail
                   title="Checked in at"
                   value={formatDate(
-                    selectedRegistration.registration.checked_in_at
+                    selectedRegistration
+                      .registration
+                      .checked_in_at
                   )}
                 />
 
@@ -1130,147 +1472,310 @@ export default function EventRegistrationsPage() {
 
             </div>
 
-            {selectedRegistration.registration.team_name &&
-              selectedRegistration.members &&
-              selectedRegistration.members.length > 0 && (
+            {selectedRegistration
+              .registration
+              .team_name &&
+              selectedRegistration
+                .members &&
+              selectedRegistration
+                .members.length > 0 && (
+
               <div className="mt-8 border-t border-black/[0.08] pt-8">
+
                 <div className="mb-5 flex items-end justify-between gap-4">
+
                   <div>
+
                     <p className="text-[10px] uppercase tracking-[0.22em] text-black/35">
                       Team members
                     </p>
+
                     <h3 className="mt-2 text-xl font-semibold">
-                      {selectedRegistration.registration.team_name}
+                      {
+                        selectedRegistration
+                          .registration
+                          .team_name
+                      }
                     </h3>
+
                   </div>
 
                   <span className="rounded-full bg-black/[0.05] px-3 py-1.5 text-xs text-black/50">
-                    {selectedRegistration.members.length}{" "}
-                    {selectedRegistration.members.length === 1
-                      ? "member"
-                      : "members"}
+                    {
+                      selectedRegistration
+                        .members.length
+                    }{" "}
+                    {
+                      selectedRegistration
+                        .members.length ===
+                      1
+                        ? "member"
+                        : "members"
+                    }
                   </span>
+
                 </div>
 
                 <div className="space-y-3">
-                  {selectedRegistration.members.map((member, index) => (
-                    <div
-                      key={member.id}
-                      className="rounded-[18px] border border-black/[0.07] p-5"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35">
-                            {member.is_team_leader
-                              ? "Team leader"
-                              : `Member ${index + 1}`}
-                          </p>
-                          <div className="mt-2 flex items-center gap-2">
-                            <p className="font-medium">
-                              {member.name || "—"}
-                            </p>
-                            {member.participants?.participant_id && (
-                              <span className="rounded-[4px] bg-black/[0.05] px-1.5 py-0.5 font-mono text-[10px] font-bold text-black/45">
-                                {member.participants.participant_id}
+
+                  {selectedRegistration
+                    .members.map(
+                      (
+                        member,
+                        index
+                      ) => (
+
+                        <div
+                          key={member.id}
+                          className="rounded-[18px] border border-black/[0.07] p-5"
+                        >
+
+                          <div className="flex items-start justify-between gap-4">
+
+                            <div>
+
+                              <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/35">
+                                {member.is_team_leader
+                                  ? "Team leader"
+                                  : `Member ${
+                                      index +
+                                      1
+                                    }`}
+                              </p>
+
+                              <div className="mt-2 flex items-center gap-2">
+
+                                <p className="font-medium">
+                                  {member.name ||
+                                    "—"}
+                                </p>
+
+                                {member
+                                  .participants
+                                  ?.participant_id && (
+
+                                  <span className="rounded-[4px] bg-black/[0.05] px-1.5 py-0.5 font-mono text-[10px] font-bold text-black/45">
+                                    {
+                                      member
+                                        .participants
+                                        .participant_id
+                                    }
+                                  </span>
+
+                                )}
+
+                              </div>
+
+                            </div>
+
+                            {member.is_team_leader && (
+
+                              <span className="rounded-full bg-black px-3 py-1 text-[10px] text-white">
+                                Leader
                               </span>
+
                             )}
+
                           </div>
+
+                          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+
+                            <Detail
+                              title="Email"
+                              value={
+                                member.email ??
+                                ""
+                              }
+                            />
+
+                            <Detail
+                              title="Phone"
+                              value={
+                                member.phone ??
+                                ""
+                              }
+                            />
+
+                            <Detail
+                              title="College / University"
+                              value={
+                                member
+                                  .participants
+                                  ?.college ??
+                                "—"
+                              }
+                            />
+
+                          </div>
+
                         </div>
 
-                        {member.is_team_leader && (
-                          <span className="rounded-full bg-black px-3 py-1 text-[10px] text-white">
-                            Leader
-                          </span>
-                        )}
-                      </div>
+                      )
+                    )}
 
-                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                        <Detail title="Email" value={member.email ?? ""} />
-                        <Detail title="Phone" value={member.phone ?? ""} />
-                        <Detail
-                          title="College / University"
-                          value={member.participants?.college ?? "—"}
-                        />
-                      </div>
-                    </div>
-                  ))}
                 </div>
+
               </div>
+
             )}
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
               <button
                 onClick={() =>
-                  deleteRegistration(selectedRegistration)
+                  deleteRegistration(
+                    selectedRegistration
+                  )
                 }
                 disabled={
-                  deletingId === selectedRegistration.registration.id ||
-                  updatingId === selectedRegistration.registration.id
+                  deletingId ===
+                    selectedRegistration
+                      .registration.id ||
+                  updatingId ===
+                    selectedRegistration
+                      .registration.id
                 }
                 className="flex items-center justify-center gap-2 rounded-full border border-red-100 px-5 py-3 text-sm text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {deletingId === selectedRegistration.registration.id ? (
-                  <RefreshCw size={14} className="animate-spin" />
+
+                {deletingId ===
+                selectedRegistration
+                  .registration.id ? (
+
+                  <RefreshCw
+                    size={14}
+                    className="animate-spin"
+                  />
+
                 ) : (
-                  <Trash2 size={14} />
+
+                  <Trash2
+                    size={14}
+                  />
+
                 )}
+
                 Delete registration
+
               </button>
 
               <div className="flex flex-col gap-3 sm:flex-row">
-                {!selectedRegistration.registration.checked_in ? (
+
+                {!selectedRegistration
+                  .registration
+                  .checked_in ? (
+
                   <button
                     onClick={() =>
-                      toggleCheckIn(selectedRegistration)
+                      toggleCheckIn(
+                        selectedRegistration
+                      )
                     }
                     disabled={
-                      updatingId === selectedRegistration.registration.id ||
-                      deletingId === selectedRegistration.registration.id
+                      updatingId ===
+                        selectedRegistration
+                          .registration
+                          .id ||
+                      deletingId ===
+                        selectedRegistration
+                          .registration
+                          .id
                     }
                     className="flex items-center justify-center gap-2 rounded-full bg-green-600 px-6 py-3 text-sm font-medium text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {updatingId === selectedRegistration.registration.id ? (
-                      <RefreshCw size={15} className="animate-spin" />
+
+                    {updatingId ===
+                    selectedRegistration
+                      .registration.id ? (
+
+                      <RefreshCw
+                        size={15}
+                        className="animate-spin"
+                      />
+
                     ) : (
-                      <CheckCircle2 size={15} />
+
+                      <CheckCircle2
+                        size={15}
+                      />
+
                     )}
-                    {updatingId === selectedRegistration.registration.id
+
+                    {updatingId ===
+                    selectedRegistration
+                      .registration.id
                       ? "Checking in..."
                       : "Check In"}
+
                   </button>
+
                 ) : (
+
                   <button
                     onClick={() =>
-                      toggleCheckIn(selectedRegistration)
+                      toggleCheckIn(
+                        selectedRegistration
+                      )
                     }
                     disabled={
-                      updatingId === selectedRegistration.registration.id ||
-                      deletingId === selectedRegistration.registration.id
+                      updatingId ===
+                        selectedRegistration
+                          .registration
+                          .id ||
+                      deletingId ===
+                        selectedRegistration
+                          .registration
+                          .id
                     }
                     className="flex items-center justify-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-6 py-3 text-sm font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {updatingId === selectedRegistration.registration.id ? (
-                      <RefreshCw size={15} className="animate-spin" />
+
+                    {updatingId ===
+                    selectedRegistration
+                      .registration.id ? (
+
+                      <RefreshCw
+                        size={15}
+                        className="animate-spin"
+                      />
+
                     ) : (
-                      <Clock3 size={15} />
+
+                      <Clock3
+                        size={15}
+                      />
+
                     )}
-                    {updatingId === selectedRegistration.registration.id
+
+                    {updatingId ===
+                    selectedRegistration
+                      .registration.id
                       ? "Undoing..."
                       : "Undo Check-In"}
+
                   </button>
+
                 )}
 
                 <button
-                  onClick={closeRegistration}
+                  onClick={
+                    closeRegistration
+                  }
                   disabled={
-                    updatingId === selectedRegistration.registration.id ||
-                    deletingId === selectedRegistration.registration.id
+                    updatingId ===
+                      selectedRegistration
+                        .registration.id ||
+                    deletingId ===
+                      selectedRegistration
+                        .registration.id
                   }
                   className="rounded-full bg-black px-7 py-3 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Close
                 </button>
+
               </div>
+
             </div>
 
           </div>
@@ -1283,9 +1788,9 @@ export default function EventRegistrationsPage() {
   );
 }
 
-// =========================================================
-// STAT CARD
-// =========================================================
+/* =========================================================
+   STAT CARD
+========================================================= */
 
 function StatCard({
   title,
@@ -1306,7 +1811,6 @@ function StatCard({
           : "bg-white text-black shadow-[0_15px_50px_rgba(0,0,0,0.035)]"
       }`}
     >
-
       <div
         className={`mb-8 flex h-10 w-10 items-center justify-center rounded-full ${
           dark
@@ -1330,14 +1834,13 @@ function StatCard({
       <p className="mt-2 text-4xl font-semibold">
         {value}
       </p>
-
     </div>
   );
 }
 
-// =========================================================
-// TABLE HEAD
-// =========================================================
+/* =========================================================
+   TABLE HEAD
+========================================================= */
 
 function TableHead({
   children,
@@ -1351,9 +1854,9 @@ function TableHead({
   );
 }
 
-// =========================================================
-// DETAIL
-// =========================================================
+/* =========================================================
+   DETAIL
+========================================================= */
 
 function Detail({
   title,
@@ -1364,7 +1867,6 @@ function Detail({
 }) {
   return (
     <div className="border-b border-black/[0.07] pb-4">
-
       <p className="text-[9px] uppercase tracking-[0.2em] text-black/35">
         {title}
       </p>
@@ -1372,7 +1874,6 @@ function Detail({
       <p className="mt-2 break-words text-sm">
         {value || "—"}
       </p>
-
     </div>
   );
 }

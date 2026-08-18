@@ -16,20 +16,12 @@ import {
   XCircle,
 } from "lucide-react";
 
-type Registration = {
-  id: string;
-  created_at: string;
-  event_id: string;
+type Participant = {
+  participantId: string;
   name: string;
   college: string;
   email: string;
   phone: string;
-  team: string | null;
-  checked_in: boolean;
-  checked_in_at: string | null;
-  source?: "legacy" | "participant_event";
-  participant_id?: string;
-  participant_event_id?: string;
 };
 
 type ParticipantEvent = {
@@ -43,33 +35,14 @@ type ParticipantEvent = {
   checkedInAt: string | null;
 };
 
-type EventRecord = {
-  id: string;
-  name: string;
-};
-
-type RegistrationMember = {
-  id: string;
-  created_at: string;
-  registration_id: string;
-  name: string;
-  email: string;
-  phone: string;
-  is_team_leader: boolean;
-};
-
 export default function ScannerPage() {
   const router = useRouter();
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const processingRef = useRef(false);
 
-  const [registration, setRegistration] =
-    useState<Registration | null>(null);
-
-  const [eventName, setEventName] = useState("");
+  const [participant, setParticipant] = useState<Participant | null>(null);
   const [participantEvents, setParticipantEvents] = useState<ParticipantEvent[]>([]);
-  const [members, setMembers] = useState<RegistrationMember[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [scannerStarted, setScannerStarted] = useState(false);
@@ -89,10 +62,8 @@ export default function ScannerPage() {
   async function startScanner() {
     setError("");
     setSuccess("");
-    setRegistration(null);
-    setEventName("");
+    setParticipant(null);
     setParticipantEvents([]);
-    setMembers([]);
 
     try {
       const scanner = new Html5Qrcode("qr-reader");
@@ -163,131 +134,47 @@ export default function ScannerPage() {
     setLoading(true);
     setError("");
     setSuccess("");
-    setEventName("");
     setParticipantEvents([]);
-    setMembers([]);
 
     try {
       let registrationId = scannedValue.trim();
 
-      // Supports both the current UUID-only QR format and
-      // a future SAVISKAR:<uuid> format.
       if (registrationId.startsWith("SAVISKAR:")) {
         registrationId = registrationId.replace("SAVISKAR:", "").trim();
       }
 
       if (/^SVK26-[A-Z0-9]{8}$/i.test(registrationId)) {
         const lookupResponse = await fetch(
-          `/api/participants/${encodeURIComponent(registrationId)}`,
+          `/api/admin/participants/${encodeURIComponent(registrationId)}`,
           { cache: "no-store" }
         );
         const lookup = (await lookupResponse.json()) as {
           success?: boolean;
           error?: string;
-          participant?: {
-            participantId: string;
-            name: string;
-            college: string;
-            email: string;
-            phone: string;
-          };
+          participant?: Participant;
           events?: ParticipantEvent[];
         };
 
         if (!lookupResponse.ok || !lookup.success || !lookup.participant) {
-          setRegistration(null);
+          setParticipant(null);
           setError(lookup.error || "Participant not found. Invalid QR code.");
           return;
         }
 
         const foundEvents = lookup.events ?? [];
-        const primaryEvent = foundEvents[0];
 
+        setParticipant(lookup.participant);
         setParticipantEvents(foundEvents);
-        setEventName(primaryEvent?.eventName ?? "No event registrations");
-        setRegistration({
-          id: primaryEvent?.eventId ?? lookup.participant.participantId,
-          created_at: "",
-          event_id: primaryEvent?.eventId ?? "",
-          name: lookup.participant.name,
-          college: lookup.participant.college,
-          email: lookup.participant.email,
-          phone: lookup.participant.phone,
-          team: primaryEvent?.teamName ?? null,
-          checked_in: primaryEvent?.checkedIn ?? false,
-          checked_in_at: primaryEvent?.checkedInAt ?? null,
-          source: "participant_event",
-          participant_id: lookup.participant.participantId,
-          participant_event_id: primaryEvent?.participantEventId,
-        });
-        return;
-      }
-
-      const { data, error: registrationError } = await supabase
-        .from("registrations")
-        .select("*")
-        .eq("id", registrationId)
-        .maybeSingle();
-
-      if (registrationError || !data) {
-        if (registrationError) {
-          console.warn("REGISTRATION LOOKUP:", registrationError.message);
+        
+        if (foundEvents.length === 0) {
+          setError("Participant found, but they are not registered for any events.");
         }
-        setRegistration(null);
-        setError("Registration not found. Invalid QR code.");
+        
         return;
-      }
-
-      const foundRegistration = data as Registration;
-      setRegistration(foundRegistration);
-
-      // Resolve UUID event IDs safely. Older registrations may contain
-      // legacy text/slug values such as "hackathon"; never send those to
-      // PostgreSQL as a UUID comparison.
-      const UUID_RE =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-      if (UUID_RE.test(foundRegistration.event_id)) {
-        const { data: eventData, error: eventError } = await supabase
-          .from("events")
-          .select("id, name")
-          .eq("id", foundRegistration.event_id)
-          .maybeSingle();
-
-        if (eventError) {
-          console.error("EVENT LOOKUP ERROR:", eventError);
-          setEventName(foundRegistration.event_id);
-        } else if (eventData) {
-          setEventName((eventData as EventRecord).name);
-        } else {
-          setEventName(foundRegistration.event_id);
-        }
       } else {
-        // Legacy registrations stored event text instead of an event UUID.
-        // Keep the scanner usable without triggering Postgres error 22P02.
-        const readableLegacyName = foundRegistration.event_id
-          .replace(/-/g, " ")
-          .replace(/\b\w/g, (char) => char.toUpperCase());
-
-        setEventName(readableLegacyName);
-      }
-
-      // Team members are child rows linked by registration_id.
-      if (foundRegistration.team) {
-        const { data: memberData, error: memberError } = await supabase
-          .from("registration_members")
-          .select(
-            "id, created_at, registration_id, name, email, phone, is_team_leader"
-          )
-          .eq("registration_id", foundRegistration.id)
-          .order("created_at", { ascending: true });
-
-        if (memberError) {
-          console.error("MEMBER LOOKUP ERROR:", memberError);
-          // Registration is still valid even if member details cannot be read.
-        } else {
-          setMembers((memberData as RegistrationMember[]) || []);
-        }
+        setParticipant(null);
+        setError("Invalid QR code format. Expected a Saviskar participant ID.");
+        return;
       }
     } catch (err) {
       console.error("VERIFY ERROR:", err);
@@ -297,143 +184,86 @@ export default function ScannerPage() {
     }
   }
 
-  async function checkInParticipant() {
-    if (!registration) return;
-
-    if (registration.source === "participant_event" && !registration.participant_event_id) {
-      setError("This participant has no event registration to check in.");
-      return;
-    }
-
-    if (registration.checked_in) {
-      setError(
-        registration.team
-          ? "This team has already checked in."
-          : "This participant has already checked in."
-      );
-      return;
-    }
-
+  async function checkInParticipant(participantEventId: string, eventName: string, teamName: string | null) {
     setLoading(true);
     setError("");
 
-    const checkInTime = new Date().toISOString();
+    try {
+      const response = await fetch("/api/admin/check-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participantEventId, action: "check_in" }),
+      });
 
-    const update = {
-      checked_in: true,
-      checked_in_at: checkInTime,
-    };
-    const { error } = registration.source === "participant_event"
-      ? await supabase
-          .from("participant_events")
-          .update(update)
-          .eq("id", registration.participant_event_id!)
-          .select()
-          .single()
-      : await supabase
-          .from("registrations")
-          .update(update)
-          .eq("id", registration.id)
-          .select()
-          .single();
+      const result = await response.json();
 
-    if (error) {
-      console.error("CHECK-IN ERROR:", error);
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Could not check in.");
+      }
 
-      setError(
-        registration.team
-          ? "Could not check in this team."
-          : "Could not check in participant."
+      setParticipantEvents((events) =>
+        events.map((event) =>
+          event.participantEventId === participantEventId
+            ? { ...event, checkedIn: true, checkedInAt: result.checked_in_at }
+            : event
+        )
       );
+
+      setSuccess(
+        teamName
+          ? `${teamName} has been successfully checked in for ${eventName}.`
+          : `${participant?.name} has been successfully checked in for ${eventName}.`
+      );
+    } catch (err) {
+      console.error("CHECK-IN ERROR:", err);
+      setError(err instanceof Error ? err.message : "Could not check in participant.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setRegistration((current) =>
-      current
-        ? { ...current, checked_in: true, checked_in_at: checkInTime }
-        : current
-    );
-    setParticipantEvents((events) =>
-      events.map((event) =>
-        event.participantEventId === registration.participant_event_id
-          ? { ...event, checkedIn: true, checkedInAt: checkInTime }
-          : event
-      )
-    );
-
-    setSuccess(
-      registration.team
-        ? `${registration.team} has been successfully checked in.`
-        : `${registration.name} has been successfully checked in.`
-    );
-
-    setLoading(false);
   }
 
-  async function checkOutParticipant() {
-    if (!registration || !registration.checked_in) return;
-
-    if (registration.source === "participant_event" && !registration.participant_event_id) {
-      setError("This participant has no event registration to check out.");
-      return;
-    }
-
+  async function checkOutParticipant(participantEventId: string, eventName: string, teamName: string | null) {
     setLoading(true);
     setError("");
     setSuccess("");
 
-    const update = {
-      checked_in: false,
-      checked_in_at: null,
-    };
-    const { error } = registration.source === "participant_event"
-      ? await supabase
-          .from("participant_events")
-          .update(update)
-          .eq("id", registration.participant_event_id!)
-          .select()
-          .single()
-      : await supabase
-          .from("registrations")
-          .update(update)
-          .eq("id", registration.id)
-          .select()
-          .single();
+    try {
+      const response = await fetch("/api/admin/check-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participantEventId, action: "check_out" }),
+      });
 
-    if (error) {
-      console.error("CHECK-OUT ERROR:", error);
-      setError(
-        registration.team
-          ? "Could not check out this team."
-          : "Could not check out participant."
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Could not check out.");
+      }
+
+      setParticipantEvents((events) =>
+        events.map((event) =>
+          event.participantEventId === participantEventId
+            ? { ...event, checkedIn: false, checkedInAt: null }
+            : event
+        )
       );
-      setLoading(false);
-      return;
-    }
 
-    setRegistration((current) =>
-      current ? { ...current, checked_in: false, checked_in_at: null } : current
-    );
-    setParticipantEvents((events) =>
-      events.map((event) =>
-        event.participantEventId === registration.participant_event_id
-          ? { ...event, checkedIn: false, checkedInAt: null }
-          : event
-      )
-    );
-    setSuccess(
-      registration.team
-        ? `${registration.team} has been successfully checked out.`
-        : `${registration.name} has been successfully checked out.`
-    );
-    setLoading(false);
+      setSuccess(
+        teamName
+          ? `${teamName} has been successfully checked out of ${eventName}.`
+          : `${participant?.name} has been successfully checked out of ${eventName}.`
+      );
+    } catch (err) {
+      console.error("CHECK-OUT ERROR:", err);
+      setError(err instanceof Error ? err.message : "Could not check out participant.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function scanAnother() {
-    setRegistration(null);
-    setEventName("");
-    setMembers([]);
+    setParticipant(null);
+    setParticipantEvents([]);
     setError("");
     setSuccess("");
 
@@ -444,21 +274,17 @@ export default function ScannerPage() {
 
   return (
     <main className="min-h-screen bg-[#f5f5f5] px-5 py-8 md:px-10 lg:px-16">
-
       <div className="mx-auto max-w-[1100px]">
-
         {/* HEADER */}
-
         <div className="mb-10 flex items-center justify-between">
-
           <div>
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
               Saviskar 2026
             </p>
 
             <h1 className="text-4xl font-semibold tracking-[-0.05em] text-black md:text-6xl">
-  Entry Scanner
-</h1>
+              Entry Scanner
+            </h1>
 
             <p className="mt-4 text-sm text-black/45">
               Scan participant or team QR codes to verify entry.
@@ -472,54 +298,30 @@ export default function ScannerPage() {
             <ArrowLeft size={15} />
             Dashboard
           </button>
-
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_0.85fr]">
-
           {/* SCANNER */}
-
           <div className="rounded-[30px] bg-black p-6 text-white md:p-8">
-
             <div className="mb-6 flex items-center gap-3">
-
               <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10">
                 <QrCode size={19} />
               </div>
 
               <div>
-                <p className="font-medium">
-                  QR Scanner
-                </p>
-
-                <p className="text-xs text-white/40">
-                  Point camera at registration QR
-                </p>
+                <p className="font-medium">QR Scanner</p>
+                <p className="text-xs text-white/40">Point camera at registration QR</p>
               </div>
-
             </div>
 
-            <div
-              id="qr-reader"
-              className="overflow-hidden rounded-[22px] bg-white"
-            />
+            <div id="qr-reader" className="overflow-hidden rounded-[22px] bg-white" />
 
-            {!scannerStarted && !registration && (
+            {!scannerStarted && !participant && (
               <div className="flex min-h-[330px] flex-col items-center justify-center text-center">
-
-                <QrCode
-                  size={45}
-                  className="mb-5 text-white/20"
-                />
-
-                <p className="mb-2 font-medium">
-                  Ready to scan
-                </p>
-
+                <QrCode size={45} className="mb-5 text-white/20" />
+                <p className="mb-2 font-medium">Ready to scan</p>
                 <p className="mb-7 max-w-xs text-sm leading-6 text-white/40">
-                  Start the camera and scan the QR code
-                  displayed on the registration
-                  confirmation.
+                  Start the camera and scan the QR code displayed on the registration confirmation.
                 </p>
 
                 <button
@@ -528,78 +330,45 @@ export default function ScannerPage() {
                 >
                   Start camera
                 </button>
-
               </div>
             )}
 
             {scannerStarted && (
-              <p className="mt-5 text-center text-xs text-white/40">
-                Looking for QR code...
-              </p>
+              <p className="mt-5 text-center text-xs text-white/40">Looking for QR code...</p>
             )}
-
           </div>
 
           {/* RESULT */}
-
           <div className="rounded-[30px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.05)] md:p-8">
-
             <p className="mb-7 text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
               Verification
             </p>
 
             {loading && (
               <div className="flex min-h-[400px] items-center justify-center">
-
                 <div className="text-center">
-
-                  <Loader2
-                    size={28}
-                    className="mx-auto mb-4 animate-spin"
-                  />
-
-                  <p className="!text-black/60 text-sm">
-                    Verifying registration...
-                  </p>
-
+                  <Loader2 size={28} className="mx-auto mb-4 animate-spin" />
+                  <p className="!text-black/60 text-sm">Verifying registration...</p>
                 </div>
-
               </div>
             )}
 
-            {!loading && !registration && !error && (
+            {!loading && !participant && !error && (
               <div className="flex min-h-[400px] flex-col items-center justify-center text-center">
-
-                <ShieldCheck
-                  size={38}
-                  className="mb-5 text-black/15"
-                />
-
-                <p className="text-black">
-  Waiting for scan
-</p>
-
-<p className="text-black">
-  Registration details will appear here.
-</p>
-
+                <ShieldCheck size={38} className="mb-5 text-black/15" />
+                <p className="text-black">Waiting for scan</p>
+                <p className="text-black">Registration details will appear here.</p>
               </div>
             )}
 
             {error && (
               <div className="flex min-h-[400px] flex-col items-center justify-center text-center">
-
                 <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-red-50 text-red-600">
                   <XCircle size={26} />
                 </div>
 
-                <p className="font-semibold">
-                  Verification failed
-                </p>
-
-                <p className="mt-2 max-w-xs text-sm leading-6 text-black/45">
-                  {error}
-                </p>
+                <p className="font-semibold">Verification failed</p>
+                <p className="mt-2 max-w-xs text-sm leading-6 text-black/45">{error}</p>
 
                 <button
                   onClick={scanAnother}
@@ -608,115 +377,27 @@ export default function ScannerPage() {
                   <RotateCcw size={15} />
                   Scan again
                 </button>
-
               </div>
             )}
 
-            {!loading && registration && (
+            {!loading && participant && (
               <div className="!text-black">
-
-                {/* STATUS */}
-
-                {registration.checked_in ? (
-
-                  <div className="mb-7 rounded-[22px] bg-green-50 p-5">
-
-                    <div className="flex items-center gap-3 text-green-700">
-
-                      <CheckCircle2 size={21} />
-
-                      <div>
-                        <p className="font-semibold">
-                          Already checked in
-                        </p>
-
-                        <p className="mt-1 text-xs opacity-70">
-                          {registration.checked_in_at
-                            ? new Date(
-                                registration.checked_in_at
-                              ).toLocaleString()
-                            : ""}
-                        </p>
-                      </div>
-
-                    </div>
-
-                  </div>
-
-                ) : (
-
-                  <div className="mb-7 rounded-[22px] bg-black p-5 !text-white">
-
-                    <div className="flex items-center gap-3">
-
-                      <ShieldCheck size={21} />
-
-                      <div>
-                        <p className="font-semibold">
-                          Valid registration
-                        </p>
-
-                        <p className="mt-1 !text-white/60 text-xs">
-                          Registration is cleared for check-in.
-                        </p>
-                      </div>
-
-                    </div>
-
-                  </div>
-
-                )}
-
                 {/* PARTICIPANT */}
-
                 <div className="mb-7 flex items-center gap-4 !text-black">
-
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-black/[0.05]">
                     <User size={20} />
                   </div>
 
                   <div>
-                    <p className="!text-black text-xl font-semibold">
-                      {registration.name}
-                    </p>
-
-                    <p className="!text-black/60 text-sm">
-                      {registration.college}
-                    </p>
+                    <p className="!text-black text-xl font-semibold">{participant.name}</p>
+                    <p className="!text-black/60 text-sm">{participant.college}</p>
                   </div>
-
                 </div>
 
-                <div className="space-y-5 border-t border-black/10 pt-6 !text-black">
-
-                  <Detail
-                    label="Event"
-                    value={eventName || registration.event_id}
-                  />
-
-                  <Detail
-                    label="Team"
-                    value={registration.team || "Individual"}
-                  />
-
-                  <Detail
-                    label="Email"
-                    value={registration.email}
-                  />
-
-                  <Detail
-                    label="Phone"
-                    value={registration.phone}
-                  />
-
-                  <Detail
-                    label={registration.source === "participant_event" ? "Participant ID" : "Registration ID"}
-                    value={registration.source === "participant_event"
-                      ? registration.participant_id || registration.id
-                      : registration.id}
-                    mono
-                  />
-
+                <div className="grid grid-cols-2 gap-5 border-t border-black/10 pt-6 !text-black">
+                  <Detail label="Email" value={participant.email} />
+                  <Detail label="Phone" value={participant.phone} />
+                  <Detail label="Participant ID" value={participant.participantId} mono />
                 </div>
 
                 {participantEvents.length > 0 && (
@@ -724,91 +405,56 @@ export default function ScannerPage() {
                     <p className="mb-4 text-[9px] font-semibold uppercase tracking-[0.18em] !text-black/60">
                       Registered events
                     </p>
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       {participantEvents.map((event) => (
                         <div
                           key={event.participantEventId}
-                          className="rounded-[18px] border border-black/[0.08] p-4"
+                          className="rounded-[20px] border border-black/[0.08] p-5 bg-black/[0.01]"
                         >
-                          <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start justify-between gap-4 mb-4">
                             <div>
-                              <p className="!text-black text-sm font-medium">{event.eventName}</p>
-                              {event.teamName && (
-                                <p className="mt-1 !text-black/60 text-xs">{event.teamName}</p>
+                              <p className="!text-black text-base font-semibold">{event.eventName}</p>
+                              {event.teamName ? (
+                                <p className="mt-1 !text-black/60 text-sm font-medium">Team: {event.teamName}</p>
+                              ) : (
+                                <p className="mt-1 !text-black/60 text-sm">Individual Registration</p>
                               )}
                             </div>
-                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${
-                              event.checkedIn
-                                ? "bg-green-50 text-green-700"
-                                : "bg-black/[0.05] text-black/50"
-                            }`}>
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
+                                event.checkedIn
+                                  ? "bg-green-50 text-green-700"
+                                  : "bg-black/[0.05] text-black/50"
+                              }`}
+                            >
                               {event.checkedIn ? "Checked in" : "Not checked in"}
                             </span>
                           </div>
-                          <p className="mt-3 !text-black/60 text-xs">
-                            Payment: {event.paymentStatus || "pending"}
-                          </p>
+
+                          <div className="flex items-center gap-3">
+                            {!event.checkedIn ? (
+                              <button
+                                onClick={() => checkInParticipant(event.participantEventId, event.eventName, event.teamName)}
+                                disabled={loading}
+                                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
+                              >
+                                <CheckCircle2 size={16} />
+                                Check in
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => checkOutParticipant(event.participantEventId, event.eventName, event.teamName)}
+                                disabled={loading}
+                                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                              >
+                                <LogOut size={16} />
+                                Check out
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
-
-                {registration.team && (
-                  <div className="mt-7 border-t border-black/10 pt-6 !text-black">
-                    <div className="mb-4 flex items-end justify-between gap-4">
-                      <div>
-                        <p className="text-[9px] font-semibold uppercase tracking-[0.18em] !text-black/60">
-                          Team roster
-                        </p>
-                        <p className="mt-1 font-semibold">
-                          {registration.team}
-                        </p>
-                      </div>
-
-                      <span className="rounded-full bg-black/[0.05] px-3 py-1.5 text-xs text-black/50">
-                        {members.length + 1} total
-                      </span>
-                    </div>
-
-                    <div className="rounded-[18px] bg-black/[0.035] p-4">
-                      <p className="text-[9px] font-semibold uppercase tracking-[0.18em] !text-black/60">
-                        Team leader
-                      </p>
-                      <p className="mt-2 !text-black text-sm font-medium">
-                        {registration.name}
-                      </p>
-                      <p className="mt-1 !text-black/60 text-xs">
-                        {registration.email} · {registration.phone}
-                      </p>
-                    </div>
-
-                    {members.length > 0 ? (
-                      <div className="mt-3 space-y-3">
-                        {members.map((member, index) => (
-                          <div
-                            key={member.id}
-                            className="rounded-[18px] border border-black/[0.08] p-4"
-                          >
-                            <p className="text-[9px] font-semibold uppercase tracking-[0.18em] !text-black/60">
-                              {member.is_team_leader
-                                ? "Team leader"
-                                : `Member ${index + 2}`}
-                            </p>
-                            <p className="mt-2 !text-black text-sm font-medium">
-                              {member.name}
-                            </p>
-                            <p className="mt-1 !text-black/60 text-xs leading-5">
-                              {member.email || "—"} · {member.phone || "—"}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="mt-3 !text-black/60 text-xs">
-                        No additional team members are stored.
-                      </p>
-                    )}
                   </div>
                 )}
 
@@ -818,54 +464,19 @@ export default function ScannerPage() {
                   </div>
                 )}
 
-                {!registration.checked_in ? (
-
-                  <button
-                    onClick={checkInParticipant}
-                    disabled={loading}
-                    className="mt-8 flex w-full items-center justify-center gap-2 rounded-full bg-black py-4 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
-                  >
-                    <CheckCircle2 size={17} />
-                    {registration.source === "participant_event"
-                      ? `Check in ${eventName || "event"}`
-                      : registration.team ? "Check in team" : "Check in participant"}
-                  </button>
-
-                ) : (
-
-                  <div className="mt-8 space-y-3">
-                    <button
-                      onClick={checkOutParticipant}
-                      disabled={loading}
-                      className="flex w-full items-center justify-center gap-2 rounded-full border border-red-200 bg-red-50 py-4 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
-                    >
-                      <LogOut size={17} />
-                      {registration.source === "participant_event"
-                        ? `Check out ${eventName || "event"}`
-                        : registration.team ? "Check out team" : "Check out participant"}
-                    </button>
-
-                    <button
-                      onClick={scanAnother}
-                      disabled={loading}
-                      className="flex w-full items-center justify-center gap-2 rounded-full bg-black py-4 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
-                    >
-                      <QrCode size={17} />
-                      Scan next participant
-                    </button>
-                  </div>
-
-                )}
-
+                <button
+                  onClick={scanAnother}
+                  disabled={loading}
+                  className="mt-8 flex w-full items-center justify-center gap-2 rounded-full border border-black/10 bg-white py-4 text-sm font-medium !text-black transition hover:bg-black/[0.02] disabled:opacity-50"
+                >
+                  <QrCode size={17} />
+                  Scan next participant
+                </button>
               </div>
             )}
-
           </div>
-
         </div>
-
       </div>
-
     </main>
   );
 }
@@ -880,22 +491,17 @@ function Detail({
   mono?: boolean;
 }) {
   return (
-    <div>
-
+    <div className="col-span-2 sm:col-span-1">
       <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.18em] !text-black/60">
         {label}
       </p>
-
       <p
         className={`!text-black text-sm ${
-          mono
-            ? "break-all font-mono text-xs"
-            : ""
+          mono ? "break-all font-mono text-xs" : ""
         }`}
       >
         {value}
       </p>
-
     </div>
   );
 }

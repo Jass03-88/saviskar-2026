@@ -123,7 +123,7 @@ export default function EventsAdminPage() {
   const [editing, setEditing] = useState<EventForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-
+const [role, setRole] = useState<"master" | "admin" | null>(null);
   const loadEvents = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
     else setLoading(true);
@@ -140,15 +140,16 @@ export default function EventsAdminPage() {
       }
 
       const payload = (await response.json()) as {
-        events?: EventRecord[];
-        error?: string;
-      };
-
+  events?: EventRecord[];
+  role?: "master" | "admin";
+  error?: string;
+};
       if (!response.ok) {
         throw new Error(payload.error ?? "Could not load events.");
       }
 
       setEvents(payload.events ?? []);
+      setRole(payload.role ?? null);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -381,7 +382,8 @@ export default function EventsAdminPage() {
               />
               Refresh
             </button>
-            <button
+            {role === "master" && (
+              <button
               type="button"
               onClick={startCreate}
               className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
@@ -389,6 +391,7 @@ export default function EventsAdminPage() {
               <Plus size={15} />
               Create Event
             </button>
+            )}
           </div>
         </header>
 
@@ -432,6 +435,7 @@ export default function EventsAdminPage() {
               {search ? "No events match your search." : "No events found."}
             </p>
             {!search && (
+              role === "master" && (
               <button
                 type="button"
                 onClick={startCreate}
@@ -439,6 +443,7 @@ export default function EventsAdminPage() {
               >
                 Create your first event
               </button>
+              )
             )}
           </div>
         ) : (
@@ -528,6 +533,7 @@ export default function EventsAdminPage() {
                     <Users size={14} />
                     Registrations
                   </button>
+                  {role === "master" && (
                   <button
                     type="button"
                     onClick={() => startEdit(event)}
@@ -536,8 +542,9 @@ export default function EventsAdminPage() {
                     <Edit3 size={14} />
                     Edit
                   </button>
+                  )}
                 </div>
-
+{role === "master" && (
                 <button
                   type="button"
                   onClick={() => void deleteEvent(event)}
@@ -559,6 +566,7 @@ export default function EventsAdminPage() {
                   )}
                   Delete event
                 </button>
+)}
               </article>
             ))}
           </div>

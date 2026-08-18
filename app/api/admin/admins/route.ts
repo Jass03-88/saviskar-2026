@@ -275,6 +275,18 @@ export async function POST(request: Request) {
     );
   }
 
+  if (role === "master") {
+    const masterCount = (existingAdmins ?? []).filter((a) => a.role === "master").length;
+    if (masterCount >= 2) {
+      return NextResponse.json(
+        {
+          error: "The maximum limit of 2 Master Admins has been reached.",
+        },
+        { status: 403 }
+      );
+    }
+  }
+
   /* =======================================================
      CHECK SUPABASE AUTH USERS
   ======================================================= */
@@ -373,7 +385,7 @@ export async function POST(request: Request) {
       new URL(request.url).origin;
 
     const redirectTo =
-      `${requestOrigin}/admin/invite`;
+      `${requestOrigin}/admin/reset-password`;
 
     console.log(
       "========================================"
@@ -463,7 +475,7 @@ export async function POST(request: Request) {
     new URL(request.url).origin;
 
   const redirectTo =
-    `${requestOrigin}/admin/invite`;
+    `${requestOrigin}/admin/reset-password`;
 
   console.log(
     "========================================"

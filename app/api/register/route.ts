@@ -406,6 +406,7 @@ export async function POST(
    *
    * Existing participant:
    * Participant ID identifies the person.
+   * We also require their email as an additional verification layer.
    * The supplied personal details are still passed
    * to the database function for compatibility.
    */
@@ -421,17 +422,24 @@ export async function POST(
         400
       );
     }
-
-    if (
-      !EMAIL_PATTERN.test(
-        email
-      )
-    ) {
+  } else {
+    if (!email) {
       return errorResponse(
-        "Please enter a valid email address.",
+        "Please confirm your email address.",
         400
       );
     }
+  }
+
+  if (
+    !EMAIL_PATTERN.test(
+      email
+    )
+  ) {
+    return errorResponse(
+      "Please enter a valid email address.",
+      400
+    );
   }
 
   // =====================================================
