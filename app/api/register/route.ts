@@ -1282,6 +1282,9 @@ export async function POST(
 
           college:
             college || "",
+            
+          requiresPayment:
+            eventMeta.payment_type === "paid",
 
           email:
             email || "",
@@ -1306,9 +1309,11 @@ export async function POST(
             emailMembers,
         });
 
+      console.log("[REGISTER] sendRegistrationEmail completed with result:", emailResult);
+
       if (!emailResult.success) {
         console.error(
-          "Confirmation email failed for event:",
+          "[REGISTER EMAIL ERROR] Confirmation email failed for event:",
           result.event_id,
           emailResult.error
         );

@@ -27,6 +27,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getPaymentGateway } from "@/lib/payments";
+import { ensurePaymentConfirmationSent } from "@/lib/payments/post-payment";
 
 function errorResponse(
   message: string,
@@ -353,6 +354,10 @@ export async function POST(
     amount: paymentOrder.amount,
     participantEventIds,
   });
+
+  // ─── Trigger Idempotent Post-Payment Logic ─────────────
+  // (PDF receipt + email)
+  await ensurePaymentConfirmationSent(paymentOrderId);
 
   return NextResponse.json(
     {

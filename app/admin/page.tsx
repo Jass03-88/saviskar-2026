@@ -270,7 +270,7 @@ export default function AdminPage() {
         if (!response.ok) {
           throw new Error(
             payload.error ??
-              "Could not load registrations."
+            "Could not load registrations."
           );
         }
 
@@ -457,7 +457,7 @@ export default function AdminPage() {
             item.registration
               .payment_status
               ?.toLowerCase() ===
-              paymentFilter;
+            paymentFilter;
 
           const matchesArchive =
             archiveFilter === "all" ||
@@ -701,21 +701,21 @@ export default function AdminPage() {
       ) {
         throw new Error(
           payload.error ??
-            "Could not update check-in status."
+          "Could not update check-in status."
         );
       }
 
       setRegistrations((current) =>
         current.map((item) =>
           item.registration.id ===
-          registration.registration.id
+            registration.registration.id
             ? {
-                ...item,
-                registration: {
-                  ...item.registration,
-                  ...payload.registration,
-                },
-              }
+              ...item,
+              registration: {
+                ...item.registration,
+                ...payload.registration,
+              },
+            }
             : item
         )
       );
@@ -723,14 +723,14 @@ export default function AdminPage() {
       setSelectedParticipantEvents((current) =>
         current.map((item) =>
           item.registration.id ===
-          registration.registration.id
+            registration.registration.id
             ? {
-                ...item,
-                registration: {
-                  ...item.registration,
-                  ...payload.registration,
-                },
-              }
+              ...item,
+              registration: {
+                ...item.registration,
+                ...payload.registration,
+              },
+            }
             : item
         )
       );
@@ -788,7 +788,7 @@ export default function AdminPage() {
       if (!response.ok) {
         throw new Error(
           payload.error ??
-            "Could not archive the event registration."
+          "Could not archive the event registration."
         );
       }
 
@@ -796,7 +796,7 @@ export default function AdminPage() {
         current.map(
           (item) =>
             item.registration.id ===
-            registration.registration.id
+              registration.registration.id
               ? { ...item, registration: { ...item.registration, is_archived: true } }
               : item
         )
@@ -806,7 +806,7 @@ export default function AdminPage() {
         current.map(
           (item) =>
             item.registration.id ===
-            registration.registration.id
+              registration.registration.id
               ? { ...item, registration: { ...item.registration, is_archived: true } }
               : item
         )
@@ -865,7 +865,7 @@ export default function AdminPage() {
       if (!response.ok) {
         throw new Error(
           payload.error ??
-            "Could not permanently delete the event registration."
+          "Could not permanently delete the event registration."
         );
       }
 
@@ -944,7 +944,7 @@ export default function AdminPage() {
       if (!response.ok) {
         throw new Error(
           payload.error ??
-            "Could not restore the event registration."
+          "Could not restore the event registration."
         );
       }
 
@@ -952,7 +952,7 @@ export default function AdminPage() {
         current.map(
           (item) =>
             item.registration.id ===
-            registration.registration.id
+              registration.registration.id
               ? { ...item, registration: { ...item.registration, is_archived: false } }
               : item
         )
@@ -962,7 +962,7 @@ export default function AdminPage() {
         current.map(
           (item) =>
             item.registration.id ===
-            registration.registration.id
+              registration.registration.id
               ? { ...item, registration: { ...item.registration, is_archived: false } }
               : item
         )
@@ -1014,39 +1014,39 @@ export default function AdminPage() {
           item.participant.name,
 
           item.participant.college ??
-            "",
+          "",
 
           item.participant.email,
 
           item.participant.phone ??
-            "",
+          "",
 
           item.event?.name ??
-            item.registration
-              .event_id,
+          item.registration
+            .event_id,
 
           item.event?.category ??
-            "",
+          "",
 
           item.registration
             .team_name ??
-            "Individual",
+          "Individual",
 
           item.registration
             .registration_status ??
-            "",
+          "",
 
           item.registration
             .payment_status ??
-            "",
+          "",
 
           item.registration
             .payment_amount ??
-            0,
+          0,
 
           item.registration
             .payment_id ??
-            "",
+          "",
 
           item.registration
             .checked_in
@@ -1311,7 +1311,7 @@ export default function AdminPage() {
                 Payment Overview
               </h2>
             </div>
-            
+
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -1343,7 +1343,7 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-          
+
           <div className="mt-6 border-t border-black/[0.05] pt-6">
             <div className="flex flex-wrap gap-2 mb-6">
               {["all", "technical", "non-technical", "cultural", "sports"].map((cat) => (
@@ -1351,17 +1351,16 @@ export default function AdminPage() {
                   key={cat}
                   type="button"
                   onClick={() => setPaymentOverviewCategory(cat as any)}
-                  className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition border ${
-                    paymentOverviewCategory === cat 
-                      ? "border-black/20 bg-black/[0.03] text-black" 
-                      : "border-transparent text-black/40 hover:text-black/70"
-                  }`}
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition border ${paymentOverviewCategory === cat
+                    ? "border-black/20 bg-black/[0.03] text-black"
+                    : "border-transparent text-black/40 hover:text-black/70"
+                    }`}
                 >
                   {cat === "all" ? "All Categories" : cat.replace("-", " ")}
                 </button>
               ))}
             </div>
-            
+
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {eventAnalytics
                 .filter((event) => {
@@ -1378,22 +1377,22 @@ export default function AdminPage() {
                 .map((event) => {
                   const eventRegs = registrations.filter(r => r.registration.event_id === event.id && r.registration.is_archived !== true);
                   let matchedCount = 0;
-                  
+
                   eventRegs.forEach(r => {
                     const isSuccess = r.registration.payment_status === "paid";
                     if (paymentOverviewState === "paid" && !isSuccess) return;
                     if (paymentOverviewState === "unpaid" && isSuccess) return;
                     matchedCount++;
                   });
-                  
+
                   if (matchedCount === 0 && paymentOverviewState !== "all") return null;
 
                   const fee = event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable";
                   const isPaidEvent = event.payment_type === "paid";
-                  
+
                   let badgeClass = "bg-black/[0.04] border-black/10 text-black/45";
                   let badgeText = "FREE";
-                  
+
                   if (isPaidEvent) {
                     if (paymentOverviewState === "unpaid" || (paymentOverviewState === "all" && matchedCount > 0)) {
                       badgeClass = "bg-red-50 text-red-700 border-red-200";
@@ -1416,11 +1415,10 @@ export default function AdminPage() {
                         </p>
                         <div className="mt-2.5">
                           {isPaidEvent ? (
-                            <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${
-                              paymentOverviewState === 'all'
-                                ? 'bg-black/[0.04] text-black/60 border-black/10'
-                                : badgeClass
-                            }`}>
+                            <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${paymentOverviewState === 'all'
+                              ? 'bg-black/[0.04] text-black/60 border-black/10'
+                              : badgeClass
+                              }`}>
                               {paymentOverviewState === 'all' ? `${fee} · PAID EVENT` : badgeText}
                             </span>
                           ) : (
@@ -1446,147 +1444,138 @@ export default function AdminPage() {
 
         {eventAnalytics.length >
           0 && (
-          <div className="mb-8 rounded-[28px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.04)] md:p-8">
+            <div className="mb-8 rounded-[28px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.04)] md:p-8">
 
-            <div className="flex items-end justify-between">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
-                  Event analytics
-                </p>
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
+                    Event analytics
+                  </p>
 
-                <h2 className="mt-2 text-xl font-semibold text-black md:text-2xl">
-                  Registration breakdown
-                </h2>
+                  <h2 className="mt-2 text-xl font-semibold text-black md:text-2xl">
+                    Registration breakdown
+                  </h2>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEventFilter(
+                      "all"
+                    )
+                  }
+                  className="text-xs text-black hover:text-black"
+                >
+                  View all
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() =>
-                  setEventFilter(
-                    "all"
-                  )
-                }
-                className="text-xs text-black hover:text-black"
-              >
-                View all
-              </button>
-            </div>
-
-            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {eventAnalytics.map(
-                (event) => (
-                  <button
-                    type="button"
-                    key={event.id}
-                    onClick={() =>
-                      setEventFilter(
-                        eventFilter ===
-                          event.id
-                          ? "all"
-                          : event.id
-                      )
-                    }
-                    className={`rounded-[20px] p-5 text-left transition ${
-                      eventFilter ===
-                      event.id
+              <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {eventAnalytics.map(
+                  (event) => (
+                    <button
+                      type="button"
+                      key={event.id}
+                      onClick={() =>
+                        setEventFilter(
+                          eventFilter ===
+                            event.id
+                            ? "all"
+                            : event.id
+                        )
+                      }
+                      className={`rounded-[20px] p-5 text-left transition ${eventFilter ===
+                        event.id
                         ? "bg-black text-white"
                         : "bg-black/[0.035] hover:bg-black/[0.06]"
-                    }`}
-                  >
-                    <p
-                      className={`truncate text-[10px] uppercase tracking-[0.16em] ${
-                        eventFilter ===
-                        event.id
+                        }`}
+                    >
+                      <p
+                        className={`truncate text-[10px] uppercase tracking-[0.16em] ${eventFilter ===
+                          event.id
                           ? "text-white/40"
                           : "text-black/40"
-                      }`}
-                    >
-                      {event.category ??
-                        "Event"}
-                    </p>
+                          }`}
+                      >
+                        {event.category ??
+                          "Event"}
+                      </p>
 
-                    <div className="mt-1">
-                      <p
-                        className={`truncate text-sm font-semibold ${
-                          eventFilter === event.id
+                      <div className="mt-1">
+                        <p
+                          className={`truncate text-sm font-semibold ${eventFilter === event.id
                             ? "text-white"
                             : "text-black"
-                        }`}
-                      >
-                        {event.name}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {event.payment_type === "paid" ? (
-                          <>
-                            {event.paidCount > 0 && (
-                              <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${
-                                eventFilter === event.id
+                            }`}
+                        >
+                          {event.name}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {event.payment_type === "paid" ? (
+                            <>
+                              {event.paidCount > 0 && (
+                                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${eventFilter === event.id
                                   ? "border-green-400 bg-green-500/20 text-white"
                                   : "border-green-200 bg-green-50 text-green-700"
-                              }`}>
-                                {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PAID
-                              </span>
-                            )}
-                            {event.pendingCount > 0 && (
-                              <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${
-                                eventFilter === event.id
+                                  }`}>
+                                  {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PAID
+                                </span>
+                              )}
+                              {event.pendingCount > 0 && (
+                                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${eventFilter === event.id
                                   ? "border-red-400 bg-red-500/20 text-white"
                                   : "border-red-200 bg-red-50 text-red-700"
-                              }`}>
-                                {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PENDING
-                              </span>
-                            )}
-                            {event.paidCount === 0 && event.pendingCount === 0 && (
-                              <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${
-                                eventFilter === event.id
+                                  }`}>
+                                  {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PENDING
+                                </span>
+                              )}
+                              {event.paidCount === 0 && event.pendingCount === 0 && (
+                                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${eventFilter === event.id
                                   ? "border-white/20 text-white"
                                   : "border-black/10 text-black/60 bg-black/[0.04]"
-                              }`}>
-                                {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PAID EVENT
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${
-                            eventFilter === event.id
+                                  }`}>
+                                  {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PAID EVENT
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${eventFilter === event.id
                               ? "border-white/20 text-white/70"
                               : "border-black/10 text-black/50 bg-black/[0.02]"
-                          }`}>
-                            FREE
-                          </span>
-                        )}
+                              }`}>
+                              FREE
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="mt-5 flex items-end justify-between">
-                      <p
-  className={`text-3xl font-semibold ${
-    eventFilter === event.id
-      ? "text-white"
-      : "text-black"
-  }`}
->
-  {event.count}
-</p>
+                      <div className="mt-5 flex items-end justify-between">
+                        <p
+                          className={`text-3xl font-semibold ${eventFilter === event.id
+                            ? "text-white"
+                            : "text-black"
+                            }`}
+                        >
+                          {event.count}
+                        </p>
 
-                      <p
-                        className={`text-xs ${
-                          eventFilter ===
-                          event.id
+                        <p
+                          className={`text-xs ${eventFilter ===
+                            event.id
                             ? "text-white/40"
                             : "text-black/35"
-                        }`}
-                      >
-                        {event.checked}/
-                        {event.count} checked
-                      </p>
-                    </div>
-                  </button>
-                )
-              )}
+                            }`}
+                        >
+                          {event.checked}/
+                          {event.count} checked
+                        </p>
+                      </div>
+                    </button>
+                  )
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
         {/* FILTERS */}
 
@@ -1789,7 +1778,7 @@ export default function AdminPage() {
               className="mx-auto text-black/15"
             />
 
-            <p className="mt-4 text-sm font-medium">
+            <p className="mt-4 text-sm font-medium text-black">
               No registrations found
             </p>
 
@@ -1936,12 +1925,12 @@ export default function AdminPage() {
 
                         {group.length >
                           3 && (
-                          <span className="rounded-full bg-black px-3 py-1.5 text-[9px] text-white">
-                            +
-                            {group.length -
-                              3}
-                          </span>
-                        )}
+                            <span className="rounded-full bg-black px-3 py-1.5 text-[9px] text-white">
+                              +
+                              {group.length -
+                                3}
+                            </span>
+                          )}
                       </div>
 
                       {/* PAYMENT */}
@@ -1951,10 +1940,10 @@ export default function AdminPage() {
                           const isPaidEvent = item.event?.payment_type === "paid";
                           const fee = item.event?.registration_fee != null ? `₹${item.event.registration_fee}` : "Amount unavailable";
                           const isSuccess = item.registration.payment_status === "paid";
-                          
+
                           let displayClass = "bg-black/[0.04] text-black/45 border-black/10";
                           let displayText = "FREE";
-                          
+
                           if (isPaidEvent) {
                             if (isSuccess) {
                               displayClass = "bg-green-50 text-green-700 border-green-200";
@@ -2156,7 +2145,7 @@ export default function AdminPage() {
                   }{" "}
                   event
                   {selectedParticipantEvents.length ===
-                  1
+                    1
                     ? ""
                     : "s"}
                 </h3>
@@ -2194,12 +2183,11 @@ export default function AdminPage() {
                           </div>
 
                           <span
-                            className={`rounded-full border px-3 py-1.5 text-[9px] font-medium ${
-                              item.registration
-                                .checked_in
-                                ? "border-green-100 bg-green-50 text-green-700"
-                                : "border-black/10 bg-black/[0.035] text-black/45"
-                            }`}
+                            className={`rounded-full border px-3 py-1.5 text-[9px] font-medium ${item.registration
+                              .checked_in
+                              ? "border-green-100 bg-green-50 text-green-700"
+                              : "border-black/10 bg-black/[0.035] text-black/45"
+                              }`}
                           >
                             {item.registration
                               .checked_in
@@ -2336,12 +2324,11 @@ export default function AdminPage() {
                                 item
                               )
                             }
-                            className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-xs font-medium disabled:opacity-50 ${
-                              item.registration
-                                .checked_in
-                                ? "border border-black/10 bg-white text-black/55 hover:bg-black hover:text-white"
-                                : "bg-black text-white hover:bg-black/80"
-                            }`}
+                            className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-xs font-medium disabled:opacity-50 ${item.registration
+                              .checked_in
+                              ? "border border-black/10 bg-white text-black/55 hover:bg-black hover:text-white"
+                              : "bg-black text-white hover:bg-black/80"
+                              }`}
                           >
                             <Check
                               size={14}
@@ -2365,11 +2352,10 @@ export default function AdminPage() {
                                     ? restoreRegistration(item)
                                     : archiveRegistration(item)
                                 }
-                                className={`flex h-11 w-11 items-center justify-center rounded-full border disabled:opacity-50 ${
-                                  item.registration.is_archived
-                                    ? "border-green-200 text-green-600 hover:bg-green-50"
-                                    : "border-orange-200 text-orange-500 hover:bg-orange-50"
-                                }`}
+                                className={`flex h-11 w-11 items-center justify-center rounded-full border disabled:opacity-50 ${item.registration.is_archived
+                                  ? "border-green-200 text-green-600 hover:bg-green-50"
+                                  : "border-orange-200 text-orange-500 hover:bg-orange-50"
+                                  }`}
                                 title={item.registration.is_archived ? "Restore Registration" : "Archive Registration"}
                               >
                                 {item.registration.is_archived ? (
@@ -2378,7 +2364,7 @@ export default function AdminPage() {
                                   <Trash2 size={14} />
                                 )}
                               </button>
-                              
+
                               <button
                                 type="button"
                                 disabled={
@@ -2397,14 +2383,14 @@ export default function AdminPage() {
 
                         {item.registration
                           .checked_in_at && (
-                          <p className="mt-3 text-[9px] text-black/30">
-                            Checked in{" "}
-                            {formatDate(
-                              item.registration
-                                .checked_in_at
-                            )}
-                          </p>
-                        )}
+                            <p className="mt-3 text-[9px] text-black/30">
+                              Checked in{" "}
+                              {formatDate(
+                                item.registration
+                                  .checked_in_at
+                              )}
+                            </p>
+                          )}
                       </div>
                     )
                   )}
@@ -2435,39 +2421,35 @@ function StatCard({
 }) {
   return (
     <div
-      className={`rounded-[28px] p-7 ${
-        dark
-          ? "bg-black text-white"
-          : "bg-white"
-      }`}
+      className={`rounded-[28px] p-7 ${dark
+        ? "bg-black text-white"
+        : "bg-white"
+        }`}
     >
       <div
-        className={`flex h-10 w-10 items-center justify-center rounded-full ${
-          dark
-            ? "bg-white/10 text-white"
-            : "bg-black/[0.04] text-black"
-        }`}
+        className={`flex h-10 w-10 items-center justify-center rounded-full ${dark
+          ? "bg-white/10 text-white"
+          : "bg-black/[0.04] text-black"
+          }`}
       >
         {icon}
       </div>
 
       <p
-        className={`mt-7 text-[9px] font-semibold uppercase tracking-[0.2em] ${
-          dark
-            ? "text-white/40"
-            : "text-black/35"
-        }`}
+        className={`mt-7 text-[9px] font-semibold uppercase tracking-[0.2em] ${dark
+          ? "text-white/40"
+          : "text-black/35"
+          }`}
       >
         {title}
       </p>
 
       <p
-  className={`mt-2 text-4xl font-semibold tracking-[-0.05em] ${
-    dark ? "text-white" : "text-black"
-  }`}
->
-  {value}
-</p>
+        className={`mt-2 text-4xl font-semibold tracking-[-0.05em] ${dark ? "text-white" : "text-black"
+          }`}
+      >
+        {value}
+      </p>
     </div>
   );
 }

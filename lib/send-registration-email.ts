@@ -25,6 +25,13 @@ export type RegistrationEmailData = {
   isTeamEvent?: boolean;
   isTeamHead?: boolean;
   members?: TeamMember[];
+  
+  requiresPayment?: boolean;
+  
+  receiptPdf?: {
+    buffer: Buffer;
+    filename: string;
+  } | null;
 };
 
 export type SendResult = {
@@ -62,8 +69,10 @@ function escapeHtml(
 export async function sendRegistrationEmail(
   data: RegistrationEmailData
 ): Promise<SendResult> {
+  console.log("[REGISTER EMAIL] send-registration-email function entered");
   const apiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL;
+  console.log(`[REGISTER EMAIL] RESEND_API_KEY present: ${!!apiKey}`);
 
   if (!apiKey) {
     console.error(
@@ -102,6 +111,8 @@ export async function sendRegistrationEmail(
     isTeamEvent = false,
     isTeamHead = false,
     members = [],
+    requiresPayment = false,
+    receiptPdf,
   } = data;
 
   if (
@@ -232,7 +243,10 @@ export async function sendRegistrationEmail(
     emailId: string | null;
   }> = [];
 
+  console.log(`[REGISTER EMAIL] uniqueRecipients count: ${uniqueRecipients.length}`);
+
   for (const recipient of uniqueRecipients) {
+    console.log(`[REGISTER EMAIL] processing recipient: ${recipient.email}`);
     const safeRecipientName = escapeHtml(recipient.name);
     const safeRecipientEmail = escapeHtml(recipient.email);
     const safeRecipientPhone = escapeHtml(recipient.phone);
@@ -437,7 +451,7 @@ export async function sendRegistrationEmail(
                   color: #777777;
                 "
               >
-                Registration Confirmed
+                ${receiptPdf ? "Payment Confirmed" : "Registration Confirmed"}
               </div>
 
               <h1
@@ -449,7 +463,7 @@ export async function sendRegistrationEmail(
                   color: #ffffff;
                 "
               >
-                You're in.
+                ${receiptPdf ? "Payment Successful." : "You're in."}
               </h1>
 
               <p
@@ -461,10 +475,17 @@ export async function sendRegistrationEmail(
                   color: #999999;
                 "
               >
-                Your Saviskar 2026 registration has been
-                confirmed. Keep this email available and
-                present the QR code at entry.
+                ${receiptPdf 
+                  ? `Your payment for ${safeEventName} has been successfully received.`
+                  : `Your Saviskar 2026 registration has been confirmed. Keep this email available and present the QR code at entry.`
+                }
               </p>
+
+              ${!receiptPdf ? `
+              <div style="margin-top: 20px; font-size: 14px; color: ${requiresPayment ? '#ff9999' : '#99ff99'}; font-weight: 600;">
+                ${requiresPayment ? "Payment: Pending &mdash; Complete your payment to confirm your paid registration." : "Payment: No payment required."}
+              </div>
+              ` : ""}
 
             </div>
 
@@ -772,6 +793,12 @@ export async function sendRegistrationEmail(
 
                 Keep this email available on your phone
                 for verification at the venue.
+                
+                ${
+                  receiptPdf
+                    ? `<br /><br />Your payment receipt is attached to this email.`
+                    : ""
+                }
 
               </div>
 
@@ -798,28 +825,49 @@ export async function sendRegistrationEmail(
     `;
 
     try {
-      const { data, error } = await resend.emails.send({
+      console.log(`[REGISTER EMAIL] about to call Resend.emails.send() for: ${recipient.email}`);
+      const subjectLine = receiptPdf 
+        ? `Payment Confirmed — Saviskar 2026 | Receipt ${recipient.participantId}`
+        : `You're Registered — Saviskar 2026 | ${recipient.participantId}`;
+
+      const { data: resendData, error: resendError } = await resend.emails.send({
         from: fromEmail,
         to: [recipient.email],
-        subject: `You're in — ${eventName} | Saviskar 2026`,
+        subject: subjectLine,
         html: emailHtml,
-        ...(qrBuffer
+        ...((qrBuffer || receiptPdf)
           ? {
               attachments: [
-                {
-                  filename: "qr.png",
-                  content: qrBuffer,
-                  contentId: "saviskar-entry-qr",
-                  contentType: "image/png",
-                },
+                ...(qrBuffer
+                  ? [
+                      {
+                        filename: "qr.png",
+                        content: qrBuffer,
+                        contentId: "saviskar-entry-qr",
+                        contentType: "image/png",
+                      },
+                    ]
+                  : []),
+                ...(receiptPdf
+                  ? [
+                      {
+                        filename: receiptPdf.filename,
+                        content: receiptPdf.buffer,
+                        contentType: "application/pdf",
+                      },
+                    ]
+                  : []),
               ],
             }
           : {}),
       });
 
+      const data = resendData;
+      const error = resendError;
+
       if (error) {
         console.error(
-          `sendRegistrationEmail: RESEND ERROR for ${recipient.email}:`,
+          `[REGISTER EMAIL] RESEND ERROR for ${recipient.email}:`,
           error
         );
 
@@ -828,20 +876,22 @@ export async function sendRegistrationEmail(
          * because one recipient had an issue.
          */
         continue;
+      } else {
+        console.log(`[REGISTER EMAIL] Resend response received successfully for: ${recipient.email}`);
+        results.push({
+          email: recipient.email,
+          emailId: data?.id || null,
+        });
       }
-
-      results.push({
-        email: recipient.email,
-        emailId: data?.id ?? null,
-      });
-    } catch (sendError) {
+    } catch (err) {
       console.error(
-        `sendRegistrationEmail: Exception sending to ${recipient.email}:`,
-        sendError
+        `[REGISTER EMAIL] UNCAUGHT ERROR during email loop for ${recipient.email}:`,
+        err
       );
     }
   }
 
+  console.log(`[REGISTER EMAIL] send completed successfully. Sent: ${results.length}`);
   return {
     success: results.length > 0,
     emailsSent: results.length,

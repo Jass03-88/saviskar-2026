@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getPaymentGateway } from "@/lib/payments";
+import { ensurePaymentConfirmationSent } from "@/lib/payments/post-payment";
 
 export async function POST(
   request: NextRequest
@@ -259,6 +260,9 @@ export async function POST(
           event.gatewayPaymentId,
       }
     );
+
+    // ─── Trigger Idempotent Post-Payment Logic ─────────────
+    await ensurePaymentConfirmationSent(paymentOrder.id);
   } else if (event.status === "failed") {
     await supabaseAdmin
       .from("payment_orders")
