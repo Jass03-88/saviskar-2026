@@ -45,6 +45,7 @@ type ParticipantEvent = {
   team_name: string | null;
   checked_in: boolean | null;
   checked_in_at: string | null;
+  is_archived: boolean | null;
   created_at: string;
 };
 
@@ -76,6 +77,7 @@ type Registration = {
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
+type ArchiveFilter = "active" | "archived" | "all";
 
 type AdminRole = "master" | "admin";
 
@@ -157,6 +159,8 @@ export default function EventRegistrationsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<StatusFilter>("all");
+  const [archiveFilter, setArchiveFilter] =
+    useState<ArchiveFilter>("active");
 
   const [selectedRegistration, setSelectedRegistration] =
     useState<Registration | null>(null);
@@ -479,14 +483,14 @@ export default function EventRegistrationsPage() {
   }
 
   // ---------------------------------------------------------
-  // DELETE REGISTRATION
+  // ARCHIVE REGISTRATION
   // ---------------------------------------------------------
 
-  async function deleteRegistration(
+  async function archiveRegistration(
     registration: Registration
   ) {
     const confirmed = window.confirm(
-      `Remove ${registration.participant.name} from ${currentEventName}?\n\nTheir Participant ID will remain available for other events.`
+      `Archive ${registration.participant.name}'s registration for ${currentEventName}?\n\nThe registration will be removed from the active view, but all payment history and team records will be retained.`
     );
 
     if (!confirmed) return;
@@ -513,16 +517,18 @@ export default function EventRegistrationsPage() {
       if (!response.ok) {
         throw new Error(
           payload.error ??
-            "Could not delete the event registration."
+            "Could not archive the event registration."
         );
       }
 
       setAllRegistrations(
         (current) =>
-          current.filter(
+          current.map(
             (item) =>
-              item.registration.id !==
+              item.registration.id ===
               registration.registration.id
+                ? { ...item, registration: { ...item.registration, is_archived: true } }
+                : item
           )
       );
 
@@ -530,21 +536,107 @@ export default function EventRegistrationsPage() {
         selectedRegistration?.registration.id ===
         registration.registration.id
       ) {
-        closeRegistration();
+        setSelectedRegistration(
+          (current) =>
+            current
+              ? { ...current, registration: { ...current.registration, is_archived: true } }
+              : current
+        );
       }
     } catch (deleteError) {
       console.error(
-        "REGISTRATION DELETE ERROR:",
+        "REGISTRATION ARCHIVE ERROR:",
         deleteError
       );
 
       setError(
         deleteError instanceof Error
           ? deleteError.message
-          : "Could not delete the event registration."
+          : "Could not archive the event registration."
       );
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  // ---------------------------------------------------------
+  // RESTORE REGISTRATION
+  // ---------------------------------------------------------
+
+  async function restoreRegistration(
+    registration: Registration
+  ) {
+    const confirmed = window.confirm(
+      `Restore ${registration.participant.name}'s registration for ${currentEventName}?`
+    );
+
+    if (!confirmed) return;
+
+    setUpdatingId(
+      registration.registration.id
+    );
+
+    try {
+      const response = await fetch(
+        `/api/admin/registrations`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            participantEventId: registration.registration.id
+          })
+        }
+      );
+
+      const payload =
+        (await response.json()) as {
+          error?: string;
+        };
+
+      if (!response.ok) {
+        throw new Error(
+          payload.error ??
+            "Could not restore the event registration."
+        );
+      }
+
+      setAllRegistrations(
+        (current) =>
+          current.map(
+            (item) =>
+              item.registration.id ===
+              registration.registration.id
+                ? { ...item, registration: { ...item.registration, is_archived: false } }
+                : item
+          )
+      );
+
+      if (
+        selectedRegistration?.registration.id ===
+        registration.registration.id
+      ) {
+        setSelectedRegistration(
+          (current) =>
+            current
+              ? { ...current, registration: { ...current.registration, is_archived: false } }
+              : current
+        );
+      }
+    } catch (error) {
+      console.error(
+        "REGISTRATION RESTORE ERROR:",
+        error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Could not restore the event registration."
+      );
+    } finally {
+      setUpdatingId(null);
     }
   }
 
@@ -612,9 +704,17 @@ export default function EventRegistrationsPage() {
               item.registration
                 .checked_in !== true);
 
+          const matchesArchive =
+            archiveFilter === "all" ||
+            (archiveFilter === "archived" &&
+              item.registration.is_archived === true) ||
+            (archiveFilter === "active" &&
+              item.registration.is_archived !== true);
+
           return (
             matchesSearch &&
-            matchesStatus
+            matchesStatus &&
+            matchesArchive
           );
         }
       );
@@ -622,22 +722,24 @@ export default function EventRegistrationsPage() {
       registrations,
       search,
       statusFilter,
+      archiveFilter,
     ]);
 
   // ---------------------------------------------------------
   // STATS
   // ---------------------------------------------------------
 
-  const totalCheckedIn =
-    registrations.filter(
-      (item) =>
-        item.registration.checked_in ===
-        true
-    ).length;
+  // Only count active registrations for the dashboard stats
+  const activeRegistrations = registrations.filter(
+    (item) => item.registration.is_archived !== true
+  );
+
+  const totalCheckedIn = activeRegistrations.filter(
+    (item) => item.registration.checked_in === true
+  ).length;
 
   const totalPending =
-    registrations.length -
-    totalCheckedIn;
+    activeRegistrations.length - totalCheckedIn;
 
   // ---------------------------------------------------------
   // CSV EXPORT
@@ -962,6 +1064,28 @@ export default function EventRegistrationsPage() {
 
             </select>
 
+            {role === "master" && (
+              <select
+                value={archiveFilter}
+                onChange={(event) =>
+                  setArchiveFilter(
+                    event.target.value as ArchiveFilter
+                  )
+                }
+                className="rounded-full bg-black/[0.035] px-5 py-3 text-sm outline-none"
+              >
+                <option value="active">
+                  Active only
+                </option>
+                <option value="archived">
+                  Archived only
+                </option>
+                <option value="all">
+                  All (incl. archived)
+                </option>
+              </select>
+            )}
+
             <button
               onClick={exportCSV}
               className="flex items-center justify-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white"
@@ -1233,40 +1357,33 @@ export default function EventRegistrationsPage() {
                               View
                             </button>
 
-                            <button
-                              onClick={() =>
-                                deleteRegistration(
-                                  item
-                                )
-                              }
-                              disabled={
-                                deletingId ===
-                                item
-                                  .registration
-                                  .id
-                              }
-                              className="flex h-9 w-9 items-center justify-center rounded-full border border-red-100 text-red-500 transition hover:bg-red-50 disabled:opacity-40"
-                            >
-
-                              {deletingId ===
-                              item
-                                .registration
-                                .id ? (
-
-                                <RefreshCw
-                                  size={13}
-                                  className="animate-spin"
-                                />
-
-                              ) : (
-
-                                <Trash2
-                                  size={13}
-                                />
-
-                              )}
-
-                            </button>
+                            {role === "master" && (
+                              <button
+                                onClick={() =>
+                                  item.registration.is_archived
+                                    ? restoreRegistration(item)
+                                    : archiveRegistration(item)
+                                }
+                                disabled={
+                                  deletingId === item.registration.id ||
+                                  updatingId === item.registration.id
+                                }
+                                className={`flex h-9 w-9 items-center justify-center rounded-full border transition disabled:opacity-40 ${
+                                  item.registration.is_archived
+                                    ? "border-green-200 text-green-600 hover:bg-green-50"
+                                    : "border-red-100 text-red-500 hover:bg-red-50"
+                                }`}
+                                title={item.registration.is_archived ? "Restore Registration" : "Archive Registration"}
+                              >
+                                {(deletingId === item.registration.id || updatingId === item.registration.id) ? (
+                                  <RefreshCw size={13} className="animate-spin" />
+                                ) : item.registration.is_archived ? (
+                                  <RefreshCw size={13} />
+                                ) : (
+                                  <Trash2 size={13} />
+                                )}
+                              </button>
+                            )}
 
                           </div>
 
@@ -1621,43 +1738,40 @@ export default function EventRegistrationsPage() {
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 
-              <button
-                onClick={() =>
-                  deleteRegistration(
-                    selectedRegistration
-                  )
-                }
-                disabled={
-                  deletingId ===
-                    selectedRegistration
-                      .registration.id ||
-                  updatingId ===
-                    selectedRegistration
-                      .registration.id
-                }
-                className="flex items-center justify-center gap-2 rounded-full border border-red-100 px-5 py-3 text-sm text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-              >
+              <div>
+                {role === "master" && (
+                  <button
+                    onClick={() =>
+                      selectedRegistration.registration.is_archived
+                        ? restoreRegistration(selectedRegistration)
+                        : archiveRegistration(selectedRegistration)
+                    }
+                    disabled={
+                      deletingId ===
+                        selectedRegistration.registration.id ||
+                      updatingId ===
+                        selectedRegistration.registration.id
+                    }
+                    className={`flex items-center justify-center gap-2 rounded-full border px-5 py-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                      selectedRegistration.registration.is_archived
+                        ? "border-green-200 text-green-600 hover:bg-green-50"
+                        : "border-red-100 text-red-600 hover:bg-red-50"
+                    }`}
+                  >
+                    {(deletingId === selectedRegistration.registration.id || updatingId === selectedRegistration.registration.id) ? (
+                      <RefreshCw size={14} className="animate-spin" />
+                    ) : selectedRegistration.registration.is_archived ? (
+                      <RefreshCw size={14} />
+                    ) : (
+                      <Trash2 size={14} />
+                    )}
 
-                {deletingId ===
-                selectedRegistration
-                  .registration.id ? (
-
-                  <RefreshCw
-                    size={14}
-                    className="animate-spin"
-                  />
-
-                ) : (
-
-                  <Trash2
-                    size={14}
-                  />
-
+                    {selectedRegistration.registration.is_archived
+                      ? "Restore registration"
+                      : "Archive registration"}
+                  </button>
                 )}
-
-                Delete registration
-
-              </button>
+              </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
 

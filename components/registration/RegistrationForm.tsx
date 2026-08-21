@@ -53,6 +53,15 @@ type RegistrationResponse = {
   success?: boolean;
   error?: string;
   participantId?: string;
+  paymentRequired?: boolean;
+  totalAmount?: number;
+  paymentOrder?: {
+    id: string;
+    orderReference: string;
+    amount: number;
+    currency: string;
+    status: string;
+  } | null;
   teamMembers?: Array<{
     participantId: string;
     name: string;
@@ -121,6 +130,14 @@ const [eventCategory, setEventCategory] = useState("All");
   const [teamMembers, setTeamMembers] = useState<
     NonNullable<RegistrationResponse["teamMembers"]>
   >([]);
+
+  /*
+   * Payment state.
+   */
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [paymentPending, setPaymentPending] = useState(false);
+  const [pendingPaymentOrderId, setPendingPaymentOrderId] = useState("");
+  const [pendingPaymentAmount, setPendingPaymentAmount] = useState(0);
 
   /*
    * Optional existing participant ID.
@@ -781,6 +798,42 @@ function updateTeamHead(
       }
 
       /*
+       * Store participant info immediately —
+       * needed for both free and paid paths.
+       */
+      setParticipantId(result.participantId);
+      setTeamMembers(result.teamMembers ?? []);
+
+      /*
+       * PAYMENT FLOW
+       *
+       * If the registration includes paid events, open the
+       * payment gateway checkout before showing the success screen.
+       * Free events proceed directly to QR/success.
+       */
+      if (
+        result.paymentRequired &&
+        result.paymentOrder?.id &&
+        Number(result.totalAmount) > 0
+      ) {
+        form.reset();
+        setSelectedEventIds([]);
+        setEventState({});
+        setExistingParticipantId("");
+
+        setPendingPaymentOrderId(result.paymentOrder.id);
+        setPendingPaymentAmount(Number(result.totalAmount));
+
+        await initiatePaymentCheckout(
+          result.paymentOrder.id,
+          result.participantId,
+          result.teamMembers ?? []
+        );
+        return;
+      }
+
+      /*
+       * FREE EVENT PATH — no payment needed.
        * QR contains ONLY the permanent participant ID.
        */
       const generatedQr = await QRCode.toDataURL(
@@ -792,8 +845,6 @@ function updateTeamHead(
         }
       );
 
-      setParticipantId(result.participantId);
-      setTeamMembers(result.teamMembers ?? []);
       setQrCode(generatedQr);
       setSubmitted(true);
 
@@ -816,6 +867,393 @@ function updateTeamHead(
     } finally {
       setLoading(false);
     }
+  }
+
+  /*
+   * RAZORPAY SCRIPT LOADER
+   */
+  function loadRazorpayScript(): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (
+        typeof window !== "undefined" &&
+        (window as any).Razorpay
+      ) {
+        resolve(true);
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  }
+
+  /*
+   * PAYMENT CHECKOUT
+   *
+   * Creates a gateway order via /api/payments/create,
+   * then opens the Razorpay overlay.
+   *
+   * On success: verifies server-side via /api/payments/verify,
+   * then shows QR/success screen.
+   *
+   * On dismiss/failure: shows payment pending screen with retry.
+   */
+  async function initiatePaymentCheckout(
+    paymentOrderId: string,
+    currentParticipantId: string,
+    currentTeamMembers: NonNullable<RegistrationResponse["teamMembers"]>
+  ) {
+    setPaymentProcessing(true);
+    setErrorMessage("");
+
+    try {
+      // 1. Create gateway order
+      const createResponse = await fetch("/api/payments/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ paymentOrderId }),
+      });
+
+      const createResult = await createResponse.json();
+
+      if (!createResponse.ok || !createResult.success) {
+        throw new Error(
+          createResult.error ||
+            "Could not initialize payment. Please try again."
+        );
+      }
+
+      // 2. Load Razorpay script
+      const scriptLoaded = await loadRazorpayScript();
+
+      if (!scriptLoaded) {
+        throw new Error(
+          "Could not load the payment gateway. Please refresh and try again."
+        );
+      }
+
+      // 3. Open Razorpay checkout overlay
+      const checkoutOptions = createResult.checkoutConfig?.options ?? {};
+
+      await new Promise<void>((resolve, reject) => {
+        const razorpayOptions = {
+          ...checkoutOptions,
+          handler: async (response: {
+            razorpay_payment_id: string;
+            razorpay_order_id: string;
+            razorpay_signature: string;
+          }) => {
+            try {
+              // 4. Verify payment server-side
+              const verifyResponse = await fetch(
+                "/api/payments/verify",
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json",
+                  },
+                  body: JSON.stringify({
+                    paymentOrderId,
+                    razorpay_payment_id:
+                      response.razorpay_payment_id,
+                    razorpay_order_id:
+                      response.razorpay_order_id,
+                    razorpay_signature:
+                      response.razorpay_signature,
+                  }),
+                }
+              );
+
+              const verifyResult =
+                await verifyResponse.json();
+
+              if (
+                !verifyResponse.ok ||
+                !verifyResult.success ||
+                !verifyResult.verified
+              ) {
+                throw new Error(
+                  verifyResult.error ||
+                    "Payment verification failed."
+                );
+              }
+
+              // 5. Payment verified — show success
+              const generatedQr =
+                await QRCode.toDataURL(
+                  currentParticipantId,
+                  {
+                    width: 500,
+                    margin: 2,
+                    errorCorrectionLevel: "H",
+                  }
+                );
+
+              setQrCode(generatedQr);
+              setPaymentPending(false);
+              setPendingPaymentOrderId("");
+              setPendingPaymentAmount(0);
+              setSubmitted(true);
+              resolve();
+            } catch (verifyError) {
+              console.error(
+                "Payment verification error:",
+                verifyError
+              );
+              setErrorMessage(
+                verifyError instanceof Error
+                  ? verifyError.message
+                  : "Payment verification failed. Please contact support."
+              );
+              reject(verifyError);
+            }
+          },
+          modal: {
+            ondismiss: () => {
+              // User closed the checkout without paying
+              setPaymentPending(true);
+              resolve();
+            },
+            escape: true,
+            confirm_close: true,
+          },
+        };
+
+        try {
+          const razorpay = new (window as any).Razorpay(
+            razorpayOptions
+          );
+
+          razorpay.on(
+            "payment.failed",
+            (response: any) => {
+              console.error(
+                "Razorpay payment failed:",
+                response.error
+              );
+              setErrorMessage(
+                response.error?.description ||
+                  "Payment failed. Please try again."
+              );
+              setPaymentPending(true);
+              resolve();
+            }
+          );
+
+          razorpay.open();
+        } catch (razorpayError) {
+          reject(razorpayError);
+        }
+      });
+    } catch (error) {
+      console.error("Payment checkout error:", error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Payment could not be processed. Please try again."
+      );
+      setPaymentPending(true);
+    } finally {
+      setPaymentProcessing(false);
+      setLoading(false);
+    }
+  }
+
+  /*
+   * PAYMENT RECOVERY
+   */
+  async function handlePaymentRecovery(item: ParticipantLookupEvent) {
+    if (!participantLookup) return;
+
+    try {
+      setPaymentProcessing(true);
+      setErrorMessage("");
+
+      const recoveryResponse = await fetch("/api/payments/recover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          participantId: participantLookup.participantId,
+          participantEventId: item.participantEventId,
+        }),
+      });
+
+      const recoveryPayload = await recoveryResponse.json();
+
+      if (!recoveryResponse.ok) {
+        throw new Error(recoveryPayload.error || "Could not initialize payment recovery.");
+      }
+
+      const { paymentOrderId } = recoveryPayload;
+
+      if (!paymentOrderId) {
+         throw new Error("Invalid payment order returned.");
+      }
+
+      setPendingPaymentOrderId(paymentOrderId);
+      setPendingPaymentAmount(item.paymentAmount || 0);
+
+      // Now call the existing checkout function
+      await initiatePaymentCheckout(
+        paymentOrderId,
+        participantLookup.participantId,
+        [] // Recovery doesn't need team members for rendering the QR, they are already saved.
+      );
+
+      // If we got here without throwing, payment was successful. Update UI.
+      setParticipantLookupEvents((current) =>
+        current.map((e) =>
+          e.participantEventId === item.participantEventId
+            ? { ...e, paymentStatus: "paid" }
+            : e
+        )
+      );
+      
+    } catch (error) {
+      console.error("Recovery error:", error);
+      setErrorMessage(
+        error instanceof Error ? error.message : "Recovery could not be processed."
+      );
+    } finally {
+      // payment processing false is handled inside initiatePaymentCheckout usually,
+      // but let's ensure it's off if it threw before
+      setPaymentProcessing(false);
+      setLoading(false);
+    }
+  }
+
+  /*
+   * PAYMENT PROCESSING SCREEN
+   */
+  if (paymentProcessing) {
+    return (
+      <section className="px-6 pb-32 md:px-10 md:pb-44">
+        <div className="mx-auto max-w-[1200px]">
+          <div className="flex min-h-[650px] flex-col items-center justify-center rounded-[32px] bg-black px-6 py-16 text-center text-white">
+            <div className="mb-8 flex h-14 w-14 items-center justify-center rounded-full border-2 border-white/20">
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{
+                  repeat: Infinity,
+                  duration: 1.2,
+                  ease: "linear",
+                }}
+                className="h-5 w-5 rounded-full border-2 border-white/20 border-t-white"
+              />
+            </div>
+
+            <p className="mb-5 text-[10px] font-semibold uppercase tracking-[0.25em] text-white/40">
+              Processing Payment
+            </p>
+
+            <h2 className="max-w-[800px] text-[clamp(2.5rem,5vw,5rem)] font-semibold leading-[0.88] tracking-[-0.065em]">
+              Almost there.
+            </h2>
+
+            <p className="mt-7 max-w-md text-sm leading-6 text-white/45 md:text-base">
+              Please complete your payment in the checkout window.
+              Do not close this page.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  /*
+   * PAYMENT PENDING SCREEN
+   *
+   * Shown when the user closed the checkout overlay without
+   * completing payment. Allows retrying.
+   */
+  if (paymentPending && pendingPaymentOrderId) {
+    return (
+      <section className="px-6 pb-32 md:px-10 md:pb-44">
+        <div className="mx-auto max-w-[1200px]">
+          <div className="flex min-h-[650px] flex-col items-center justify-center rounded-[32px] bg-black px-6 py-16 text-center text-white">
+            <div className="mb-8 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/20 text-amber-400">
+              <AlertCircle size={22} />
+            </div>
+
+            <p className="mb-5 text-[10px] font-semibold uppercase tracking-[0.25em] text-white/40">
+              Payment Pending
+            </p>
+
+            <h2 className="max-w-[800px] text-[clamp(2.5rem,5vw,5rem)] font-semibold leading-[0.88] tracking-[-0.065em]">
+              Not done yet.
+            </h2>
+
+            <p className="mt-7 max-w-md text-sm leading-6 text-white/45 md:text-base">
+              Your registration was saved but the payment of{" "}
+              <span className="font-medium text-white/80">
+                ₹{pendingPaymentAmount.toLocaleString("en-IN")}
+              </span>{" "}
+              was not completed. You can retry the payment now.
+            </p>
+
+            {errorMessage && (
+              <div className="mt-5 flex items-center gap-2 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                <AlertCircle size={14} />
+                {errorMessage}
+              </div>
+            )}
+
+            {participantId && (
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.05] px-6 py-4">
+                <p className="mb-2 text-[9px] uppercase tracking-[0.2em] text-white/35">
+                  Participant ID
+                </p>
+                <p className="break-all font-mono text-xs text-white/80 md:text-sm">
+                  {participantId}
+                </p>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={paymentProcessing}
+              onClick={async () => {
+                setErrorMessage("");
+                setPaymentPending(false);
+                await initiatePaymentCheckout(
+                  pendingPaymentOrderId,
+                  participantId,
+                  teamMembers
+                );
+              }}
+              className="mt-10 rounded-full bg-white px-8 py-3.5 text-sm font-medium text-black transition hover:bg-white/90 disabled:opacity-50"
+            >
+              {paymentProcessing
+                ? "Opening checkout..."
+                : "Retry Payment"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentPending(false);
+                setPendingPaymentOrderId("");
+                setPendingPaymentAmount(0);
+                setParticipantId("");
+                setTeamMembers([]);
+                setQrCode("");
+                setErrorMessage("");
+              }}
+              className="mt-3 rounded-full border border-white/20 px-6 py-3 text-sm text-white/60 transition hover:bg-white hover:text-black"
+            >
+              Start a new registration
+            </button>
+          </div>
+        </div>
+      </section>
+    );
   }
 
   /*
@@ -1061,17 +1499,38 @@ function updateTeamHead(
                             No existing event registrations found.
                           </p>
                         ) : (
-                          <div className="mt-3 flex flex-wrap gap-2">
+                          <div className="mt-3 flex flex-col gap-3">
                             {participantLookupEvents.map((item) => (
-                              <span
+                              <div
                                 key={item.participantEventId}
-                                className="rounded-full bg-black/[0.05] px-3 py-2 text-xs text-black/60"
+                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-black/[0.03] p-4"
                               >
-                                {item.eventName}
-                                {item.paymentStatus
-                                  ? ` · ${item.paymentStatus.replace(/_/g, " ")}`
-                                  : ""}
-                              </span>
+                                <div>
+                                  <p className="font-semibold text-sm">{item.eventName}</p>
+                                  <div className="mt-1 flex items-center gap-2">
+                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                                      item.paymentStatus === "paid" ? "bg-green-100 text-green-700 border border-green-200" :
+                                      item.paymentStatus === "pending" ? "bg-red-100 text-red-700 border border-red-200" :
+                                      "bg-black/10 text-black/60"
+                                    }`}>
+                                      {item.paymentStatus ? item.paymentStatus.replace(/_/g, " ") : "FREE"}
+                                    </span>
+                                    {item.paymentAmount ? (
+                                      <span className="text-xs font-mono text-black/60">₹{item.paymentAmount}</span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                
+                                {item.paymentStatus === "pending" && (item.paymentAmount || 0) > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePaymentRecovery(item)}
+                                    className="rounded-full bg-black px-5 py-2.5 text-xs font-medium text-white transition hover:scale-[1.02]"
+                                  >
+                                    Complete Payment
+                                  </button>
+                                )}
+                              </div>
                             ))}
                           </div>
                         )}

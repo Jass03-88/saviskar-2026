@@ -1334,6 +1334,7 @@ CREATE TABLE IF NOT EXISTS "public"."participant_events" (
     "team_name" "text",
     "checked_in" boolean DEFAULT false NOT NULL,
     "checked_in_at" timestamp with time zone,
+    "is_archived" boolean DEFAULT false NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
 );
@@ -1470,6 +1471,10 @@ CREATE INDEX "idx_participant_events_event" ON "public"."participant_events" USI
 
 
 CREATE INDEX "idx_participant_events_participant" ON "public"."participant_events" USING "btree" ("participant_id");
+
+
+
+CREATE INDEX "idx_participant_events_is_archived" ON "public"."participant_events" USING "btree" ("is_archived");
 
 
 

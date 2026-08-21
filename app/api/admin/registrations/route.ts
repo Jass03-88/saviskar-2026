@@ -1,6 +1,9 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/supabase/server";
+import {
+  requireAdmin,
+  requireMasterAdmin,
+} from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +29,7 @@ type ParticipantEvent = {
   team_name: string | null;
   checked_in: boolean | null;
   checked_in_at: string | null;
+  is_archived: boolean | null;
   created_at: string;
 };
 
@@ -33,6 +37,8 @@ type EventRecord = {
   id: string;
   name: string;
   category: string | null;
+  payment_type: string | null;
+  registration_fee: number | null;
 };
 
 type Member = {
@@ -70,7 +76,8 @@ function getSupabaseAdmin() {
 }
 
 export async function GET() {
-  const auth = await requireAdmin();
+  try {
+    const auth = await requireAdmin();
 
   if (auth.error) {
     return NextResponse.json(
@@ -105,6 +112,7 @@ export async function GET() {
     participantEventsResult,
     eventsResult,
     membersResult,
+    paymentOrdersResult,
   ] = await Promise.all([
     supabaseAdmin
       .from("participants")
@@ -118,7 +126,7 @@ export async function GET() {
     supabaseAdmin
       .from("participant_events")
       .select(
-        "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, created_at"
+        "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at"
       )
       .order("created_at", {
         ascending: false,
@@ -126,7 +134,7 @@ export async function GET() {
 
     supabaseAdmin
       .from("events")
-      .select("id, name, category")
+      .select("id, name, category, payment_type, registration_fee")
       .order("name", {
         ascending: true,
       }),
@@ -136,13 +144,20 @@ export async function GET() {
       .select(
         "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college)"
       ),
+
+    supabaseAdmin
+      .from("payment_order_items")
+      .select(
+        "participant_event_id, payment_orders(id, order_reference, gateway, gateway_order_id, gateway_payment_id, status, updated_at)"
+      ),
   ]);
 
   const queryError =
     participantsResult.error ??
     participantEventsResult.error ??
     eventsResult.error ??
-    membersResult.error;
+    membersResult.error ??
+    paymentOrdersResult.error;
 
   if (queryError) {
     console.error(
@@ -192,19 +207,39 @@ export async function GET() {
           member.participant_id,
         participants: participant
           ? {
-              participant_id: String(
-                participant.participant_id || ""
-              ),
-              college: participant.college
-                ? String(
-                    participant.college
-                  )
-                : null,
-            }
+            participant_id: String(
+              participant.participant_id || ""
+            ),
+            college: participant.college
+              ? String(
+                participant.college
+              )
+              : null,
+          }
           : null,
       };
     }
   ) as Member[];
+
+  const paymentItems = [...(paymentOrdersResult.data ?? [])] as any[];
+  
+  // Sort to prioritize successful/paid orders if multiple exist
+  paymentItems.sort((a, b) => {
+    const aOrder = Array.isArray(a.payment_orders) ? a.payment_orders[0] : a.payment_orders;
+    const bOrder = Array.isArray(b.payment_orders) ? b.payment_orders[0] : b.payment_orders;
+    if (aOrder?.status === "paid" && bOrder?.status !== "paid") return -1;
+    if (bOrder?.status === "paid" && aOrder?.status !== "paid") return 1;
+    return new Date(bOrder?.updated_at || 0).getTime() - new Date(aOrder?.updated_at || 0).getTime();
+  });
+
+  const paymentOrdersByRegistration = new Map<string, any>();
+  for (const item of paymentItems) {
+    if (!item.participant_event_id || !item.payment_orders) continue;
+    const order = Array.isArray(item.payment_orders) ? item.payment_orders[0] : item.payment_orders;
+    if (!paymentOrdersByRegistration.has(item.participant_event_id) && order) {
+      paymentOrdersByRegistration.set(item.participant_event_id, order);
+    }
+  }
 
   const participantsById =
     new Map(
@@ -251,19 +286,23 @@ export async function GET() {
 
         return participant
           ? [
-              {
-                participant,
-                registration,
-                event:
-                  eventsById.get(
-                    registration.event_id
-                  ) ?? null,
-                members:
-                  membersByParticipantEventId.get(
-                    registration.id
-                  ) ?? [],
-              },
-            ]
+            {
+              participant,
+              registration,
+              event:
+                eventsById.get(
+                  registration.event_id
+                ) ?? null,
+              members:
+                membersByParticipantEventId.get(
+                  registration.id
+                ) ?? [],
+              payment_order:
+                paymentOrdersByRegistration.get(
+                  registration.id
+                ) ?? null,
+            },
+          ]
           : [];
       }
     );
@@ -272,6 +311,7 @@ export async function GET() {
     {
       registrations,
       events,
+      role: auth.role,
     },
     {
       headers: {
@@ -279,12 +319,17 @@ export async function GET() {
       },
     }
   );
+  } catch (err: any) {
+    console.error("UNHANDLED GET ERROR:", err);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
 }
 
 export async function PATCH(
   request: Request
 ) {
-  const auth = await requireAdmin();
+  try {
+    const auth = await requireAdmin();
 
   if (auth.error) {
     return NextResponse.json(
@@ -302,14 +347,14 @@ export async function PATCH(
     (await request
       .json()
       .catch(() => null)) as {
-      participantEventId?: unknown;
-      checkedIn?: unknown;
-    } | null;
+        participantEventId?: unknown;
+        checkedIn?: unknown;
+      } | null;
 
   if (
     !body ||
     typeof body.participantEventId !==
-      "string" ||
+    "string" ||
     typeof body.checkedIn !== "boolean"
   ) {
     return NextResponse.json(
@@ -369,12 +414,17 @@ export async function PATCH(
   return NextResponse.json({
     registration: data,
   });
+  } catch (err: any) {
+    console.error("UNHANDLED PATCH ERROR:", err);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
 }
 
 export async function DELETE(
   request: Request
 ) {
-  const auth = await requireAdmin();
+  try {
+    const auth = await requireMasterAdmin();
 
   if (auth.error) {
     return NextResponse.json(
@@ -392,6 +442,11 @@ export async function DELETE(
     new URL(request.url).searchParams.get(
       "participantEventId"
     );
+
+  const permanent =
+    new URL(request.url).searchParams.get(
+      "permanent"
+    ) === "true";
 
   if (!participantEventId) {
     return NextResponse.json(
@@ -416,51 +471,41 @@ export async function DELETE(
     );
   }
 
-  const { error: memberError } =
-    await supabaseAdmin
-      .from(
-        "participant_event_members"
-      )
-      .delete()
-      .eq(
-        "participant_event_id",
-        participantEventId
-      );
+  let error;
 
-  if (memberError) {
-    console.error(
-      "Admin registration member delete failed:",
-      memberError
-    );
-
-    return NextResponse.json(
-      {
-        error:
-          "Could not remove the team members for this registration.",
-      },
-      { status: 500 }
-    );
-  }
-
-  const { error } =
-    await supabaseAdmin
+  if (permanent) {
+    const res = await supabaseAdmin.rpc("delete_registration_permanently", {
+      p_participant_event_id: participantEventId,
+      p_admin_id: auth.user.id,
+    });
+    error = res.error;
+  } else {
+    const res = await supabaseAdmin
       .from("participant_events")
-      .delete()
-      .eq(
-        "id",
-        participantEventId
-      );
+      .update({ is_archived: true })
+      .eq("id", participantEventId);
+    error = res.error;
+
+    if (!error) {
+      await supabaseAdmin.from("admin_audit_logs").insert({
+        admin_id: auth.user!.id,
+        action_type: "ARCHIVE_REGISTRATION",
+        target_id: participantEventId,
+        details: { archived_at: new Date().toISOString() },
+      });
+    }
+  }
 
   if (error) {
     console.error(
-      "Admin registration delete failed:",
+      "Admin registration delete/archive failed:",
       error
     );
 
     return NextResponse.json(
       {
         error:
-          "Could not delete the event registration.",
+          "Could not process the registration.",
       },
       { status: 500 }
     );
@@ -469,4 +514,102 @@ export async function DELETE(
   return NextResponse.json({
     success: true,
   });
+  } catch (err: any) {
+    console.error("UNHANDLED DELETE ERROR:", err);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
+}
+
+export async function POST(
+  request: Request
+) {
+  try {
+    const auth = await requireMasterAdmin();
+
+  if (auth.error) {
+    return NextResponse.json(
+      {
+        error:
+          auth.error === "MFA_REQUIRED"
+            ? "Master Admin MFA verification required."
+            : auth.error,
+      },
+      { status: auth.status }
+    );
+  }
+
+  const body =
+    (await request
+      .json()
+      .catch(() => null)) as {
+        participantEventId?: unknown;
+      } | null;
+
+  if (
+    !body ||
+    typeof body.participantEventId !==
+    "string"
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid restore request.",
+      },
+      { status: 400 }
+    );
+  }
+
+  const supabaseAdmin =
+    getSupabaseAdmin();
+
+  if (!supabaseAdmin) {
+    return NextResponse.json(
+      {
+        error:
+          "Registration service is not configured.",
+      },
+      { status: 500 }
+    );
+  }
+
+  const { error } =
+    await supabaseAdmin
+      .from("participant_events")
+      .update({ is_archived: false })
+      .eq(
+        "id",
+        body.participantEventId
+      );
+
+  if (!error) {
+    await supabaseAdmin.from("admin_audit_logs").insert({
+      admin_id: auth.user!.id,
+      action_type: "RESTORE_REGISTRATION",
+      target_id: body.participantEventId,
+      details: { restored_at: new Date().toISOString() },
+    });
+  }
+
+  if (error) {
+    console.error(
+      "Admin registration restore failed:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          "Could not restore the event registration.",
+      },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({
+    success: true,
+  });
+  } catch (err: any) {
+    console.error("UNHANDLED POST ERROR:", err);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
 }

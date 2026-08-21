@@ -122,27 +122,34 @@ export async function sendRegistrationEmail(
   const resend = new Resend(apiKey);
 
   /*
-   * Generate QR code as a base64 data URI server-side.
-   * This avoids depending on an external API (api.qrserver.com)
-   * which could be down or rate-limited during registration spikes.
+   * Generate QR code as a PNG buffer for Resend CID inline attachment.
+   *
+   * Gmail (and many webmail clients) strip base64 data: URIs from
+   * email HTML, causing broken images. CID inline attachments are
+   * the standard email-compatible way to embed images.
+   *
+   * The QR encodes ONLY the permanent participant_id (e.g. SVK26-ABC12345).
+   * No email, phone, payment ID, event ID, or personal information.
    */
-  let qrUrl: string;
+  let qrBuffer: Buffer | null = null;
   try {
-    qrUrl = await QRCode.toDataURL(participantId, {
+    qrBuffer = await QRCode.toBuffer(participantId, {
       width: 500,
       margin: 2,
       color: { dark: "#000000", light: "#ffffff" },
     });
-  } catch {
-    // Fallback to external API if local generation fails
-    qrUrl =
-      "https://api.qrserver.com/v1/create-qr-code/?" +
-      new URLSearchParams({
-        size: "500x500",
-        data: participantId,
-        margin: "10",
-      }).toString();
+  } catch (qrError) {
+    console.error(
+      "sendRegistrationEmail: QR buffer generation failed:",
+      qrError
+    );
   }
+
+  // CID reference for HTML — renders the inline QR attachment
+  // If QR generation failed, the participant ID text below serves as fallback
+  const qrImgSrc = qrBuffer
+    ? "cid:saviskar-entry-qr"
+    : "";
 
   const safeEventName = escapeHtml(eventName);
   const safeCollege = escapeHtml(college);
@@ -685,17 +692,35 @@ export async function sendRegistrationEmail(
                   "
                 >
 
-                  <img
-                    src="${qrUrl}"
-                    width="200"
-                    height="200"
-                    alt="Saviskar Entry QR"
-                    style="
-                      display: block;
-                      width: 200px;
-                      height: 200px;
-                    "
-                  />
+                  ${qrImgSrc ? `
+                    <img
+                      src="${qrImgSrc}"
+                      width="200"
+                      height="200"
+                      alt="Saviskar Entry QR"
+                      style="
+                        display: block;
+                        width: 200px;
+                        height: 200px;
+                      "
+                    />
+                  ` : `
+                    <div
+                      style="
+                        width: 200px;
+                        height: 60px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-family: monospace;
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: #111111;
+                      "
+                    >
+                      ${safeParticipantId}
+                    </div>
+                  `}
 
                 </div>
 
@@ -778,6 +803,18 @@ export async function sendRegistrationEmail(
         to: [recipient.email],
         subject: `You're in — ${eventName} | Saviskar 2026`,
         html: emailHtml,
+        ...(qrBuffer
+          ? {
+              attachments: [
+                {
+                  filename: "qr.png",
+                  content: qrBuffer,
+                  contentId: "saviskar-entry-qr",
+                  contentType: "image/png",
+                },
+              ],
+            }
+          : {}),
       });
 
       if (error) {

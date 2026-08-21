@@ -150,6 +150,10 @@ const [role, setRole] = useState<"master" | "admin" | null>(null);
 
       setEvents(payload.events ?? []);
       setRole(payload.role ?? null);
+      if (payload.role === "admin") {
+        router.replace("/admin");
+        return;
+      }
     } catch (loadError) {
       setError(
         loadError instanceof Error

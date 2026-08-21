@@ -215,7 +215,7 @@ function normalisePayload(body: EventPayload) {
    ========================================================= */
 
 export async function GET() {
-  const auth = await requireAdmin();
+  const auth = await requireMasterAdmin();
 
   if (auth.error) {
     return NextResponse.json(

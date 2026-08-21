@@ -958,7 +958,151 @@ export async function POST(
         ) || 0;
     }
   }
+  // =====================================================
+  // 15.1 CREATE PAYMENT ORDER
+  // =====================================================
 
+  let paymentOrder: {
+    id: string;
+    order_reference: string;
+    amount: number;
+    currency: string;
+    status: string;
+  } | null = null;
+
+  if (
+    totalAmount > 0 &&
+    participant?.id &&
+    addedEventIds.size > 0
+  ) {
+    const newPaidEvents = (
+      paymentEvents as any[]
+    ).filter(
+      (row: any) =>
+        addedEventIds.has(
+          String(row.event_id)
+        ) &&
+        Number(row.payment_amount) > 0
+    );
+
+    if (newPaidEvents.length > 0) {
+      const orderReference =
+        `SVK-${returnedParticipantId}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+      const {
+        data: createdPaymentOrder,
+        error: paymentOrderError,
+      } = await supabaseAdmin
+        .from("payment_orders")
+        .insert({
+          order_reference:
+            orderReference,
+
+          payer_participant_id:
+            participant.id,
+
+          amount:
+            totalAmount,
+
+          currency:
+            "INR",
+
+          status:
+            "pending",
+        })
+        .select(
+          `
+            id,
+            order_reference,
+            amount,
+            currency,
+            status
+          `
+        )
+        .single();
+
+      if (paymentOrderError) {
+        console.error(
+          "Payment order creation failed:",
+          paymentOrderError
+        );
+
+        return errorResponse(
+          "Registration was completed, but the payment order could not be created.",
+          500
+        );
+      }
+
+      paymentOrder =
+        createdPaymentOrder;
+
+      const paymentOrderItems =
+        newPaidEvents.map(
+          (row: any) => ({
+            payment_order_id:
+              createdPaymentOrder.id,
+
+            participant_id:
+              participant.id,
+
+            participant_event_id:
+              row.id,
+
+            participant_event_member_id:
+              null,
+
+            event_id:
+              row.event_id,
+
+            amount:
+              Number(
+                row.payment_amount
+              ) || 0,
+          })
+        );
+
+      const {
+        error: paymentItemsError,
+      } = await supabaseAdmin
+        .from(
+          "payment_order_items"
+        )
+        .insert(
+          paymentOrderItems
+        );
+
+      if (paymentItemsError) {
+        console.error(
+          "Payment order items creation failed:",
+          paymentItemsError
+        );
+
+        // Prevent leaving an orphan payment_orders row.
+        await supabaseAdmin
+          .from("payment_orders")
+          .delete()
+          .eq(
+            "id",
+            createdPaymentOrder.id
+          );
+
+        return errorResponse(
+          "Registration was completed, but the payment order could not be prepared.",
+          500
+        );
+      }
+
+      console.log(
+        "Payment order created:",
+        {
+          orderReference,
+          amount: totalAmount,
+          items:
+            paymentOrderItems.length,
+        }
+      );
+    }
+  }
   // =====================================================
   // 15.5 SEND CONFIRMATION EMAILS
   // =====================================================
@@ -1220,8 +1364,30 @@ export async function POST(
 
       totalAmount,
 
-      paymentRequired:
-        totalAmount > 0,
+paymentRequired:
+  totalAmount > 0,
+
+paymentOrder:
+  paymentOrder
+    ? {
+        id:
+          paymentOrder.id,
+
+        orderReference:
+          paymentOrder.order_reference,
+
+        amount:
+          Number(
+            paymentOrder.amount
+          ),
+
+        currency:
+          paymentOrder.currency,
+
+        status:
+          paymentOrder.status,
+      }
+    : null,
 
       /*
        * Payment is deliberately not started here.
