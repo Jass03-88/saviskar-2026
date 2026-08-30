@@ -75,7 +75,7 @@ function getSupabaseAdmin() {
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await requireAdmin();
 
@@ -107,30 +107,57 @@ export async function GET() {
     );
   }
 
+  const { searchParams } = new URL(request.url);
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+  const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  // 1. Fetch paginated participant_events
+  const {
+    data: participantEventsData,
+    count: totalCount,
+    error: peError,
+  } = await supabaseAdmin
+    .from("participant_events")
+    .select(
+      "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at",
+      { count: "exact" }
+    )
+    .order("created_at", { ascending: false })
+    .range(from, to);
+
+  if (peError) {
+    console.error("Admin registrations query failed:", peError);
+    return NextResponse.json(
+      { error: "Could not load registrations." },
+      { status: 500 }
+    );
+  }
+
+  const participantEvents =
+    (participantEventsData ?? []) as ParticipantEvent[];
+
+  const participantIds = Array.from(
+    new Set(participantEvents.map((pe) => pe.participant_id).filter(Boolean))
+  );
+  const peIds = participantEvents.map((pe) => pe.id);
+
+  // 2. Fetch associated participants, events catalog, members, and payment orders
   const [
     participantsResult,
-    participantEventsResult,
     eventsResult,
     membersResult,
     paymentOrdersResult,
   ] = await Promise.all([
-    supabaseAdmin
-      .from("participants")
-      .select(
-        "id, participant_id, name, college, email, phone, photo_url, created_at"
-      )
-      .order("created_at", {
-        ascending: false,
-      }),
-
-    supabaseAdmin
-      .from("participant_events")
-      .select(
-        "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at"
-      )
-      .order("created_at", {
-        ascending: false,
-      }),
+    participantIds.length > 0
+      ? supabaseAdmin
+          .from("participants")
+          .select(
+            "id, participant_id, name, college, email, phone, photo_url, created_at"
+          )
+          .in("id", participantIds)
+      : Promise.resolve({ data: [], error: null }),
 
     supabaseAdmin
       .from("events")
@@ -139,22 +166,27 @@ export async function GET() {
         ascending: true,
       }),
 
-    supabaseAdmin
-      .from("participant_event_members")
-      .select(
-        "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college)"
-      ),
+    peIds.length > 0
+      ? supabaseAdmin
+          .from("participant_event_members")
+          .select(
+            "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college)"
+          )
+          .in("participant_event_id", peIds)
+      : Promise.resolve({ data: [], error: null }),
 
-    supabaseAdmin
-      .from("payment_order_items")
-      .select(
-        "participant_event_id, payment_orders(id, order_reference, gateway, gateway_order_id, gateway_payment_id, status, updated_at)"
-      ),
+    peIds.length > 0
+      ? supabaseAdmin
+          .from("payment_order_items")
+          .select(
+            "participant_event_id, payment_orders(id, order_reference, gateway, gateway_order_id, gateway_payment_id, status, updated_at)"
+          )
+          .in("participant_event_id", peIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   const queryError =
     participantsResult.error ??
-    participantEventsResult.error ??
     eventsResult.error ??
     membersResult.error ??
     paymentOrdersResult.error;
@@ -176,10 +208,6 @@ export async function GET() {
 
   const participants =
     (participantsResult.data ?? []) as Participant[];
-
-  const participantEvents =
-    (participantEventsResult.data ??
-      []) as ParticipantEvent[];
 
   const events =
     (eventsResult.data ?? []) as EventRecord[];
@@ -312,6 +340,10 @@ export async function GET() {
       registrations,
       events,
       role: auth.role,
+      total: totalCount ?? 0,
+      page,
+      pageSize,
+      totalPages: Math.ceil((totalCount ?? 0) / pageSize),
     },
     {
       headers: {

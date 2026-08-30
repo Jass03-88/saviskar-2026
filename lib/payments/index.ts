@@ -20,6 +20,7 @@ export type {
   PaymentStatus,
   CreateOrderParams,
   CreateOrderResult,
+  FetchedPaymentDetails,
   VerifyPaymentParams,
   VerifyPaymentResult,
   CheckoutConfig,

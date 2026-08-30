@@ -198,6 +198,23 @@ export async function POST(
     );
   }
 
+  // ─── P0-1: Bind Gateway Order to DB Record ─────────────
+
+  if (paymentOrder.gateway_order_id !== gatewayOrderId) {
+    console.error(
+      "Payment order binding mismatch:",
+      {
+        paymentOrderId,
+        expected: paymentOrder.gateway_order_id,
+        received: gatewayOrderId,
+      }
+    );
+    return errorResponse(
+      "Payment order mismatch: the supplied gateway order does not belong to this payment.",
+      409
+    );
+  }
+
   // ─── Verify Gateway Signature ──────────────────────────
 
   const gateway = getPaymentGateway(
@@ -223,6 +240,115 @@ export async function POST(
     return errorResponse(
       "Payment verification failed. The payment signature is invalid.",
       400
+    );
+  }
+
+  // ─── P0-2: Server-Side Payment Verification ───────────
+  //
+  // After signature passes, verify the payment directly
+  // with Razorpay. FAIL CLOSED: if Razorpay is unreachable
+  // or returns an error, the payment is NOT marked paid.
+
+  try {
+    const fetchedPayment =
+      await gateway.fetchPaymentDetails(
+        gatewayPaymentId
+      );
+
+    // Verify payment belongs to the expected gateway order
+    if (
+      fetchedPayment.gatewayOrderId !==
+      gatewayOrderId
+    ) {
+      console.error(
+        "Server-side verification: payment order mismatch",
+        {
+          paymentOrderId,
+          expectedOrder: gatewayOrderId,
+          actualOrder:
+            fetchedPayment.gatewayOrderId,
+        }
+      );
+      return errorResponse(
+        "Payment verification failed: payment does not belong to the expected order.",
+        400
+      );
+    }
+
+    // Verify payment is captured (not merely authorized)
+    if (fetchedPayment.status !== "captured") {
+      console.error(
+        "Server-side verification: payment not captured",
+        {
+          paymentOrderId,
+          gatewayPaymentId,
+          status: fetchedPayment.status,
+        }
+      );
+      return errorResponse(
+        "Payment verification failed: payment has not been captured.",
+        400
+      );
+    }
+
+    // Verify amount matches (DB stores in major units, Razorpay uses paise)
+    const expectedAmountPaise =
+      Number(paymentOrder.amount) * 100;
+
+    if (
+      fetchedPayment.amount !==
+      expectedAmountPaise
+    ) {
+      console.error(
+        "Server-side verification: amount mismatch",
+        {
+          paymentOrderId,
+          expectedPaise: expectedAmountPaise,
+          actualPaise: fetchedPayment.amount,
+        }
+      );
+      return errorResponse(
+        "Payment verification failed: payment amount does not match.",
+        400
+      );
+    }
+
+    // Verify currency
+    const expectedCurrency =
+      (
+        paymentOrder.currency ?? "INR"
+      ).toUpperCase();
+
+    if (
+      fetchedPayment.currency.toUpperCase() !==
+      expectedCurrency
+    ) {
+      console.error(
+        "Server-side verification: currency mismatch",
+        {
+          paymentOrderId,
+          expected: expectedCurrency,
+          actual: fetchedPayment.currency,
+        }
+      );
+      return errorResponse(
+        "Payment verification failed: currency mismatch.",
+        400
+      );
+    }
+  } catch (err) {
+    // FAIL CLOSED: any error from fetchPaymentDetails
+    // means we cannot verify — do NOT mark paid.
+    console.error(
+      "Server-side payment verification failed (fail-closed):",
+      err instanceof Error
+        ? err.message
+        : String(err),
+      { paymentOrderId, gatewayPaymentId }
+    );
+    return errorResponse(
+      "Payment verification failed: could not confirm payment with the payment gateway.",
+      502
     );
   }
 

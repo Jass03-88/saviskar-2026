@@ -78,6 +78,27 @@ export type VerifyPaymentResult = {
 };
 
 // ─────────────────────────────────────────────────────────────────
+// Fetched Payment Details (Server-Side Verification)
+// ─────────────────────────────────────────────────────────────────
+
+export type FetchedPaymentDetails = {
+  /** Gateway payment ID. */
+  gatewayPaymentId: string;
+
+  /** Gateway order ID the payment belongs to. */
+  gatewayOrderId: string;
+
+  /** Payment status from the gateway (e.g. "captured", "authorized", "failed"). */
+  status: string;
+
+  /** Amount in smallest currency unit (paise for INR). */
+  amount: number;
+
+  /** ISO 4217 currency code. */
+  currency: string;
+};
+
+// ─────────────────────────────────────────────────────────────────
 // Checkout Config (browser-side)
 // ─────────────────────────────────────────────────────────────────
 
@@ -155,4 +176,15 @@ export interface PaymentGateway {
     body: string;
     signature: string;
   }): WebhookValidationResult;
+
+  /**
+   * Fetch payment details from the gateway for server-side verification.
+   *
+   * Must FAIL CLOSED: if the gateway is unreachable, returns an error,
+   * or the response is malformed/incomplete, this method must throw.
+   * The caller must treat any thrown error as verification failure.
+   */
+  fetchPaymentDetails(
+    gatewayPaymentId: string
+  ): Promise<FetchedPaymentDetails>;
 }

@@ -1,5 +1,5 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireMasterAdmin } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ function getSupabaseAdmin() {
   });
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const auth = await requireMasterAdmin();
 
   if (auth.error) {
@@ -43,11 +43,19 @@ export async function GET() {
     );
   }
 
-  const { data: logs, error: logsError } = await supabaseAdmin
+  const { searchParams } = new URL(request.url);
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+  const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const { data: logs, count, error: logsError } = await supabaseAdmin
     .from("admin_audit_logs")
-    .select("id, admin_id, action_type, target_id, details, created_at")
+    .select("id, admin_id, action_type, target_id, details, created_at", {
+      count: "exact",
+    })
     .order("created_at", { ascending: false })
-    .limit(100);
+    .range(from, to);
 
   if (logsError) {
     console.error("Failed to fetch audit logs:", logsError);
@@ -57,13 +65,36 @@ export async function GET() {
     );
   }
 
-  const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
-  const emailMap = new Map(usersData?.users.map(u => [u.id, u.email]) || []);
+  // Fetch admin user profiles for enriched log display
+  const adminIds = Array.from(new Set((logs ?? []).map((l) => l.admin_id).filter(Boolean)));
+  const emailMap = new Map<string, string>();
 
-  const enrichedLogs = logs?.map(log => ({
+  if (adminIds.length > 0) {
+    const userLookups = await Promise.all(
+      adminIds.map((id) =>
+        supabaseAdmin.auth.admin.getUserById(id).then((res) => ({
+          id,
+          email: res.data.user?.email || null,
+        }))
+      )
+    );
+    for (const u of userLookups) {
+      if (u.email) emailMap.set(u.id, u.email);
+    }
+  }
+
+  const enrichedLogs = logs?.map((log) => ({
     ...log,
     admin_email: emailMap.get(log.admin_id) || "Unknown Admin",
   }));
 
-  return NextResponse.json({ logs: enrichedLogs || [] });
+  const total = count ?? 0;
+
+  return NextResponse.json({
+    logs: enrichedLogs || [],
+    total,
+    page,
+    pageSize,
+    totalPages: Math.ceil(total / pageSize),
+  });
 }

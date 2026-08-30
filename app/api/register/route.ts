@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendRegistrationEmail } from "@/lib/send-registration-email";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 type MemberInput = {
   name?: unknown;
@@ -43,23 +44,6 @@ const EMAIL_PATTERN =
 
 const MAX_REQUEST_BYTES = 48_000;
 
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_REQUESTS = 8;
-
-type RateEntry = {
-  count: number;
-  resetAt: number;
-};
-
-const globalForRateLimit = globalThis as typeof globalThis & {
-  __registrationRateLimit?: Map<string, RateEntry>;
-};
-
-const registrationRateLimit =
-  globalForRateLimit.__registrationRateLimit ??
-  (globalForRateLimit.__registrationRateLimit =
-    new Map<string, RateEntry>());
-
 function cleanString(
   value: unknown,
   maxLength: number
@@ -98,86 +82,6 @@ function errorResponse(
       },
     }
   );
-}
-
-function getClientIp(
-  request: NextRequest
-) {
-  const forwarded =
-    request.headers.get("x-forwarded-for");
-
-  if (forwarded) {
-    return (
-      forwarded.split(",")[0]?.trim() ||
-      "unknown"
-    );
-  }
-
-  return (
-    request.headers.get("x-real-ip")?.trim() ||
-    "unknown"
-  );
-}
-
-function checkRateLimit(
-  key: string
-) {
-  const now = Date.now();
-
-  if (registrationRateLimit.size > 1000) {
-    for (const [
-      storedKey,
-      entry,
-    ] of registrationRateLimit) {
-      if (entry.resetAt <= now) {
-        registrationRateLimit.delete(
-          storedKey
-        );
-      }
-    }
-  }
-
-  const current =
-    registrationRateLimit.get(key);
-
-  if (
-    !current ||
-    current.resetAt <= now
-  ) {
-    registrationRateLimit.set(key, {
-      count: 1,
-      resetAt:
-        now + RATE_LIMIT_WINDOW_MS,
-    });
-
-    return {
-      allowed: true,
-      retryAfter: 0,
-    };
-  }
-
-  if (
-    current.count >=
-    RATE_LIMIT_MAX_REQUESTS
-  ) {
-    return {
-      allowed: false,
-      retryAfter: Math.max(
-        1,
-        Math.ceil(
-          (current.resetAt - now) /
-          1000
-        )
-      ),
-    };
-  }
-
-  current.count += 1;
-
-  return {
-    allowed: true,
-    retryAfter: 0,
-  };
 }
 
 function rateLimitResponse(
@@ -674,7 +578,26 @@ export async function POST(
     const message =
       rpcError.message ||
       "We couldn't save your registration.";
+    const code = rpcError.code || "";
 
+    // 1. Structured Error Codes (SVK01 - SVK11)
+    if (code === "SVK01") {
+      return errorResponse("That Participant ID was not found.", 404);
+    }
+    if (code === "SVK02") {
+      return errorResponse("The provided email does not match this Participant ID.", 400);
+    }
+    if (code === "SVK03" || code === "SVK04" || code === "SVK05") {
+      return errorResponse(message, 400);
+    }
+    if (code === "SVK06") {
+      return errorResponse("Please enter your team name.", 400);
+    }
+    if (code === "SVK07" || code === "SVK08" || code === "SVK09" || code === "SVK10" || code === "SVK11") {
+      return errorResponse(message, 400);
+    }
+
+    // 2. Backward Compatibility Fallbacks (Text Matching)
     if (
       message.includes(
         "Participant ID was not found"
@@ -683,6 +606,17 @@ export async function POST(
       return errorResponse(
         "That Participant ID was not found.",
         404
+      );
+    }
+
+    if (
+      message.includes(
+        "The provided email does not match this Participant ID"
+      )
+    ) {
+      return errorResponse(
+        "The provided email does not match this Participant ID.",
+        400
       );
     }
 
@@ -732,6 +666,20 @@ export async function POST(
 
     if (
       message.includes(
+        "Registration limit reached"
+      ) ||
+      message.includes(
+        "limit reached"
+      )
+    ) {
+      return errorResponse(
+        message,
+        400
+      );
+    }
+
+    if (
+      message.includes(
         "registration"
       ) &&
       message.includes(
@@ -747,6 +695,9 @@ export async function POST(
     if (
       message.includes(
         "not active"
+      ) ||
+      message.includes(
+        "unavailable"
       )
     ) {
       return errorResponse(
@@ -959,7 +910,7 @@ export async function POST(
     }
   }
   // =====================================================
-  // 15.1 CREATE PAYMENT ORDER
+  // 15.1 RETRIEVE ATOMICALLY CREATED PAYMENT ORDER
   // =====================================================
 
   let paymentOrder: {
@@ -985,122 +936,41 @@ export async function POST(
         Number(row.payment_amount) > 0
     );
 
-    if (newPaidEvents.length > 0) {
-      const orderReference =
-        `SVK-${returnedParticipantId}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const paidPeIds = newPaidEvents.map((r) => r.id).filter(Boolean);
 
-      const {
-        data: createdPaymentOrder,
-        error: paymentOrderError,
-      } = await supabaseAdmin
-        .from("payment_orders")
-        .insert({
-          order_reference:
-            orderReference,
-
-          payer_participant_id:
-            participant.id,
-
-          amount:
-            totalAmount,
-
-          currency:
-            "INR",
-
-          status:
-            "pending",
-        })
-        .select(
-          `
+    if (paidPeIds.length > 0) {
+      const { data: itemRow, error: itemLookupError } = await supabaseAdmin
+        .from("payment_order_items")
+        .select(`
+          payment_order_id,
+          payment_orders (
             id,
             order_reference,
             amount,
             currency,
             status
-          `
-        )
-        .single();
+          )
+        `)
+        .in("participant_event_id", paidPeIds)
+        .limit(1)
+        .maybeSingle();
 
-      if (paymentOrderError) {
-        console.error(
-          "Payment order creation failed:",
-          paymentOrderError
-        );
-
-        return errorResponse(
-          "Registration was completed, but the payment order could not be created.",
-          500
-        );
+      if (itemLookupError) {
+        console.error("Payment order lookup error:", itemLookupError);
       }
 
-      paymentOrder =
-        createdPaymentOrder;
-
-      const paymentOrderItems =
-        newPaidEvents.map(
-          (row: any) => ({
-            payment_order_id:
-              createdPaymentOrder.id,
-
-            participant_id:
-              participant.id,
-
-            participant_event_id:
-              row.id,
-
-            participant_event_member_id:
-              null,
-
-            event_id:
-              row.event_id,
-
-            amount:
-              Number(
-                row.payment_amount
-              ) || 0,
-          })
-        );
-
-      const {
-        error: paymentItemsError,
-      } = await supabaseAdmin
-        .from(
-          "payment_order_items"
-        )
-        .insert(
-          paymentOrderItems
-        );
-
-      if (paymentItemsError) {
-        console.error(
-          "Payment order items creation failed:",
-          paymentItemsError
-        );
-
-        // Prevent leaving an orphan payment_orders row.
-        await supabaseAdmin
-          .from("payment_orders")
-          .delete()
-          .eq(
-            "id",
-            createdPaymentOrder.id
-          );
-
-        return errorResponse(
-          "Registration was completed, but the payment order could not be prepared.",
-          500
+      const rawOrder = itemRow?.payment_orders;
+      const orderData = Array.isArray(rawOrder) ? rawOrder[0] : rawOrder;
+      if (orderData) {
+        paymentOrder = orderData as any;
+        console.log(
+          "Atomic payment order retrieved:",
+          {
+            orderReference: orderData.order_reference,
+            amount: orderData.amount,
+          }
         );
       }
-
-      console.log(
-        "Payment order created:",
-        {
-          orderReference,
-          amount: totalAmount,
-          items:
-            paymentOrderItems.length,
-        }
-      );
     }
   }
   // =====================================================

@@ -18,18 +18,23 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
 
-  // 1. ATOMIC CLAIM
+  // 1. ATOMIC CLAIM (with stale-claim recovery)
   // We try to claim the payment order for receipt generation.
-  // This prevents race conditions between the verify route and the webhook.
+  // A claim is valid if unsent AND (unclaimed OR claim is stale > 10 minutes).
   console.log(`[RECEIPT] attempting atomic claim for order: ${paymentOrderId}`);
+  const now = new Date();
+  const staleThreshold = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
   const claimId = crypto.randomUUID();
 
   const { data: claimData, error: claimError } = await supabaseAdmin
     .from("payment_orders")
-    .update({ receipt_email_claim_id: claimId })
+    .update({
+      receipt_email_claim_id: claimId,
+      receipt_email_claimed_at: now.toISOString(),
+    })
     .eq("id", paymentOrderId)
     .is("receipt_email_sent_at", null)
-    .is("receipt_email_claim_id", null)
+    .or(`receipt_email_claim_id.is.null,receipt_email_claimed_at.lt.${staleThreshold}`)
     .select("id");
 
   if (claimError) {
@@ -37,7 +42,7 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     return;
   }
 
-  // If we didn't update any rows, it means the email was already sent or another process is currently sending it.
+  // If we didn't update any rows, it means the email was already sent or an active (<10 min) claim exists.
   if (!claimData || claimData.length === 0) {
     console.log(`[RECEIPT] claim FAILED (0 rows updated) - already claimed/sent. Skipping.`);
     return;
@@ -97,36 +102,47 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     }
     console.log(`[RECEIPT] recipient email resolved: ${participant.email}`);
 
-    // Fetch linked events and members
-    const { data: orderItems } = await supabaseAdmin
+    // Fetch linked events and members from payment_order_items
+    const { data: orderItems, error: itemsError } = await supabaseAdmin
       .from("payment_order_items")
-      .select("participant_event_id")
-      .eq("payment_order_id", paymentOrderId);
-
-    const participantEventIds = (orderItems ?? []).map((item) => item.participant_event_id).filter(Boolean);
-
-    if (participantEventIds.length === 0) {
-      throw new Error("No participant events linked to this order.");
-    }
-
-    // We generate the receipt for the first event (assuming mostly single-checkout or primary event)
-    const { data: pe } = await supabaseAdmin
-      .from("participant_events")
       .select(`
         id,
-        team_name,
-        events ( name, category, registration_type )
+        amount,
+        event_id,
+        participant_event_id,
+        events (
+          name,
+          category,
+          registration_type
+        ),
+        participant_events (
+          id,
+          team_name
+        )
       `)
-      .eq("id", participantEventIds[0])
-      .single();
+      .eq("payment_order_id", paymentOrderId);
 
-    if (!pe || !pe.events) {
-      throw new Error("Event details not found.");
+    if (itemsError || !orderItems || orderItems.length === 0) {
+      throw new Error(`No payment order items found: ${itemsError?.message}`);
     }
 
-    const eventData = Array.isArray(pe.events) ? pe.events[0] : pe.events;
+    const receiptItems = orderItems.map((item: any) => {
+      const eventData = Array.isArray(item.events) ? item.events[0] : item.events;
+      const peData = Array.isArray(item.participant_events) ? item.participant_events[0] : item.participant_events;
+      return {
+        eventName: eventData?.name ?? "Event Registration",
+        category: eventData?.category ?? null,
+        registrationType: (eventData?.registration_type as "individual" | "team") ?? "individual",
+        teamName: peData?.team_name ?? null,
+        amount: Number(item.amount) || 0,
+      };
+    });
 
-    // 3. GENERATE PDF
+    const primaryItem = orderItems[0];
+    const primaryEvent = Array.isArray(primaryItem.events) ? primaryItem.events[0] : primaryItem.events;
+    const primaryPe = Array.isArray(primaryItem.participant_events) ? primaryItem.participant_events[0] : primaryItem.participant_events;
+
+    // 3. GENERATE MULTI-EVENT PDF
     const receiptData: ReceiptData = {
       receiptReference: `RCP-${order.order_reference}`,
       paymentDate: paymentDateStr,
@@ -135,28 +151,30 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       email: participant.email,
       phone: participant.phone,
       college: participant.college,
-      eventName: eventData.name,
-      eventCategory: eventData.category,
-      registrationType: eventData.registration_type as "individual" | "team",
-      teamName: pe.team_name,
+      items: receiptItems,
+      eventName: primaryEvent?.name ?? "Saviskar Event",
+      eventCategory: primaryEvent?.category ?? null,
+      registrationType: (primaryEvent?.registration_type as "individual" | "team") ?? "individual",
+      teamName: primaryPe?.team_name ?? null,
       amount: order.amount,
       gateway: order.gateway || "Unknown",
       gatewayOrderId: order.gateway_order_id || "",
       gatewayPaymentId: order.gateway_payment_id || "",
     };
 
-    console.log(`[RECEIPT] generating PDF`);
+    console.log(`[RECEIPT] generating multi-event PDF with ${receiptItems.length} item(s)`);
     const pdfBuffer = await generateReceiptPdf(receiptData);
     console.log(`[RECEIPT] PDF generated + byte size: ${pdfBuffer.byteLength}`);
 
-    // Get team members if any
+    // Get team members for primary event if any
+    const primaryPeId = primaryPe?.id || primaryItem.participant_event_id;
     const { data: teamMemberRows } = await supabaseAdmin
       .from("participant_event_members")
       .select(`
         name, email, phone, is_team_leader,
         participants ( participant_id, college )
       `)
-      .eq("participant_event_id", pe.id);
+      .eq("participant_event_id", primaryPeId);
 
     const emailMembers = (teamMemberRows ?? [])
       .map((row) => {
@@ -172,19 +190,24 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       })
       .filter((row) => row.participantId !== String(participant.participant_id));
 
+    // Summary event label for email
+    const eventNameLabel = receiptItems.length === 1
+      ? receiptItems[0].eventName
+      : `${receiptItems[0].eventName} (+${receiptItems.length - 1} more)`;
+
     // 4. SEND EMAIL
     const emailResult = await sendRegistrationEmail({
-      registrationId: pe.id,
+      registrationId: primaryPeId,
       participantId: participant.participant_id,
-      eventName: eventData.name,
-      eventCategory: eventData.category,
+      eventName: eventNameLabel,
+      eventCategory: primaryEvent?.category ?? null,
       name: participant.name,
       college: participant.college,
       email: participant.email,
       phone: participant.phone,
-      team: pe.team_name,
-      isTeamEvent: eventData.registration_type === "team",
-      isTeamHead: true, // Payer is usually head for team checkouts
+      team: primaryPe?.team_name ?? null,
+      isTeamEvent: primaryEvent?.registration_type === "team",
+      isTeamHead: true,
       members: emailMembers,
       receiptPdf: {
         buffer: pdfBuffer,
@@ -201,12 +224,13 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     console.log(`[RECEIPT] Resend response: success`);
 
     console.log(`[RECEIPT] updating receipt_email_sent_at`);
-    // 5. MARK AS SENT
+    // 5. MARK AS SENT & CLEAR CLAIM
     await supabaseAdmin
       .from("payment_orders")
       .update({ 
         receipt_email_sent_at: new Date().toISOString(),
-        receipt_email_claim_id: null
+        receipt_email_claim_id: null,
+        receipt_email_claimed_at: null,
       })
       .eq("id", paymentOrderId)
       .eq("receipt_email_claim_id", claimId);
@@ -220,8 +244,12 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     // We intentionally DO NOT revert the 'paid' status.
     await supabaseAdmin
       .from("payment_orders")
-      .update({ receipt_email_claim_id: null })
+      .update({
+        receipt_email_claim_id: null,
+        receipt_email_claimed_at: null,
+      })
       .eq("id", paymentOrderId)
       .eq("receipt_email_claim_id", claimId);
   }
+
 }

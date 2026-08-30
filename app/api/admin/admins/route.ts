@@ -85,37 +85,24 @@ export async function GET() {
     }
   >();
 
-  const {
-    data: userList,
-    error: userListError,
-  } = await adminClient.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
-
-  if (userListError) {
-    console.error(
-      "Auth user list error:",
-      userListError
+  if (userIds.length > 0) {
+    const userLookups = await Promise.all(
+      userIds.map((id) =>
+        adminClient.auth.admin.getUserById(id).then((res) => ({
+          id,
+          user: res.data?.user || null,
+        }))
+      )
     );
 
-    return NextResponse.json(
-      {
-        error:
-          "Could not load administrator accounts.",
-      },
-      { status: 500 }
-    );
-  }
-
-  for (const user of userList.users) {
-    if (userIds.includes(user.id)) {
-      users.set(user.id, {
-        email: user.email ?? null,
-        created_at: user.created_at ?? null,
-        last_sign_in_at:
-          user.last_sign_in_at ?? null,
-      });
+    for (const lookup of userLookups) {
+      if (lookup.user) {
+        users.set(lookup.id, {
+          email: lookup.user.email ?? null,
+          created_at: lookup.user.created_at ?? null,
+          last_sign_in_at: lookup.user.last_sign_in_at ?? null,
+        });
+      }
     }
   }
 

@@ -1,5 +1,13 @@
 import { PDFDocument, StandardFonts, rgb, setFontAndSize } from 'pdf-lib';
 
+export type ReceiptLineItem = {
+  eventName: string;
+  category?: string | null;
+  registrationType?: 'individual' | 'team';
+  teamName?: string | null;
+  amount: number;
+};
+
 export type ReceiptData = {
   // Receipt identity
   receiptReference: string;
@@ -12,11 +20,14 @@ export type ReceiptData = {
   phone: string | null;
   college: string;
 
-  // Registration
-  eventName: string;
-  eventCategory: string | null;
-  registrationType: 'individual' | 'team';
-  teamName: string | null;
+  // Registration items (multi-event support)
+  items?: ReceiptLineItem[];
+
+  // Single-event backward compatibility fields
+  eventName?: string;
+  eventCategory?: string | null;
+  registrationType?: 'individual' | 'team';
+  teamName?: string | null;
 
   // Payment
   amount: number;
@@ -68,6 +79,20 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   let cursorY = PAGE_HEIGHT - 60;
+
+  // Normalize line items
+  const lineItems: ReceiptLineItem[] =
+    data.items && data.items.length > 0
+      ? data.items
+      : [
+          {
+            eventName: data.eventName || 'Saviskar Event',
+            category: data.eventCategory || null,
+            registrationType: data.registrationType || 'individual',
+            teamName: data.teamName || null,
+            amount: data.amount,
+          },
+        ];
 
   // --- HEADER ---
   page.drawText('SAVISKAR 2026', {
@@ -177,7 +202,6 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   };
 
   // --- PARTICIPANT ---
-  console.log(`[PDF] PARTICIPANT START: ${cursorY}`);
   drawSectionTitle('PARTICIPANT');
   drawRow('Name', data.participantName, helveticaBold, 11);
   drawRow('Participant ID', data.participantId, helveticaBold, 10);
@@ -192,15 +216,26 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   cursorY -= 20;
 
   // --- REGISTRATION ---
-  console.log(`[PDF] REGISTRATION START: ${cursorY}`);
-  drawSectionTitle('REGISTRATION');
-  drawRow('Event Name', data.eventName, helveticaBold, 11);
-  if (data.eventCategory) {
-    drawRow('Category', data.eventCategory);
-  }
-  drawRow('Registration Type', data.registrationType === 'team' ? 'Team' : 'Individual');
-  if (data.registrationType === 'team' && data.teamName) {
-    drawRow('Team', data.teamName);
+  if (lineItems.length === 1) {
+    const single = lineItems[0];
+    drawSectionTitle('REGISTRATION');
+    drawRow('Event Name', single.eventName, helveticaBold, 11);
+    if (single.category) {
+      drawRow('Category', single.category);
+    }
+    drawRow('Registration Type', single.registrationType === 'team' ? 'Team' : 'Individual');
+    if (single.registrationType === 'team' && single.teamName) {
+      drawRow('Team', single.teamName);
+    }
+  } else {
+    drawSectionTitle(`REGISTRATION (${lineItems.length} EVENTS)`);
+    lineItems.forEach((item, index) => {
+      const typeInfo = item.registrationType === 'team' && item.teamName
+        ? `Team: ${item.teamName}`
+        : item.registrationType === 'team' ? 'Team' : 'Individual';
+      const categoryInfo = item.category ? ` (${item.category})` : '';
+      drawRow(`Event ${index + 1}`, `${item.eventName}${categoryInfo} — ${typeInfo}`);
+    });
   }
 
   cursorY -= 12;
@@ -208,7 +243,6 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   cursorY -= 20;
 
   // --- PAYMENT DETAILS ---
-  console.log(`[PDF] PAYMENT DETAILS START: ${cursorY}`);
   drawSectionTitle('PAYMENT DETAILS');
   drawRow('Status', 'PAID', helveticaBold, 10);
   drawRow('Gateway', data.gateway);
@@ -221,7 +255,6 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   cursorY -= 25;
 
   // --- PAYMENT SUMMARY ---
-  console.log(`[PDF] PAYMENT SUMMARY START: ${cursorY}`);
   drawSectionTitle('PAYMENT SUMMARY');
   
   // Table header
@@ -233,7 +266,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     color: rgb(0, 0, 0),
   });
   page.drawText('Amount', {
-    x: PAGE_WIDTH - MARGIN - 50,
+    x: PAGE_WIDTH - MARGIN - 70,
     y: cursorY,
     size: 10,
     font: helveticaBold,
@@ -241,26 +274,31 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   });
   cursorY -= 20;
 
-  // Table row
-  page.drawText(`${data.eventName} Registration`, {
-    x: MARGIN,
-    y: cursorY,
-    size: 10,
-    font: helvetica,
-    color: rgb(0.2, 0.2, 0.2),
-  });
-  page.drawText(`INR ${data.amount}`, {
-    x: PAGE_WIDTH - MARGIN - 50,
-    y: cursorY,
-    size: 10,
-    font: helvetica,
-    color: rgb(0.2, 0.2, 0.2),
-  });
+  // Table rows for all line items
+  for (const item of lineItems) {
+    const itemDesc = `${item.eventName} Registration`;
+    const descLines = wrapText(itemDesc, helvetica, 10, CONTENT_WIDTH - 100);
+
+    page.drawText(descLines[0] || itemDesc, {
+      x: MARGIN,
+      y: cursorY,
+      size: 10,
+      font: helvetica,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    page.drawText(`INR ${item.amount}`, {
+      x: PAGE_WIDTH - MARGIN - 70,
+      y: cursorY,
+      size: 10,
+      font: helvetica,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    cursorY -= 16;
+  }
   
-  cursorY -= 15;
+  cursorY -= 5;
   drawDivider(page, cursorY);
   cursorY -= 15;
-  console.log(`[PDF] After description/amount, cursorY is ${cursorY}`);
 
   // TOTAL
   page.drawText('TOTAL PAID', {
@@ -271,7 +309,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     color: rgb(0, 0, 0),
   });
   page.drawText(`INR ${data.amount}`, {
-    x: PAGE_WIDTH - MARGIN - 50,
+    x: PAGE_WIDTH - MARGIN - 70,
     y: cursorY,
     size: 12,
     font: helveticaBold,

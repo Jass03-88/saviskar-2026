@@ -34,9 +34,9 @@ export async function POST(request: NextRequest) {
   const { data: pe, error: peError } = await supabaseAdmin
     .from("participant_events")
     .select(`
-      id, payment_status, event_id,
+      id, payment_status, event_id, payment_amount,
       participants!inner(participant_id, id),
-      events!inner(payment_type, registration_fee)
+      events!inner(payment_type)
     `)
     .eq("id", participantEventId)
     .maybeSingle();
@@ -56,7 +56,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Payment is already completed." }, { status: 400 });
   }
   
-  const amount = eventData?.registration_fee || 0;
+  // Use the finalized payment_amount from participant_events.
+  // This already accounts for per_student team multiplication
+  // (e.g. 4 students × ₹200 = ₹800).
+  const amount = pe.payment_amount || 0;
   if (amount <= 0) {
     return NextResponse.json({ error: "No payment required for this event." }, { status: 400 });
   }

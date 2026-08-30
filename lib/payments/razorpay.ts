@@ -11,12 +11,13 @@
  *   RAZORPAY_WEBHOOK_SECRET  — Webhook signing secret (server-only)
  */
 
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 
 import type {
   PaymentGateway,
   CreateOrderParams,
   CreateOrderResult,
+  FetchedPaymentDetails,
   VerifyPaymentParams,
   VerifyPaymentResult,
   CheckoutConfig,
@@ -27,6 +28,23 @@ import type {
 // ─────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────
+
+/**
+ * Timing-safe string comparison for HMAC signatures.
+ *
+ * Uses crypto.timingSafeEqual to prevent timing attacks.
+ * Handles differing buffer lengths safely (returns false
+ * instead of throwing RangeError).
+ *
+ * Note: For fixed-length HMAC-SHA256 hex digests (64 chars),
+ * the length check does not leak useful information.
+ */
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf-8");
+  const bufB = Buffer.from(b, "utf-8");
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
 
 function getKeyId(): string {
   const key = process.env.RAZORPAY_KEY_ID;
@@ -144,8 +162,10 @@ export class RazorpayGateway implements PaymentGateway {
       )
       .digest("hex");
 
-    const verified =
-      expectedSignature === params.gatewaySignature;
+    const verified = safeCompare(
+      expectedSignature,
+      params.gatewaySignature
+    );
 
     return {
       verified,
@@ -220,7 +240,7 @@ export class RazorpayGateway implements PaymentGateway {
       .update(params.body)
       .digest("hex");
 
-    if (expectedSignature !== params.signature) {
+    if (!safeCompare(expectedSignature, params.signature)) {
       return {
         valid: false,
         error: "Invalid webhook signature.",
@@ -275,6 +295,92 @@ export class RazorpayGateway implements PaymentGateway {
         status,
         rawPayload: payload,
       },
+    };
+  }
+
+  /**
+   * Fetch payment details from Razorpay for server-side verification.
+   *
+   * FAIL-CLOSED: Any error (timeout, network, 4xx/5xx, malformed
+   * response, missing fields) causes this method to throw, which
+   * the caller must treat as verification failure.
+   *
+   * Razorpay Payments API:
+   * GET https://api.razorpay.com/v1/payments/:id
+   */
+  async fetchPaymentDetails(
+    gatewayPaymentId: string
+  ): Promise<FetchedPaymentDetails> {
+    if (!gatewayPaymentId) {
+      throw new Error(
+        "fetchPaymentDetails: gatewayPaymentId is required."
+      );
+    }
+
+    let response: Response;
+
+    try {
+      response = await fetch(
+        `https://api.razorpay.com/v1/payments/${encodeURIComponent(gatewayPaymentId)}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Basic ${basicAuth()}`,
+          },
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+    } catch (err) {
+      // Network error, DNS failure, timeout — fail closed
+      throw new Error(
+        `fetchPaymentDetails: Network/timeout error fetching payment ${gatewayPaymentId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (!response.ok) {
+      // 4xx/5xx — fail closed
+      const errorBody = await response.text().catch(() => "(unreadable)");
+      throw new Error(
+        `fetchPaymentDetails: Razorpay returned ${response.status} for payment ${gatewayPaymentId}: ${errorBody}`
+      );
+    }
+
+    let data: Record<string, unknown>;
+
+    try {
+      data = (await response.json()) as Record<string, unknown>;
+    } catch {
+      throw new Error(
+        `fetchPaymentDetails: Malformed JSON response for payment ${gatewayPaymentId}.`
+      );
+    }
+
+    // Validate required fields — fail closed on missing data
+    const id = data.id;
+    const orderId = data.order_id;
+    const status = data.status;
+    const amount = data.amount;
+    const currency = data.currency;
+
+    if (
+      typeof id !== "string" ||
+      typeof orderId !== "string" ||
+      typeof status !== "string" ||
+      typeof amount !== "number" ||
+      typeof currency !== "string"
+    ) {
+      throw new Error(
+        `fetchPaymentDetails: Missing or invalid fields in Razorpay response for payment ${gatewayPaymentId}. ` +
+        `Got: id=${typeof id}, order_id=${typeof orderId}, status=${typeof status}, amount=${typeof amount}, currency=${typeof currency}`
+      );
+    }
+
+    return {
+      gatewayPaymentId: id,
+      gatewayOrderId: orderId,
+      status,
+      amount,
+      currency,
     };
   }
 }
