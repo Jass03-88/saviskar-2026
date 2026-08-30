@@ -46,7 +46,7 @@ export default function Footer() {
             </button>
 
             <a
-              href="https://www.instagram.com/"
+              href="https://www.instagram.com/saviskar.cgcuniversity/"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 hover:text-white"
