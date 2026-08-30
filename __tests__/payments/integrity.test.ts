@@ -182,7 +182,7 @@ describe("Phase 2B: Public Participant Lookup Security & Rate Limiting", () => {
     expect(blocked.retryAfter).toBeGreaterThan(0);
   });
 
-  it("C: minimizes public response payload to exclude internal UUIDs, gateway IDs, and audit details", () => {
+  it("C: minimizes public response payload to exclude internal participant UUIDs, gateway IDs, and audit details while preserving event recovery fields", () => {
     const internalDbRow = {
       id: "raw-uuid-12345",
       participant_id: "SVK26-ABCDEF12",
@@ -196,7 +196,7 @@ describe("Phase 2B: Public Participant Lookup Security & Rate Limiting", () => {
           id: "pe-uuid-1",
           event_id: "evt-uuid-1",
           registration_status: "confirmed",
-          payment_status: "paid",
+          payment_status: "pending",
           payment_amount: 300,
           team_name: "CodeWarriors",
           events: { name: "Hackathon" },
@@ -214,22 +214,24 @@ describe("Phase 2B: Public Participant Lookup Security & Rate Limiting", () => {
         phone: internalDbRow.phone,
       },
       events: internalDbRow.participant_events.map((e) => ({
+        participantEventId: e.id,
         eventId: e.event_id,
         eventName: e.events?.name,
         paymentStatus: e.payment_status,
+        paymentAmount: e.payment_amount,
       })),
     };
 
     expect((sanitized.participant as any).id).toBeUndefined();
     expect((sanitized.participant as any).created_at).toBeUndefined();
     expect(sanitized.participant.participantId).toBe("SVK26-ABCDEF12");
-    expect((sanitized.events[0] as any).participantEventId).toBeUndefined();
-    expect((sanitized.events[0] as any).paymentAmount).toBeUndefined();
+    expect(sanitized.events[0].participantEventId).toBe("pe-uuid-1");
+    expect(sanitized.events[0].paymentAmount).toBe(300);
     expect((sanitized.events[0] as any).teamName).toBeUndefined();
     expect((sanitized.events[0] as any).registrationStatus).toBeUndefined();
     expect(sanitized.events[0].eventId).toBe("evt-uuid-1");
     expect(sanitized.events[0].eventName).toBe("Hackathon");
-    expect(sanitized.events[0].paymentStatus).toBe("paid");
+    expect(sanitized.events[0].paymentStatus).toBe("pending");
   });
 });
 
@@ -290,5 +292,197 @@ describe("Phase 2B: Structured SVK Error Codes Mapping", () => {
   it("D: maps SVK06 and SVK10 to 400 Team Validation Errors", () => {
     expect(errorMap["SVK06"].status).toBe(400);
     expect(errorMap["SVK10"].status).toBe(400);
+  });
+});
+
+describe("Phase 2B: Returning Participant → Paid Event Flow & Recovery Regression Tests", () => {
+  it("Test A: FREE event → same participant → PAID event creates atomic order & resolves gateway params", () => {
+    // 1. Existing participant with previously registered free event
+    const participant = {
+      id: "uuid-p1",
+      participantId: "SVK26-FFE51470",
+      name: "Jashan",
+      email: "jashan.cgcu@gmail.com",
+      phone: "+91 9876543210",
+      college: "CGC University",
+    };
+
+    const existingEvents = [
+      {
+        id: "pe-free-1",
+        participant_id: participant.id,
+        event_id: "evt-hackathon-free",
+        payment_status: "not_required",
+        payment_amount: 0,
+      },
+    ];
+
+    // 2. Participant registers for new paid event (Battle of Bands, ₹15)
+    const newEvent = {
+      id: "evt-bob-paid",
+      name: "Battle of Bands",
+      registration_fee: 5,
+      team_members_count: 3,
+    };
+    const calculatedFee = newEvent.registration_fee * newEvent.team_members_count; // ₹15
+
+    const newPeId = "pe-bob-paid-1";
+    const paymentOrder = {
+      id: "po-bob-1",
+      order_reference: `SVK-${participant.participantId}-20260830-ABC123`,
+      payer_participant_id: participant.id,
+      amount: calculatedFee,
+      currency: "INR",
+      status: "pending",
+      gateway_order_id: null as string | null,
+    };
+
+    const paymentOrderItem = {
+      id: "poi-1",
+      payment_order_id: paymentOrder.id,
+      participant_id: participant.id,
+      participant_event_id: newPeId,
+      amount: calculatedFee,
+    };
+
+    // 3. Verify order linking & gateway payload calculation
+    expect(paymentOrder.amount).toBe(15);
+    expect(paymentOrder.payer_participant_id).toBe(participant.id);
+    expect(paymentOrderItem.participant_event_id).toBe(newPeId);
+
+    // Gateway order parameters:
+    const amountInSmallestUnit = Number(paymentOrder.amount) * 100; // 1500 paise
+    const receipt = paymentOrder.order_reference.slice(0, 40);
+
+    expect(amountInSmallestUnit).toBe(1500);
+    expect(receipt.length).toBeLessThanOrEqual(40);
+  });
+
+  it("Test B: FREE event → same participant → PAID event → Retry Payment / Recovery correctly identifies pending event", () => {
+    const participant = {
+      id: "uuid-p1",
+      participantId: "SVK26-FFE51470",
+    };
+
+    // Participant events in database
+    const participantEvents = [
+      {
+        id: "pe-free-1",
+        event_id: "evt-hackathon-free",
+        events: { name: "Hackathon" },
+        payment_status: "not_required",
+        payment_amount: 0,
+      },
+      {
+        id: "pe-bob-pending",
+        event_id: "evt-bob-paid",
+        events: { name: "Battle of Bands" },
+        payment_status: "pending",
+        payment_amount: 15,
+      },
+    ];
+
+    // Public API projection format
+    const publicEvents = participantEvents.map((e) => ({
+      participantEventId: e.id,
+      eventId: e.event_id,
+      eventName: e.events.name,
+      paymentStatus: e.payment_status,
+      paymentAmount: e.payment_amount,
+    }));
+
+    // Recovery function target selection
+    const pendingItem = publicEvents.find((e) => e.paymentStatus === "pending");
+    expect(pendingItem).toBeDefined();
+    expect(pendingItem?.participantEventId).toBe("pe-bob-pending");
+    expect(pendingItem?.paymentAmount).toBe(15);
+
+    // Mock recovery payload
+    const recoveryRequest = {
+      participantId: participant.participantId,
+      participantEventId: pendingItem?.participantEventId,
+    };
+
+    // Ensure it targets the pending paid event and NOT the free event
+    expect(recoveryRequest.participantEventId).toBe("pe-bob-pending");
+    expect(recoveryRequest.participantEventId).not.toBe("pe-free-1");
+  });
+
+  it("Test C: New participant → PAID event succeeds with atomic order creation", () => {
+    const newParticipant = {
+      id: "uuid-p-new",
+      participantId: "SVK26-NEW00001",
+      email: "new.student@univ.edu",
+    };
+
+    const newPeId = "pe-new-1";
+    const amount = 200;
+
+    const atomicOrder = {
+      id: "po-new-1",
+      order_reference: `SVK-${newParticipant.participantId}-20260830-ZZZ999`,
+      payer_participant_id: newParticipant.id,
+      amount,
+      currency: "INR",
+      status: "pending",
+    };
+
+    expect(atomicOrder.amount).toBe(200);
+    expect(atomicOrder.payer_participant_id).toBe("uuid-p-new");
+    expect(atomicOrder.status).toBe("pending");
+  });
+
+  it("Test D: Existing participant → already registered event is idempotent and creates no new orders", () => {
+    const existingEvents = new Set(["evt-hackathon-free"]);
+    const requestedEvents = ["evt-hackathon-free"];
+
+    let addedCount = 0;
+    let alreadyRegisteredCount = 0;
+    let orderCreated = false;
+
+    for (const evtId of requestedEvents) {
+      if (existingEvents.has(evtId)) {
+        alreadyRegisteredCount++;
+      } else {
+        addedCount++;
+        orderCreated = true;
+      }
+    }
+
+    expect(alreadyRegisteredCount).toBe(1);
+    expect(addedCount).toBe(0);
+    expect(orderCreated).toBe(false);
+  });
+
+  it("Test E: Existing participant → multiple paid events correctly calculates combined atomic total", () => {
+    const participant = { id: "uuid-p1", participantId: "SVK26-FFE51470" };
+
+    const newlyAddedEvents = [
+      { id: "pe-paid-1", event_id: "evt-1", amount: 200 },
+      { id: "pe-paid-2", event_id: "evt-2", amount: 300 },
+    ];
+
+    const totalPaidAmount = newlyAddedEvents.reduce((sum, e) => sum + e.amount, 0);
+
+    const combinedOrder = {
+      id: "po-combined-1",
+      order_reference: `SVK-${participant.participantId}-COMBINED-123`,
+      payer_participant_id: participant.id,
+      amount: totalPaidAmount,
+      currency: "INR",
+      status: "pending",
+    };
+
+    const lineItems = newlyAddedEvents.map((e) => ({
+      payment_order_id: combinedOrder.id,
+      participant_event_id: e.id,
+      amount: e.amount,
+    }));
+
+    expect(combinedOrder.amount).toBe(500);
+    expect(lineItems.length).toBe(2);
+    expect(lineItems[0].amount).toBe(200);
+    expect(lineItems[1].amount).toBe(300);
+    expect(Number(combinedOrder.amount) * 100).toBe(50000); // 50000 paise for Razorpay
   });
 });

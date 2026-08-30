@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendRegistrationEmail } from "@/lib/send-registration-email";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { generatePaymentResumeUrl } from "@/lib/payments/resume-token";
 
 type MemberInput = {
   name?: unknown;
@@ -1131,6 +1132,23 @@ export async function POST(
             )
           : [];
 
+      let paymentResumeUrl: string | null = null;
+      if (
+        eventMeta.payment_type === "paid" &&
+        paymentOrder?.id &&
+        participant?.id
+      ) {
+        try {
+          paymentResumeUrl = generatePaymentResumeUrl({
+            paymentOrderId: paymentOrder.id,
+            participantId: mainParticipantId,
+            payerParticipantUuid: participant.id,
+          });
+        } catch (tokenErr) {
+          console.error("Failed to generate payment resume URL:", tokenErr);
+        }
+      }
+
       const emailResult =
         await sendRegistrationEmail({
           registrationId:
@@ -1155,6 +1173,8 @@ export async function POST(
             
           requiresPayment:
             eventMeta.payment_type === "paid",
+
+          paymentResumeUrl,
 
           email:
             email || "",

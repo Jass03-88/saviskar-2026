@@ -28,6 +28,14 @@ export type {
   WebhookValidationResult,
 } from "./types";
 
+export {
+  createPaymentResumeToken,
+  verifyPaymentResumeToken,
+  generatePaymentResumeUrl,
+  getSiteBaseUrl,
+} from "./resume-token";
+export type { PaymentResumeTokenPayload } from "./resume-token";
+
 // ─────────────────────────────────────────────────────────────────
 // Gateway Registry
 // ─────────────────────────────────────────────────────────────────

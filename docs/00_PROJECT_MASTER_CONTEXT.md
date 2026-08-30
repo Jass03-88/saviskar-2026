@@ -244,13 +244,14 @@ events (event catalog)
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL | Client + Server |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase anon/publishable key | Client + Server |
 | `SUPABASE_SECRET_KEY` | Supabase service role key | Server only |
-| `RAZORPAY_KEY_ID` | Razorpay API key ID | Server only |
+| `RAZORPAY_KEY_ID` | Razorpay API key ID (preferred server key) | Server only |
 | `RAZORPAY_KEY_SECRET` | Razorpay API key secret | Server only |
-| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Razorpay key for checkout overlay | Client |
+| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Razorpay key for checkout overlay / fallback | Client + Server |
 | `RAZORPAY_WEBHOOK_SECRET` | Razorpay webhook signature secret | Server only |
+| `PAYMENT_RESUME_TOKEN_SECRET` | HMAC-SHA256 secret for payment resume tokens (falls back to SUPABASE_SECRET_KEY) | Server only |
 | `RESEND_API_KEY` | Resend email API key | Server only |
 | `RESEND_FROM_EMAIL` | Sender address (pre-formatted) | Server only |
-| `NEXT_PUBLIC_SITE_URL` | Site URL for auth redirects | Client + Server |
+| `NEXT_PUBLIC_SITE_URL` | Site URL for email resume links & auth redirects | Client + Server |
 | `PAYMENT_GATEWAY` | Active gateway name (default: `razorpay`) | Server only |
 
 ---

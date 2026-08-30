@@ -27,6 +27,7 @@ export type RegistrationEmailData = {
   members?: TeamMember[];
   
   requiresPayment?: boolean;
+  paymentResumeUrl?: string | null;
   
   receiptPdf?: {
     buffer: Buffer;
@@ -112,6 +113,7 @@ export async function sendRegistrationEmail(
     isTeamHead = false,
     members = [],
     requiresPayment = false,
+    paymentResumeUrl,
     receiptPdf,
   } = data;
 
@@ -485,6 +487,32 @@ export async function sendRegistrationEmail(
               <div style="margin-top: 20px; font-size: 14px; color: ${requiresPayment ? '#ff9999' : '#99ff99'}; font-weight: 600;">
                 ${requiresPayment ? "Payment: Pending &mdash; Complete your payment to confirm your paid registration." : "Payment: No payment required."}
               </div>
+
+              ${requiresPayment && paymentResumeUrl ? `
+              <div style="margin-top: 26px; text-align: left;">
+                <a
+                  href="${escapeHtml(paymentResumeUrl)}"
+                  target="_blank"
+                  style="
+                    display: inline-block;
+                    background: #ffffff;
+                    color: #000000;
+                    text-decoration: none;
+                    font-size: 12px;
+                    font-weight: 700;
+                    letter-spacing: 1.5px;
+                    text-transform: uppercase;
+                    padding: 14px 30px;
+                    border-radius: 9999px;
+                  "
+                >
+                  COMPLETE PAYMENT
+                </a>
+                <div style="margin-top: 10px; font-size: 12px; color: #999999;">
+                  Your registration is saved, but payment is still pending.
+                </div>
+              </div>
+              ` : ""}
               ` : ""}
 
             </div>
@@ -678,6 +706,60 @@ export async function sendRegistrationEmail(
               </div>
 
               ${teamMembersHtml}
+
+              ${requiresPayment && paymentResumeUrl && !receiptPdf ? `
+              <div
+                style="
+                  margin-top: 32px;
+                  border: 1px solid #ffcccc;
+                  background: #fff8f8;
+                  border-radius: 18px;
+                  padding: 24px 20px;
+                  text-align: center;
+                "
+              >
+                <div
+                  style="
+                    font-size: 11px;
+                    letter-spacing: 2px;
+                    text-transform: uppercase;
+                    color: #d32f2f;
+                    font-weight: 700;
+                    margin-bottom: 8px;
+                  "
+                >
+                  Payment Pending
+                </div>
+                <p
+                  style="
+                    margin: 0 0 18px;
+                    font-size: 13px;
+                    line-height: 1.6;
+                    color: #555555;
+                  "
+                >
+                  Click below to complete your payment with Razorpay and confirm your participation.
+                </p>
+                <a
+                  href="${escapeHtml(paymentResumeUrl)}"
+                  target="_blank"
+                  style="
+                    display: inline-block;
+                    background: #000000;
+                    color: #ffffff;
+                    text-decoration: none;
+                    font-size: 12px;
+                    font-weight: 700;
+                    letter-spacing: 1.5px;
+                    text-transform: uppercase;
+                    padding: 14px 30px;
+                    border-radius: 9999px;
+                  "
+                >
+                  COMPLETE PAYMENT
+                </a>
+              </div>
+              ` : ""}
 
               <!-- QR -->
 

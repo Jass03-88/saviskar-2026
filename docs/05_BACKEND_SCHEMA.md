@@ -173,6 +173,11 @@ Immutable audit trail for destructive actions.
 8. Preserves `participants` row.
 **Security:** `SECURITY DEFINER`.
 
+### 5.3 Stateless Payment Resume Tokens (Phase 2C)
+- **Zero DB Migration**: Implemented without creating a database token table, avoiding database clutter.
+- **HMAC Authentication**: Tokens are signed using `PAYMENT_RESUME_TOKEN_SECRET` with 24-hour expiration.
+- **Authoritative Database Lookups**: Database `payment_orders` and `payment_order_items` remain the sole source of truth for payment amounts, statuses, and ownership.
+
 ---
 
 ## 6. Migration Chain

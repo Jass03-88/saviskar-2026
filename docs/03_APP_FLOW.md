@@ -37,10 +37,16 @@
 - User completes payment (card, UPI, etc.).
 - Razorpay returns `{ razorpay_payment_id, razorpay_order_id, razorpay_signature }`.
 - Frontend calls `POST /api/payments/verify`.
-  - Backend verifies HMAC-SHA256 signature.
+  - Backend verifies HMAC-SHA256 signature and captured status.
   - Marks payment as `paid`.
   - Triggers Receipt PDF generation and Payment Confirmation Email.
 - Overlay closes, user sees success screen.
+
+### Step 5.1: Payment Resume via Email (Phase 2C)
+- If checkout is closed or pending, the Registration Confirmation / Payment Pending email contains a secure **[ COMPLETE PAYMENT ]** button.
+- Clicking the button opens `/payment/resume?token=<HMAC_SIGNED_TOKEN>`.
+- Server validates the 24-hour token, authenticates payer ownership, and loads event line items directly from database `payment_orders`.
+- User clicks "Complete Payment", opens Razorpay checkout, verifies payment server-side, and receives confirmation + PDF receipt.
 
 ---
 

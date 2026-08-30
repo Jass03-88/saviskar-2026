@@ -102,8 +102,10 @@ export async function GET(
       email,
       phone,
       participant_events(
+        id,
         event_id,
         payment_status,
+        payment_amount,
         events(name)
       )
     `
@@ -135,8 +137,10 @@ export async function GET(
   // ─── Format Events (Minimizing to only UI-required fields) ───
   const rawParticipantEvents =
     (data.participant_events as Array<{
+      id: string;
       event_id: string;
       payment_status: string | null;
+      payment_amount: number | null;
       events:
         | { name: string | null }
         | { name: string | null }[]
@@ -153,6 +157,7 @@ export async function GET(
       phone: data.phone,
     },
     events: rawParticipantEvents.map((event) => ({
+      participantEventId: event.id,
       eventId: event.event_id,
       eventName:
         (Array.isArray(event.events)
@@ -160,6 +165,7 @@ export async function GET(
           : event.events
         )?.name ?? "Unknown event",
       paymentStatus: event.payment_status,
+      paymentAmount: event.payment_amount,
     })),
   });
 }

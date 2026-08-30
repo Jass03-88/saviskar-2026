@@ -47,7 +47,9 @@ function safeCompare(a: string, b: string): boolean {
 }
 
 function getKeyId(): string {
-  const key = process.env.RAZORPAY_KEY_ID;
+  const key =
+    process.env.RAZORPAY_KEY_ID?.trim() ||
+    process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID?.trim();
   if (!key) {
     throw new Error(
       "RAZORPAY_KEY_ID is not set in environment variables."
@@ -57,7 +59,7 @@ function getKeyId(): string {
 }
 
 function getKeySecret(): string {
-  const secret = process.env.RAZORPAY_KEY_SECRET;
+  const secret = process.env.RAZORPAY_KEY_SECRET?.trim();
   if (!secret) {
     throw new Error(
       "RAZORPAY_KEY_SECRET is not set in environment variables."
@@ -67,7 +69,7 @@ function getKeySecret(): string {
 }
 
 function getWebhookSecret(): string {
-  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET?.trim();
   if (!secret) {
     throw new Error(
       "RAZORPAY_WEBHOOK_SECRET is not set in environment variables."

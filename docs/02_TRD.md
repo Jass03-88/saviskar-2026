@@ -352,10 +352,21 @@ function getPaymentGateway(gatewayName?: string): PaymentGateway
 
 ### 6.3 Razorpay Implementation
 
+- Key resolution precedence: `RAZORPAY_KEY_ID?.trim()` -> `NEXT_PUBLIC_RAZORPAY_KEY_ID?.trim()`.
+- Server-only secrets: `RAZORPAY_KEY_SECRET` (never exposed via `NEXT_PUBLIC_*`).
 - Direct REST API calls via `fetch` (no SDK).
 - Checkout overlay loaded via CDN: `https://checkout.razorpay.com/v1/checkout.js`.
-- Payment verification: HMAC-SHA256 of `{order_id}|{payment_id}` with API key secret.
+- Payment verification: HMAC-SHA256 of `{order_id}|{payment_id}` with API key secret using `crypto.timingSafeEqual`.
 - Webhook validation: HMAC-SHA256 of raw body with webhook secret.
+
+### 6.4 Secure Payment Resume Link (Phase 2C)
+
+- **Stateless HMAC-SHA256 Token**: Generated server-side using `PAYMENT_RESUME_TOKEN_SECRET` (with `SUPABASE_SECRET_KEY` fallback).
+- **Format**: `base64url(payload).base64url(signature)`.
+- **Payload**: `paymentOrderId`, `participantId`, `payerParticipantUuid`, `iat`, `exp`, `nonce`.
+- **Lifetime**: 24-hour expiration (`exp`), verified with `timingSafeEqual`.
+- **Server Verification**: `GET /api/payments/resume?token=...` cryptographically authenticates token, verifies `payment_orders.payer_participant_id === payerParticipantUuid`, checks `status === 'pending'`, and loads authoritative line items from `payment_order_items`.
+- **Zero DB Clutter**: Operates entirely stateless without creating token records in PostgreSQL.
 
 ---
 

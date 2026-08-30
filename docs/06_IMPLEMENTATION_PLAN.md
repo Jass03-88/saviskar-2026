@@ -27,15 +27,16 @@ The application is **feature-complete** for core event registration.
 
 Before launching the event to actual students, the following steps must be completed.
 
-### 3.1 Payment Gateway
-- [ ] Change `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in `.env.local` from Test credentials to Live credentials.
-- [ ] Update `NEXT_PUBLIC_RAZORPAY_KEY_ID` with the Live key ID.
+### 3.1 Payment Gateway & Security
+- [ ] Set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in production environment (preferred server-side keys).
+- [ ] Set `NEXT_PUBLIC_RAZORPAY_KEY_ID` with the Live key ID (for client overlay fallback).
+- [ ] Set `PAYMENT_RESUME_TOKEN_SECRET` with a high-entropy secret for stateless email payment resume tokens.
 - [ ] Configure the Razorpay Webhook in the Razorpay Dashboard (Events: `payment.captured`, `payment.failed`).
 - [ ] Set `RAZORPAY_WEBHOOK_SECRET` in the production environment.
 
 ### 3.2 Domain & Email
 - [ ] Finalize the production domain on Vercel.
-- [ ] Ensure `NEXT_PUBLIC_SITE_URL` in production is set to the final domain (e.g., `https://saviskar.com`).
+- [ ] Ensure `NEXT_PUBLIC_SITE_URL` in production is set to the final domain (e.g., `https://saviskar.com`) for email deep links.
 - [ ] Ensure `RESEND_FROM_EMAIL` is verified in the Resend dashboard (DNS records configured for the sending domain).
 
 ### 3.3 Supabase Configuration
