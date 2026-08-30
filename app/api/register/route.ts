@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendRegistrationEmail } from "@/lib/send-registration-email";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
@@ -1039,191 +1039,126 @@ export async function POST(
     );
   }
 
-  for (const result of results as any[]) {
-    if (
-      result.status !== "added"
-    ) {
-      continue;
-    }
+  after(async () => {
+    for (const result of results as any[]) {
+      if (result.status !== "added") {
+        continue;
+      }
 
-    /*
-     * Find the matching participant_events row
-     * to get the UUID (registrationId) and
-     * joined event metadata.
-     */
-    const peRow = peRows.find(
-      (row: any) =>
-        String(row.event_id) ===
-        String(result.event_id)
-    );
-
-    if (!peRow) {
-      console.error(
-        "Could not find participant_events row for email:",
-        result.event_id
-      );
-      continue;
-    }
-
-    const eventMeta =
-      peRow.events ?? {};
-
-    const isTeam =
-      eventMeta.registration_type ===
-      "team";
-
-    /*
-     * Match the original event payload to get
-     * team name and member details.
-     */
-    const matchedEvent =
-      events.find(
-        (e) =>
-          e.eventId ===
-          String(result.event_id)
+      /*
+       * Find the matching participant_events row
+       * to get the UUID (registrationId) and
+       * joined event metadata.
+       */
+      const peRow = peRows.find(
+        (row: any) => String(row.event_id) === String(result.event_id)
       );
 
-    try {
-      const teamRowsForEvent =
-        (Array.isArray(teamMemberRows)
+      if (!peRow) {
+        console.error(
+          "Could not find participant_events row for email:",
+          result.event_id
+        );
+        continue;
+      }
+
+      const eventMeta = peRow.events ?? {};
+      const isTeam = eventMeta.registration_type === "team";
+
+      /*
+       * Match the original event payload to get
+       * team name and member details.
+       */
+      const matchedEvent = events.find(
+        (e) => e.eventId === String(result.event_id)
+      );
+
+      try {
+        const teamRowsForEvent = (Array.isArray(teamMemberRows)
           ? (teamMemberRows as any[])
           : []
         ).filter(
-          (row: any) =>
-            String(row.participant_event_id) ===
-            String(peRow.id)
+          (row: any) => String(row.participant_event_id) === String(peRow.id)
         );
 
-      const mainParticipantId =
-        returnedParticipantId;
+        const mainParticipantId = returnedParticipantId;
 
-      const emailMembers =
-        isTeam
+        const emailMembers = isTeam
           ? teamRowsForEvent
-            .filter(
-              (row: any) =>
-                String(
-                  row.participant_id
-                ) !== String(
-                  participant?.id ?? ""
-                )
-            )
-            .map(
-              (row: any) => ({
-                participantId:
-                  String(
-                    row.participants?.participant_id ??
-                    ""
-                  ),
-                name:
-                  String(row.name ?? ""),
-                college:
-                  String(
-                    row.participants?.college ??
-                    ""
-                  ),
-                email:
-                  String(row.email ?? ""),
-                phone:
-                  String(row.phone ?? ""),
-                isTeamLeader:
-                  row.is_team_leader === true,
-              })
-            )
+              .filter(
+                (row: any) =>
+                  String(row.participant_id) !== String(participant?.id ?? "")
+              )
+              .map((row: any) => ({
+                participantId: String(row.participants?.participant_id ?? ""),
+                name: String(row.name ?? ""),
+                college: String(row.participants?.college ?? ""),
+                email: String(row.email ?? ""),
+                phone: String(row.phone ?? ""),
+                isTeamLeader: row.is_team_leader === true,
+              }))
           : [];
 
-      let paymentResumeUrl: string | null = null;
-      if (
-        eventMeta.payment_type === "paid" &&
-        paymentOrder?.id &&
-        participant?.id
-      ) {
-        try {
-          paymentResumeUrl = generatePaymentResumeUrl({
-            paymentOrderId: paymentOrder.id,
-            participantId: mainParticipantId,
-            payerParticipantUuid: participant.id,
-          });
-        } catch (tokenErr) {
-          console.error("Failed to generate payment resume URL:", tokenErr);
+        let paymentResumeUrl: string | null = null;
+        if (
+          eventMeta.payment_type === "paid" &&
+          paymentOrder?.id &&
+          participant?.id
+        ) {
+          try {
+            paymentResumeUrl = generatePaymentResumeUrl({
+              paymentOrderId: paymentOrder.id,
+              participantId: mainParticipantId,
+              payerParticipantUuid: participant.id,
+            });
+          } catch (tokenErr) {
+            console.error("Failed to generate payment resume URL:", tokenErr);
+          }
         }
-      }
 
-      const emailResult =
-        await sendRegistrationEmail({
-          registrationId:
-            String(peRow.id),
-
-          participantId:
-            mainParticipantId,
-
-          eventName:
-            result.event_name ||
-            eventMeta.name ||
-            "Event",
-
-          eventCategory:
-            eventMeta.category || null,
-
-          name:
-            name || "Participant",
-
-          college:
-            college || "",
-            
-          requiresPayment:
-            eventMeta.payment_type === "paid",
-
+        const emailResult = await sendRegistrationEmail({
+          registrationId: String(peRow.id),
+          participantId: mainParticipantId,
+          eventName: result.event_name || eventMeta.name || "Event",
+          eventCategory: eventMeta.category || null,
+          name: name || "Participant",
+          college: college || "",
+          requiresPayment: eventMeta.payment_type === "paid",
           paymentResumeUrl,
-
-          email:
-            email || "",
-
-          phone:
-            phone || "",
-
-          team: isTeam
-            ? (matchedEvent?.team ||
-              peRow.team_name ||
-              "")
-            : null,
-
+          email: email || "",
+          phone: phone || "",
+          team: isTeam ? (matchedEvent?.team || peRow.team_name || "") : null,
           isTeamEvent: isTeam,
-
-          isTeamHead:
-            isTeam
-              ? matchedEvent?.isTeamHead === true
-              : false,
-
-          members:
-            emailMembers,
+          isTeamHead: isTeam ? matchedEvent?.isTeamHead === true : false,
+          members: emailMembers,
         });
 
-      console.log("[REGISTER] sendRegistrationEmail completed with result:", emailResult);
+        console.log("[REGISTER] sendRegistrationEmail completed with result:", emailResult);
 
-      if (!emailResult.success) {
+        if (!emailResult.success) {
+          console.error(
+            "[REGISTER EMAIL ERROR] Confirmation email failed for event:",
+            result.event_id,
+            emailResult.error
+          );
+        } else {
+          console.log(
+            "Confirmation email sent for event:",
+            result.event_name,
+            "to",
+            emailResult.emailsSent,
+            "recipient(s)"
+          );
+        }
+      } catch (emailError) {
         console.error(
-          "[REGISTER EMAIL ERROR] Confirmation email failed for event:",
+          "Confirmation email exception for event:",
           result.event_id,
-          emailResult.error
-        );
-      } else {
-        console.log(
-          "Confirmation email sent for event:",
-          result.event_name,
-          "to",
-          emailResult.emailsSent,
-          "recipient(s)"
+          emailError
         );
       }
-    } catch (emailError) {
-      console.error(
-        "Confirmation email exception for event:",
-        result.event_id,
-        emailError
-      );
     }
-  }
+  });
 
   // =====================================================
   // 16. RESPONSE

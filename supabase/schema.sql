@@ -479,7 +479,8 @@ begin
     --
     -- Priority:
     --   participant ID
-    --   then email
+
+    --   then email
     -- =====================================================
 
     if nullif(trim(p_participant_id), '') is not null then
@@ -611,6 +612,7 @@ begin
     for v_event in
         select value
         from jsonb_array_elements(p_events)
+        order by (value->>'event_id')::uuid
     loop
 
         -- -------------------------------------------------
