@@ -209,7 +209,7 @@ export default function AdminManagementPage() {
   async function removeAdmin(
     admin: AdminRecord
   ) {
-    if (admin.role !== "admin") {
+    if (admin.role === "master" && !isSuperMaster) {
       return;
     }
 

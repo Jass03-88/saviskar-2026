@@ -41,8 +41,14 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
 
+  const isInviteAcceptPath = pathname === "/admin/accept-invite";
+  const isInvitePath = pathname === "/admin/invite";
+  const isResetPath = pathname === "/admin/reset-password";
+  const isMfaPath = pathname === "/admin/login/mfa";
+  const isExemptPath = isLoginPath || isInvitePath || isResetPath || isMfaPath || isInviteAcceptPath;
+
   if (!user) {
-    if (!isLoginPath) {
+    if (!isExemptPath) {
       const url = request.nextUrl.clone();
       url.pathname = "/admin/login";
       url.search = "";
@@ -63,7 +69,7 @@ export async function updateSession(request: NextRequest) {
   if (!authorized) {
     await supabase.auth.signOut();
 
-    if (!isLoginPath) {
+    if (!isExemptPath) {
       const url = request.nextUrl.clone();
       url.pathname = "/admin/login";
       url.search = "";
@@ -79,11 +85,6 @@ export async function updateSession(request: NextRequest) {
 
     return response;
   }
-
-  const isInvitePath = pathname === "/admin/invite";
-  const isResetPath = pathname === "/admin/reset-password";
-  const isMfaPath = pathname === "/admin/login/mfa";
-  const isExemptPath = isLoginPath || isInvitePath || isResetPath || isMfaPath;
 
   if (adminRow?.role === "master" && !isExemptPath) {
     const { data: mfaData, error: mfaError } =

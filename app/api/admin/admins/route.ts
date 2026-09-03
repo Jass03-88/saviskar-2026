@@ -394,7 +394,7 @@ export async function POST(request: Request) {
       new URL(request.url).origin;
 
     const redirectTo =
-      `${siteUrl}/admin/reset-password`;
+      `${siteUrl}/admin/accept-invite`;
 
     console.log(
       "========================================"
@@ -495,7 +495,7 @@ export async function POST(request: Request) {
     new URL(request.url).origin;
 
   const redirectTo =
-    `${siteUrl}/admin/reset-password`;
+    `${siteUrl}/admin/accept-invite`;
 
   console.log(
     "========================================"

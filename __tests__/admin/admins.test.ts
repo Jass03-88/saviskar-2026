@@ -297,5 +297,33 @@ describe("Admin Management API Authorization & Rules", () => {
       expect(data.error).toBe("Administrator already has this role.");
       expect(mockBuilder.update).not.toHaveBeenCalled(); // Ensure no DB update was made
     });
+
+    it("new-user invitation redirects to /admin/accept-invite", async () => {
+      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res = await POST(createMockRequest("POST", { email: "new-user@example.com", role: "admin" }));
+      expect(res.status).toBe(201);
+      
+      // Assert the invitation API was called with the correct redirectTo
+      expect(mockInviteUserByEmail).toHaveBeenCalledWith("new-user@example.com", {
+        data: { saviskar_role: "admin" },
+        redirectTo: "http://localhost/admin/accept-invite",
+      });
+    });
+
+    it("existing-user re-invitation redirects to /admin/accept-invite", async () => {
+      mockListUsers.mockResolvedValueOnce({ data: { users: [{ id: "existing-user" }] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res = await POST(createMockRequest("POST", { email: "existing-user@example.com", role: "admin" }));
+      expect(res.status).toBe(201);
+      
+      // Assert the re-invitation API was called with the correct redirectTo
+      expect(mockInviteUserByEmail).toHaveBeenCalledWith("existing-user@example.com", {
+        data: { saviskar_role: "admin" },
+        redirectTo: "http://localhost/admin/accept-invite",
+      });
+    });
   });
 });
