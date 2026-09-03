@@ -16,21 +16,7 @@ export function validatePassword(password: string, confirmPassword: string) {
   return "";
 }
 
-export function parseInviteHash(hash: string) {
-  if (!hash) return { error: "missing_hash" };
-  const cleanHash = hash.startsWith("#") ? hash.substring(1) : hash;
-  if (!cleanHash) return { error: "empty_hash" };
-  
-  const params = new URLSearchParams(cleanHash);
-  const accessToken = params.get("access_token");
-  const refreshToken = params.get("refresh_token");
-  
-  if (!accessToken || !refreshToken) {
-    return { error: "invalid_tokens" };
-  }
-  
-  return { accessToken, refreshToken };
-}
+import { parseAuthHash } from "@/lib/utils/auth";
 
 export function getMfaAction(factors: { all: any[], totp: any[] }) {
   const verifiedTotp = factors.totp.find((f) => f.status === "verified");
@@ -78,7 +64,7 @@ export default function AcceptInvitePage() {
       if (!mounted) return;
 
       const hash = typeof window !== "undefined" ? window.location.hash : "";
-      const parsed = parseInviteHash(hash);
+      const parsed = parseAuthHash(hash);
       
       if (parsed.error === "missing_hash") {
         const { data: { session } } = await supabase.auth.getSession();

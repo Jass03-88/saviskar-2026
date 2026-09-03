@@ -6,14 +6,9 @@ import {
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import {
-  CheckCircle2,
-  Eye,
-  EyeOff,
-  Lock,
-  ShieldCheck,
-} from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { ShieldCheck, Lock, Eye, EyeOff, CheckCircle2 } from "lucide-react";
+import { createBrowserClient } from "@supabase/ssr";
+import { parseAuthHash } from "@/lib/utils/auth";
 
 type PageState =
   | "loading"
@@ -26,7 +21,17 @@ export default function ResetPasswordPage() {
   const router = useRouter();
 
   const [supabase] = useState(() =>
-    createClient()
+    createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+      {
+        auth: {
+          detectSessionInUrl: false,
+          persistSession: true,
+          autoRefreshToken: true,
+        },
+      }
+    )
   );
 
   const [state, setState] =
@@ -68,6 +73,45 @@ export default function ResetPasswordPage() {
 
     async function initialize() {
       try {
+        const hash = typeof window !== "undefined" ? window.location.hash : "";
+        const parsed = parseAuthHash(hash);
+
+        if (parsed.error && parsed.error !== "missing_hash" && parsed.error !== "empty_hash") {
+          if (!mounted) return;
+          setError("Invalid or malformed password reset link.");
+          setState("error");
+          return;
+        }
+
+        if (parsed.accessToken && parsed.refreshToken) {
+          let setSessionError: { message?: string } | null = null;
+          try {
+            const res = await supabase.auth.setSession({
+              access_token: parsed.accessToken,
+              refresh_token: parsed.refreshToken,
+            });
+            setSessionError = res.error;
+          } finally {
+            if (typeof window !== "undefined") {
+              const cleanUrl =
+                window.location.pathname + window.location.search;
+              window.history.replaceState(null, "", cleanUrl);
+            }
+          }
+
+          if (!mounted) return;
+
+          if (setSessionError) {
+            console.error(
+              "SET SESSION ERROR:",
+              setSessionError.message ?? "Authentication failed"
+            );
+            setError("This link is invalid or has expired. Please request a new link.");
+            setState("error");
+            return;
+          }
+        }
+
         const {
           data: { session },
           error: sessionError,

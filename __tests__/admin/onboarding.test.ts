@@ -1,55 +1,55 @@
 import { describe, it, expect } from "vitest";
 import { 
   validatePassword, 
-  parseInviteHash, 
-  getMfaAction, 
-  validateMfaCodeInput 
+  getMfaAction,
+  validateMfaCodeInput
 } from "@/app/admin/accept-invite/page";
+import { parseAuthHash } from "@/lib/utils/auth";
 
 describe("Admin Invitation Onboarding Unit Tests", () => {
   describe("Password Validation (validatePassword)", () => {
     it("password mismatch is rejected", () => {
-      expect(validatePassword("Password123", "Password124")).toBe("Passwords do not match.");
+      expect(validatePassword("SecurePass1!", "SecurePass2!")).toBe("Passwords do not match.");
     });
     
     it("minimum length is enforced", () => {
-      expect(validatePassword("Pass1", "Pass1")).toBe("Password must be at least 8 characters.");
+      expect(validatePassword("Short1!", "Short1!")).toBe("Password must be at least 8 characters.");
     });
-
+    
     it("uppercase letter is required", () => {
-      expect(validatePassword("password123", "password123")).toBe("Password must contain at least one uppercase letter.");
+      expect(validatePassword("lowercase1!", "lowercase1!")).toBe("Password must contain at least one uppercase letter.");
     });
-
+    
     it("lowercase letter is required", () => {
-      expect(validatePassword("PASSWORD123", "PASSWORD123")).toBe("Password must contain at least one lowercase letter.");
+      expect(validatePassword("UPPERCASE1!", "UPPERCASE1!")).toBe("Password must contain at least one lowercase letter.");
     });
-
+    
     it("number is required", () => {
-      expect(validatePassword("Password", "Password")).toBe("Password must contain at least one number.");
+      expect(validatePassword("NoNumbersHere!", "NoNumbersHere!")).toBe("Password must contain at least one number.");
     });
-
+    
     it("valid password setup succeeds", () => {
-      expect(validatePassword("ValidPass123", "ValidPass123")).toBe("");
+      expect(validatePassword("ValidPass123!", "ValidPass123!")).toBe("");
     });
   });
 
-  describe("Invite Hash Parsing (parseInviteHash)", () => {
+  describe("Auth Hash Parsing (parseAuthHash)", () => {
     it("returns error for missing hash", () => {
-      expect(parseInviteHash("")).toEqual({ error: "missing_hash" });
+      expect(parseAuthHash("")).toEqual({ error: "missing_hash" });
     });
-
+    
     it("returns error for empty hash after stripping #", () => {
-      expect(parseInviteHash("#")).toEqual({ error: "empty_hash" });
+      expect(parseAuthHash("#")).toEqual({ error: "empty_hash" });
     });
-
+    
     it("returns error for missing access_token or refresh_token", () => {
-      expect(parseInviteHash("#access_token=123")).toEqual({ error: "invalid_tokens" });
-      expect(parseInviteHash("#refresh_token=456")).toEqual({ error: "invalid_tokens" });
-      expect(parseInviteHash("#type=invite")).toEqual({ error: "invalid_tokens" });
+      expect(parseAuthHash("#access_token=123")).toEqual({ error: "invalid_tokens" });
+      expect(parseAuthHash("#refresh_token=456")).toEqual({ error: "invalid_tokens" });
+      expect(parseAuthHash("#type=invite")).toEqual({ error: "invalid_tokens" });
     });
-
+    
     it("successfully parses valid access_token and refresh_token", () => {
-      const result = parseInviteHash("#access_token=tokenA&refresh_token=tokenB&type=invite");
+      const result = parseAuthHash("#access_token=tokenA&refresh_token=tokenB&type=invite");
       expect(result).toEqual({ accessToken: "tokenA", refreshToken: "tokenB" });
     });
   });
@@ -113,5 +113,15 @@ describe("Admin Onboarding Integration & E2E Requirements", () => {
     it.todo("requires API/E2E: proxy allows /admin/accept-invite to load unauthenticated to parse hash");
     it.todo("requires API/E2E: authenticated user without public.admins mapping is signed out by proxy");
     it.todo("requires API/E2E: /admin/accept-invite cannot bypass MFA for normal admin login");
+  });
+});
+
+describe("Admin Password Reset Integration & E2E Requirements", () => {
+  describe("Client-Side Browser Behaviors", () => {
+    it.todo("requires E2E: manual setSession succeeds and clears URL hash for valid recovery link");
+    it.todo("requires E2E: manual setSession failure gracefully shows invalid-link state");
+    it.todo("requires E2E: missing or invalid hash parameters are rejected safely without calling setSession");
+    it.todo("requires E2E: manual URL hash cleanup (replaceState) executes regardless of setSession success or failure");
+    it.todo("requires E2E: detectSessionInUrl is disabled to prevent Supabase double-processing race conditions");
   });
 });
