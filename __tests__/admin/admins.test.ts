@@ -45,6 +45,7 @@ const mockGetUserById = vi.fn().mockResolvedValue({ data: { user: { email: "test
 const mockListUsers = vi.fn().mockResolvedValue({ data: { users: [] }, error: null });
 const mockInviteUserByEmail = vi.fn().mockResolvedValue({ data: { user: { id: "new" } }, error: null });
 const mockDeleteUser = vi.fn();
+const mockResetPasswordForEmail = vi.fn().mockResolvedValue({ data: {}, error: null });
 
 // Mock Supabase JS client
 vi.mock("@supabase/supabase-js", () => {
@@ -53,6 +54,7 @@ vi.mock("@supabase/supabase-js", () => {
       return {
         from: mockFrom,
         auth: {
+          resetPasswordForEmail: mockResetPasswordForEmail,
           admin: {
             getUserById: mockGetUserById,
             listUsers: mockListUsers,
@@ -312,17 +314,16 @@ describe("Admin Management API Authorization & Rules", () => {
       });
     });
 
-    it("existing-user re-invitation redirects to /admin/accept-invite", async () => {
-      mockListUsers.mockResolvedValueOnce({ data: { users: [{ id: "existing-user" }] }, error: null });
-      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+    it("existing-user re-invitation sends password reset and redirects to /admin/reset-password", async () => {
+      mockListUsers.mockResolvedValueOnce({ data: { users: [{ id: "existing-user", email: "existing-user@example.com" }] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null }); // insert admin
 
       const res = await POST(createMockRequest("POST", { email: "existing-user@example.com", role: "admin" }));
       expect(res.status).toBe(201);
       
-      // Assert the re-invitation API was called with the correct redirectTo
-      expect(mockInviteUserByEmail).toHaveBeenCalledWith("existing-user@example.com", {
-        data: { saviskar_role: "admin" },
-        redirectTo: "http://localhost/admin/accept-invite",
+      // Assert the recovery API was called with the correct redirectTo
+      expect(mockResetPasswordForEmail).toHaveBeenCalledWith("existing-user@example.com", {
+        redirectTo: "http://localhost/admin/reset-password",
       });
     });
   });

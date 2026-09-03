@@ -394,7 +394,7 @@ export async function POST(request: Request) {
       new URL(request.url).origin;
 
     const redirectTo =
-      `${siteUrl}/admin/accept-invite`;
+      `${siteUrl}/admin/reset-password`;
 
     console.log(
       "========================================"
