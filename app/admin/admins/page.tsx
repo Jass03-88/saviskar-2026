@@ -57,6 +57,9 @@ export default function AdminManagementPage() {
   const [error, setError] =
     useState("");
 
+  const [isSuperMaster, setIsSuperMaster] = useState(false);
+  const [changingRoleId, setChangingRoleId] = useState<string | null>(null);
+
   const loadAdmins = useCallback(
     async (refresh = false) => {
       if (refresh) {
@@ -91,6 +94,7 @@ export default function AdminManagementPage() {
         const payload =
           (await response.json()) as {
             admins?: AdminRecord[];
+            isSuperMaster?: boolean;
             error?: string;
           };
 
@@ -104,6 +108,7 @@ export default function AdminManagementPage() {
         setAdmins(
           payload.admins ?? []
         );
+        setIsSuperMaster(payload.isSuperMaster ?? false);
       } catch (loadError) {
         console.error(
           "ADMIN MANAGEMENT LOAD ERROR:",
@@ -313,6 +318,41 @@ export default function AdminManagementPage() {
     }
   }
 
+  async function changeRole(admin: AdminRecord, newRole: "master" | "admin") {
+    const actionStr = newRole === "master" ? "Promote" : "Demote";
+    const confirmed = window.confirm(
+      `${actionStr} ${admin.email ?? "this administrator"} ${newRole === "master" ? "to Master Admin" : "to Normal Admin"}?`
+    );
+
+    if (!confirmed) return;
+
+    setChangingRoleId(admin.user_id);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/admin/admins", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: admin.user_id, newRole }),
+      });
+
+      const payload = (await response.json()) as { message?: string; error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? `Could not ${actionStr.toLowerCase()} administrator.`);
+      }
+
+      setMessage(payload.message ?? `Administrator ${actionStr.toLowerCase()}d successfully.`);
+      await loadAdmins(true);
+    } catch (err) {
+      console.error(`ADMIN ${actionStr.toUpperCase()} ERROR:`, err);
+      setError(err instanceof Error ? err.message : `Could not ${actionStr.toLowerCase()} administrator.`);
+    } finally {
+      setChangingRoleId(null);
+    }
+  }
+
   const masters =
     admins.filter(
       (admin) =>
@@ -389,90 +429,98 @@ export default function AdminManagementPage() {
           </div>
         )}
 
-        <div className="mb-8 rounded-[28px] bg-black p-7 text-white md:p-9">
+        {isSuperMaster ? (
+          <div className="mb-8 rounded-[28px] bg-black p-7 text-white md:p-9">
 
-          <div className="flex items-start gap-4">
+            <div className="flex items-start gap-4">
 
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10">
-              <UserPlus size={19} />
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10">
+                <UserPlus size={19} />
+              </div>
+
+              <div>
+                <h2 className="text-xl font-semibold">
+                  Add Administrator
+                </h2>
+
+                <p className="mt-2 text-sm text-white/50">
+                  A new user will receive an
+                  invitation email. Existing
+                  Supabase users can also be
+                  granted Saviskar admin access.
+                </p>
+              </div>
+
             </div>
 
-            <div>
-              <h2 className="text-xl font-semibold">
-                Add Administrator
-              </h2>
+            <form
+              onSubmit={addAdmin}
+              className="mt-7 grid gap-4 md:grid-cols-[1fr_220px_auto]"
+            >
 
-              <p className="mt-2 text-sm text-white/50">
-                A new user will receive an
-                invitation email. Existing
-                Supabase users can also be
-                granted Saviskar admin access.
-              </p>
-            </div>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) =>
+                  setEmail(
+                    event.target.value
+                  )
+                }
+                placeholder="admin@example.com"
+                autoComplete="off"
+                className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-white/30 focus:border-white/30"
+              />
 
+              <select
+                value={role}
+                onChange={(event) =>
+                  setRole(
+                    event.target.value as
+                      | "admin"
+                      | "master"
+                  )
+                }
+                className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white outline-none focus:border-white/30"
+              >
+                <option
+                  value="admin"
+                  className="text-black"
+                >
+                  Normal Admin
+                </option>
+
+                <option
+                  value="master"
+                  className="text-black"
+                >
+                  Master Admin
+                </option>
+              </select>
+
+              <button
+                type="submit"
+                disabled={
+                  submitting ||
+                  !email.trim()
+                }
+                className="flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-medium text-black transition hover:bg-white/90 disabled:opacity-40"
+              >
+                <UserPlus size={15} />
+
+                {submitting
+                  ? "Adding..."
+                  : "Add Admin"}
+              </button>
+
+            </form>
           </div>
-
-          <form
-            onSubmit={addAdmin}
-            className="mt-7 grid gap-4 md:grid-cols-[1fr_220px_auto]"
-          >
-
-            <input
-              type="email"
-              value={email}
-              onChange={(event) =>
-                setEmail(
-                  event.target.value
-                )
-              }
-              placeholder="admin@example.com"
-              autoComplete="off"
-              className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-white/30 focus:border-white/30"
-            />
-
-            <select
-              value={role}
-              onChange={(event) =>
-                setRole(
-                  event.target.value as
-                    | "admin"
-                    | "master"
-                )
-              }
-              className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white outline-none focus:border-white/30"
-            >
-              <option
-                value="admin"
-                className="text-black"
-              >
-                Normal Admin
-              </option>
-
-              <option
-                value="master"
-                className="text-black"
-              >
-                Master Admin
-              </option>
-            </select>
-
-            <button
-              type="submit"
-              disabled={
-                submitting ||
-                !email.trim()
-              }
-              className="flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-medium text-black transition hover:bg-white/90 disabled:opacity-40"
-            >
-              <UserPlus size={15} />
-
-              {submitting
-                ? "Adding..."
-                : "Add Admin"}
-            </button>
-
-          </form>
-        </div>
+        ) : (
+          <div className="mb-8 rounded-[28px] border border-black/10 bg-white p-7 text-black md:p-9">
+            <p className="text-sm">
+              Administrator role management is restricted to the Primary Master Admin.
+            </p>
+          </div>
+        )}
 
         <section className="mb-8">
 
@@ -509,6 +557,11 @@ export default function AdminManagementPage() {
                       key={admin.user_id}
                       admin={admin}
                       master
+                      isSuperMaster={isSuperMaster}
+                      onRemove={() => removeAdmin(admin)}
+                      onRoleChange={(newRole) => changeRole(admin, newRole)}
+                      removing={removingId === admin.user_id}
+                      changingRole={changingRoleId === admin.user_id}
                     />
                   )
                 )}
@@ -564,15 +617,18 @@ export default function AdminManagementPage() {
                     <AdminRow
                       key={admin.user_id}
                       admin={admin}
+                      isSuperMaster={isSuperMaster}
                       onRemove={() =>
                         void removeAdmin(
                           admin
                         )
                       }
+                      onRoleChange={(newRole) => changeRole(admin, newRole)}
                       removing={
                         removingId ===
                         admin.user_id
                       }
+                      changingRole={changingRoleId === admin.user_id}
                     />
                   )
                 )}
@@ -592,13 +648,21 @@ function AdminRow({
   admin,
   master = false,
   onRemove,
+  onRoleChange,
   removing = false,
+  changingRole = false,
+  isSuperMaster = false,
 }: {
   admin: AdminRecord;
   master?: boolean;
   onRemove?: () => void;
+  onRoleChange?: (newRole: "master" | "admin") => void;
   removing?: boolean;
+  changingRole?: boolean;
+  isSuperMaster?: boolean;
 }) {
+  const isPrimary = admin.email?.toLowerCase().trim() === "jashan082006@gmail.com";
+
   return (
     <div className="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between text-black">
 
@@ -624,9 +688,7 @@ function AdminRow({
             </p>
 
             <span className="rounded-full bg-black/[0.05] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.15em] text-black/40">
-              {master
-                ? "Master"
-                : "Normal"}
+              {isPrimary ? "Primary Master Admin" : master ? "Master" : "Normal"}
             </span>
 
           </div>
@@ -653,31 +715,72 @@ function AdminRow({
               </span>
             )}
 
+            {isPrimary && (
+              <span className="text-black/60 font-medium">
+                [Protected]
+              </span>
+            )}
+
           </div>
 
         </div>
 
       </div>
 
-      {master ? (
-        <div className="flex items-center gap-2 text-xs text-green-700">
-          <ShieldCheck size={15} />
-          MFA required
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={removing}
-          className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-        >
-          <Trash2 size={14} />
-
-          {removing
-            ? "Removing..."
-            : "Remove access"}
-        </button>
-      )}
+      <div className="flex items-center gap-2">
+        {isPrimary ? (
+          <div className="text-xs text-black/40">Primary administrator</div>
+        ) : isSuperMaster ? (
+          <>
+            {master ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onRoleChange?.("admin")}
+                  disabled={changingRole || removing}
+                  className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
+                >
+                  {changingRole ? "Changing..." : "Change to Normal"}
+                </button>
+                <button
+                  type="button"
+                  onClick={onRemove}
+                  disabled={removing || changingRole}
+                  className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  {removing ? "Removing..." : "Remove Master Access"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onRoleChange?.("master")}
+                  disabled={changingRole || removing}
+                  className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
+                >
+                  {changingRole ? "Changing..." : "Make Master"}
+                </button>
+                <button
+                  type="button"
+                  onClick={onRemove}
+                  disabled={removing || changingRole}
+                  className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  {removing ? "Removing..." : "Remove access"}
+                </button>
+              </>
+            )}
+          </>
+        ) : master ? (
+          <div className="flex items-center gap-2 text-xs text-green-700">
+            <ShieldCheck size={15} />
+            MFA required
+          </div>
+        ) : null}
+      </div>
 
     </div>
   );

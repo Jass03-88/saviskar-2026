@@ -1,10 +1,30 @@
 import { createClient as createSupabaseAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { requireMasterAdmin } from "@/lib/supabase/server";
+import { requireMasterAdmin, requireSuperMasterAdmin } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 type AdminRole = "master" | "admin";
+
+async function logAudit(
+  adminClient: any,
+  adminId: string,
+  actionType: string,
+  targetId: string,
+  details: any
+) {
+  try {
+    await adminClient.from("admin_audit_logs").insert({
+      admin_id: adminId,
+      action_type: actionType,
+      target_id: targetId,
+      details,
+    });
+  } catch (err) {
+    console.error("Audit log failed:", err);
+  }
+}
+
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -122,6 +142,7 @@ export async function GET() {
   return NextResponse.json(
     {
       admins: result,
+      isSuperMaster: auth.user?.email?.toLowerCase().trim() === "jashan082006@gmail.com",
     },
     {
       headers: {
@@ -150,7 +171,7 @@ export async function GET() {
 ========================================================= */
 
 export async function POST(request: Request) {
-  const auth = await requireMasterAdmin();
+  const auth = await requireSuperMasterAdmin();
 
   if (auth.error) {
     return NextResponse.json(
@@ -433,6 +454,16 @@ export async function POST(request: Request) {
       );
     }
 
+    if (auth.user) {
+      await logAudit(
+        adminClient,
+        auth.user.id,
+        "ADD_ADMIN",
+        existingUser.id,
+        { email, role, type: "existing_user" }
+      );
+    }
+
     return NextResponse.json(
       {
         success: true,
@@ -554,6 +585,16 @@ export async function POST(request: Request) {
     );
   }
 
+  if (auth.user) {
+    await logAudit(
+      adminClient,
+      auth.user.id,
+      "INVITE_ADMIN",
+      inviteData.user.id,
+      { email, role, type: "new_user" }
+    );
+  }
+
   return NextResponse.json(
     {
       success: true,
@@ -585,7 +626,7 @@ export async function POST(request: Request) {
 ========================================================= */
 
 export async function DELETE(request: Request) {
-  const auth = await requireMasterAdmin();
+  const auth = await requireSuperMasterAdmin();
 
   if (auth.error) {
     return NextResponse.json(
@@ -664,7 +705,7 @@ export async function DELETE(request: Request) {
     );
   }
 
-  if (targetAdmin.role === "master") {
+  if (targetAdmin.role === "master" && auth.user?.email?.toLowerCase().trim() !== "jashan082006@gmail.com") {
     return NextResponse.json(
       {
         error:
@@ -695,9 +736,99 @@ export async function DELETE(request: Request) {
     );
   }
 
+  if (auth.user) {
+    await logAudit(
+      adminClient,
+      auth.user.id,
+      targetAdmin.role === "master" ? "REMOVE_MASTER_ADMIN" : "REMOVE_ADMIN",
+      userId,
+      { previous_role: targetAdmin.role }
+    );
+  }
+
   return NextResponse.json({
     success: true,
     message:
-      "Normal Admin access has been removed. The Auth account remains available for future re-invitation.",
+      "Admin access has been removed. The Auth account remains available for future re-invitation.",
+  });
+}
+
+/* =========================================================
+   PATCH — Promote or demote administrator
+   SUPER MASTER ONLY
+========================================================= */
+
+export async function PATCH(request: Request) {
+  const auth = await requireSuperMasterAdmin();
+
+  if (auth.error) {
+    return NextResponse.json(
+      {
+        error: auth.error === "MFA_REQUIRED" ? "Master Admin MFA verification required." : auth.error,
+      },
+      { status: auth.status }
+    );
+  }
+
+  const adminClient = getAdminClient();
+  if (!adminClient) {
+    return NextResponse.json({ error: "Admin management is not configured." }, { status: 500 });
+  }
+
+  let body: { userId?: unknown; newRole?: unknown };
+  try {
+    body = (await request.json()) as { userId?: unknown; newRole?: unknown };
+  } catch {
+    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
+  }
+
+  const userId = typeof body.userId === "string" ? body.userId : "";
+  const newRole = body.newRole === "master" ? "master" : "admin";
+
+  if (!userId) {
+    return NextResponse.json({ error: "User ID is required." }, { status: 400 });
+  }
+
+  if (userId === auth.user?.id) {
+    return NextResponse.json({ error: "You cannot change your own role." }, { status: 400 });
+  }
+
+  const { data: targetAdmin, error: targetError } = await adminClient
+    .from("admins")
+    .select("user_id, role")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (targetError || !targetAdmin) {
+    return NextResponse.json({ error: "Administrator not found." }, { status: 404 });
+  }
+
+  if (targetAdmin.role === newRole) {
+    return NextResponse.json({ error: "Administrator already has this role." }, { status: 400 });
+  }
+
+  const { error: updateError } = await adminClient
+    .from("admins")
+    .update({ role: newRole })
+    .eq("user_id", userId);
+
+  if (updateError) {
+    console.error("Admin role update failed:", updateError);
+    return NextResponse.json({ error: "Could not update the administrator role." }, { status: 500 });
+  }
+
+  if (auth.user) {
+    await logAudit(
+      adminClient,
+      auth.user.id,
+      newRole === "master" ? "PROMOTE_ADMIN" : "DEMOTE_ADMIN",
+      userId,
+      { previous_role: targetAdmin.role, new_role: newRole }
+    );
+  }
+
+  return NextResponse.json({
+    success: true,
+    message: newRole === "master" ? "Administrator promoted to Master Admin." : "Master Admin demoted successfully.",
   });
 }

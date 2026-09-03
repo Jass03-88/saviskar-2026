@@ -124,3 +124,27 @@ export async function requireMasterAdmin() {
 
   return auth;
 }
+
+/**
+ * Require the Super Master Admin specifically.
+ *
+ * Exclusively jashan082006@gmail.com.
+ * Used for role management.
+ */
+export async function requireSuperMasterAdmin() {
+  const auth = await requireMasterAdmin();
+
+  if (auth.error) {
+    return auth;
+  }
+
+  if (auth.user?.email?.toLowerCase().trim() !== "jashan082006@gmail.com") {
+    return {
+      ...auth,
+      error: "Super Master Admin access required" as const,
+      status: 403,
+    };
+  }
+
+  return auth;
+}
