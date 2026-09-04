@@ -1,10 +1,50 @@
 import { createClient as createSupabaseAdminClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { requireMasterAdmin, requireSuperMasterAdmin } from "@/lib/supabase/server";
+import {
+  requireMasterAdmin,
+  isPrimaryMaster,
+} from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 type AdminRole = "master" | "admin";
+
+function getIpFromRequest(request: Request): string {
+  try {
+    const forwarded = request.headers?.get?.("x-forwarded-for");
+    if (forwarded) {
+      const first = forwarded.split(",")[0]?.trim();
+      if (first) return first;
+    }
+    const realIp = request.headers?.get?.("x-real-ip");
+    if (realIp?.trim()) return realIp.trim();
+  } catch {
+    // ignore
+  }
+  return "127.0.0.1";
+}
+
+async function isTargetPrimaryMaster(
+  adminClient: any,
+  targetUserId: string
+): Promise<boolean> {
+  const configuredUserId = process.env.PRIMARY_ADMIN_USER_ID?.trim();
+  if (configuredUserId) {
+    return targetUserId === configuredUserId;
+  }
+
+  try {
+    const { data: userData, error: userError } = await adminClient.auth.admin.getUserById(targetUserId);
+    if (userError || !userData?.user) {
+      return false;
+    }
+    const configuredEmail = (process.env.PRIMARY_ADMIN_EMAIL?.trim() || "jashan082006@gmail.com").toLowerCase();
+    return userData.user.email?.toLowerCase().trim() === configuredEmail;
+  } catch {
+    return false;
+  }
+}
 
 async function logAudit(
   adminClient: any,
@@ -25,7 +65,6 @@ async function logAudit(
   }
 }
 
-
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const secretKey = process.env.SUPABASE_SECRET_KEY;
@@ -45,7 +84,7 @@ function getAdminClient() {
 
 /* =========================================================
    GET — List all admins
-   MASTER ONLY
+   MASTER ONLY (Primary Master & Other Masters)
 ========================================================= */
 
 export async function GET() {
@@ -108,7 +147,7 @@ export async function GET() {
   if (userIds.length > 0) {
     const userLookups = await Promise.all(
       userIds.map((id) =>
-        adminClient.auth.admin.getUserById(id).then((res) => ({
+        adminClient.auth.admin.getUserById(id).then((res: any) => ({
           id,
           user: res.data?.user || null,
         }))
@@ -126,23 +165,37 @@ export async function GET() {
     }
   }
 
-  const result = (admins ?? []).map((admin) => ({
-    user_id: admin.user_id,
-    role: (admin.role ?? "admin") as AdminRole,
-    created_at: admin.created_at,
-    email:
-      users.get(admin.user_id)?.email ?? null,
-    auth_created_at:
-      users.get(admin.user_id)?.created_at ?? null,
-    last_sign_in_at:
-      users.get(admin.user_id)?.last_sign_in_at ??
-      null,
-  }));
+  const primary = isPrimaryMaster(auth.user);
+  const primaryEmail = (process.env.PRIMARY_ADMIN_EMAIL?.trim() || "jashan082006@gmail.com").toLowerCase();
+  const configuredUserId = process.env.PRIMARY_ADMIN_USER_ID?.trim();
+
+  const result = (admins ?? []).map((admin) => {
+    const email = users.get(admin.user_id)?.email ?? null;
+    const isPrimary = configuredUserId
+      ? admin.user_id === configuredUserId
+      : Boolean(email && email.toLowerCase().trim() === primaryEmail);
+
+    return {
+      user_id: admin.user_id,
+      role: (admin.role ?? "admin") as AdminRole,
+      created_at: admin.created_at,
+      email,
+      auth_created_at: users.get(admin.user_id)?.created_at ?? null,
+      last_sign_in_at: users.get(admin.user_id)?.last_sign_in_at ?? null,
+      isPrimary,
+    };
+  });
 
   return NextResponse.json(
     {
       admins: result,
-      isSuperMaster: auth.user?.email?.toLowerCase().trim() === "jashan082006@gmail.com",
+      isSuperMaster: primary,
+      canManageAdmins: true,
+      canCreateMaster: primary,
+      canCreateNormal: true,
+      canRemoveNormal: true,
+      canRemoveMaster: primary,
+      canChangeRoles: primary,
     },
     {
       headers: {
@@ -156,22 +209,26 @@ export async function GET() {
    POST — Add administrator
    MASTER ONLY
 
+   PRIMARY MASTER:
+   - Can create Normal Admin or Master Admin (unlimited)
+
+   OTHER MASTER:
+   - Can create Normal Admin only
+   - Attempting to create Master Admin -> 403 Forbidden
+
    NEW USER:
    - Creates Supabase Auth user
    - Sends invitation email
-   - Redirects to /admin/invite
+   - Redirects to /admin/accept-invite
 
    EXISTING USER:
-   - Adds/re-adds Normal Admin access
+   - Adds/re-adds admin access
    - Sends password reset/setup email
-   - Redirects to /admin/invite
-
-   This means deleting a Normal Admin from the admin
-   table does NOT prevent inviting them again.
+   - Redirects to /admin/reset-password
 ========================================================= */
 
 export async function POST(request: Request) {
-  const auth = await requireSuperMasterAdmin();
+  const auth = await requireMasterAdmin();
 
   if (auth.error) {
     return NextResponse.json(
@@ -182,6 +239,15 @@ export async function POST(request: Request) {
             : auth.error,
       },
       { status: auth.status }
+    );
+  }
+
+  const clientIp = getIpFromRequest(request);
+  const rateLimit = checkRateLimit(`admin_add:${auth.user?.id}:${clientIp}`, 30, 60 * 1000);
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Too many admin requests. Please slow down." },
+      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
     );
   }
 
@@ -245,12 +311,38 @@ export async function POST(request: Request) {
     );
   }
 
+  // Authorization: Only Primary Master can create Master Admins
+  const callerIsPrimary = isPrimaryMaster(auth.user);
+  if (role === "master" && !callerIsPrimary) {
+    return NextResponse.json(
+      {
+        error: "Only the Primary Master Admin can create Master Admins.",
+      },
+      { status: 403 }
+    );
+  }
+
+  // Primary Master protection: cannot re-add or overwrite Primary Master
+  const primaryEmail = (process.env.PRIMARY_ADMIN_EMAIL?.trim() || "jashan082006@gmail.com").toLowerCase();
+  const configuredUserId = process.env.PRIMARY_ADMIN_USER_ID?.trim();
+  if (
+    (configuredUserId && auth.user?.id === configuredUserId && auth.user?.email?.toLowerCase() === email) ||
+    (!configuredUserId && email === primaryEmail)
+  ) {
+    return NextResponse.json(
+      {
+        error: "The Primary Master account already exists and cannot be modified.",
+      },
+      { status: 400 }
+    );
+  }
+
   if (
     auth.user?.email?.toLowerCase() === email
   ) {
     return NextResponse.json(
       {
-        error: "You are already a Master Admin.",
+        error: "You are already an administrator.",
       },
       { status: 400 }
     );
@@ -258,6 +350,7 @@ export async function POST(request: Request) {
 
   /* =======================================================
      CHECK EXISTING ADMIN RECORDS
+     (No two-master count limit: unlimited masters supported)
   ======================================================= */
 
   const {
@@ -281,18 +374,6 @@ export async function POST(request: Request) {
       },
       { status: 500 }
     );
-  }
-
-  if (role === "master") {
-    const masterCount = (existingAdmins ?? []).filter((a) => a.role === "master").length;
-    if (masterCount >= 2) {
-      return NextResponse.json(
-        {
-          error: "The maximum limit of 2 Master Admins has been reached.",
-        },
-        { status: 403 }
-      );
-    }
   }
 
   /* =======================================================
@@ -322,18 +403,15 @@ export async function POST(request: Request) {
   }
 
   const existingUser = userList.users.find(
-    (user) =>
+    (user: any) =>
       user.email?.toLowerCase() === email
   );
 
   /* =======================================================
      EXISTING SUPABASE USER
      
-     IMPORTANT:
-     This includes users who were previously Normal Admins
-     but were removed from the admins table.
-
-     We:
+     If already in admins table -> 409 Conflict.
+     Otherwise:
      1. Add them back to admins
      2. Send a password reset/setup email
   ======================================================= */
@@ -341,7 +419,7 @@ export async function POST(request: Request) {
   if (existingUser) {
     const alreadyAdmin =
       (existingAdmins ?? []).find(
-        (admin) =>
+        (admin: any) =>
           admin.user_id === existingUser.id
       );
 
@@ -354,10 +432,6 @@ export async function POST(request: Request) {
         { status: 409 }
       );
     }
-
-    /* -----------------------------------------------------
-       Add the existing Auth user back as an administrator
-    ----------------------------------------------------- */
 
     const { error: insertError } =
       await adminClient
@@ -376,18 +450,13 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "Could not add this user as an administrator.",
+            insertError.code === "23505"
+              ? "This user is already an administrator."
+              : "Could not add this user as an administrator.",
         },
-        { status: 500 }
+        { status: insertError.code === "23505" ? 409 : 500 }
       );
     }
-
-    /* -----------------------------------------------------
-       Send password setup/reset email
-
-       This is necessary because Supabase will not send
-       another invitation to an Auth user that already exists.
-    ----------------------------------------------------- */
 
     const siteUrl =
       process.env.NEXT_PUBLIC_SITE_URL ??
@@ -396,31 +465,14 @@ export async function POST(request: Request) {
     const redirectTo =
       `${siteUrl}/admin/reset-password`;
 
-    console.log(
-      "========================================"
-    );
-    console.log(
-      "EXISTING ADMIN RE-INVITATION"
-    );
-    console.log(
-      "Email:",
-      email
-    );
-    console.log(
-      "Role:",
-      role
-    );
-    console.log(
-      "Password setup redirect:",
-      redirectTo
-    );
-    console.log(
-      "========================================"
-    );
+    console.log("========================================");
+    console.log("EXISTING ADMIN RE-INVITATION");
+    console.log("Email:", email);
+    console.log("Role:", role);
+    console.log("Password setup redirect:", redirectTo);
+    console.log("========================================");
 
-    const {
-      error: resetError,
-    } =
+    const { error: resetError } =
       await adminClient.auth.resetPasswordForEmail(
         email,
         {
@@ -433,11 +485,6 @@ export async function POST(request: Request) {
         "Password setup email failed:",
         resetError
       );
-
-      /*
-       * Roll back the admin record because the user
-       * was not successfully notified.
-       */
 
       await adminClient
         .from("admins")
@@ -485,9 +532,8 @@ export async function POST(request: Request) {
      NEW USER INVITATION
      
      New Auth user:
-     - Supabase creates the user
-     - Supabase sends invitation
-     - User lands on /admin/invite
+     - Supabase creates the user and sends invitation
+     - User lands on /admin/accept-invite
   ======================================================= */
 
   const siteUrl =
@@ -497,27 +543,12 @@ export async function POST(request: Request) {
   const redirectTo =
     `${siteUrl}/admin/accept-invite`;
 
-  console.log(
-    "========================================"
-  );
-  console.log(
-    "NEW ADMIN INVITATION"
-  );
-  console.log(
-    "Email:",
-    email
-  );
-  console.log(
-    "Role:",
-    role
-  );
-  console.log(
-    "Invitation redirect:",
-    redirectTo
-  );
-  console.log(
-    "========================================"
-  );
+  console.log("========================================");
+  console.log("NEW ADMIN INVITATION");
+  console.log("Email:", email);
+  console.log("Role:", role);
+  console.log("Invitation redirect:", redirectTo);
+  console.log("========================================");
 
   const {
     data: inviteData,
@@ -567,11 +598,7 @@ export async function POST(request: Request) {
       insertError
     );
 
-    /*
-     * If database insert fails, remove the newly-created
-     * Supabase Auth user so we don't leave an orphaned account.
-     */
-
+    // Rollback created auth user
     await adminClient.auth.admin.deleteUser(
       inviteData.user.id
     );
@@ -579,9 +606,11 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "Could not create the administrator record.",
+          insertError.code === "23505"
+            ? "This user is already an administrator."
+            : "Could not create the administrator record.",
       },
-      { status: 500 }
+      { status: insertError.code === "23505" ? 409 : 500 }
     );
   }
 
@@ -616,17 +645,22 @@ export async function POST(request: Request) {
    DELETE — Remove administrator
    MASTER ONLY
 
-   IMPORTANT:
-   This removes the user's Saviskar admin access.
+   PRIMARY MASTER:
+   - Can remove Normal Admins
+   - Can remove other Masters
+   - Cannot remove self
 
-   It intentionally DOES NOT delete the Supabase Auth user.
+   OTHER MASTER:
+   - Can remove Normal Admins
+   - Cannot remove any Master
+   - Cannot remove Primary Master
 
-   Therefore the same email can later be added again and
-   receive a password setup/reset email.
+   Target role is determined strictly from the database.
+   Auth account is NOT deleted.
 ========================================================= */
 
 export async function DELETE(request: Request) {
-  const auth = await requireSuperMasterAdmin();
+  const auth = await requireMasterAdmin();
 
   if (auth.error) {
     return NextResponse.json(
@@ -637,6 +671,15 @@ export async function DELETE(request: Request) {
             : auth.error,
       },
       { status: auth.status }
+    );
+  }
+
+  const clientIp = getIpFromRequest(request);
+  const rateLimit = checkRateLimit(`admin_del:${auth.user?.id}:${clientIp}`, 30, 60 * 1000);
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Too many admin requests. Please slow down." },
+      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
     );
   }
 
@@ -705,11 +748,23 @@ export async function DELETE(request: Request) {
     );
   }
 
-  if (targetAdmin.role === "master" && auth.user?.email?.toLowerCase().trim() !== "jashan082006@gmail.com") {
+  // Server-side Primary Master target check
+  const isTargetPrimary = await isTargetPrimaryMaster(adminClient, userId);
+  if (isTargetPrimary) {
     return NextResponse.json(
       {
-        error:
-          "Master Admins cannot be removed from this control panel.",
+        error: "The Primary Master administrator cannot be removed.",
+      },
+      { status: 403 }
+    );
+  }
+
+  // Server-side target role verification
+  const callerIsPrimary = isPrimaryMaster(auth.user);
+  if (targetAdmin.role === "master" && !callerIsPrimary) {
+    return NextResponse.json(
+      {
+        error: "Only the Primary Master Admin can remove Master Admins.",
       },
       { status: 403 }
     );
@@ -755,11 +810,11 @@ export async function DELETE(request: Request) {
 
 /* =========================================================
    PATCH — Promote or demote administrator
-   SUPER MASTER ONLY
+   PRIMARY MASTER ONLY
 ========================================================= */
 
 export async function PATCH(request: Request) {
-  const auth = await requireSuperMasterAdmin();
+  const auth = await requireMasterAdmin();
 
   if (auth.error) {
     return NextResponse.json(
@@ -767,6 +822,25 @@ export async function PATCH(request: Request) {
         error: auth.error === "MFA_REQUIRED" ? "Master Admin MFA verification required." : auth.error,
       },
       { status: auth.status }
+    );
+  }
+
+  // PATCH is strictly restricted to the Primary Master
+  if (!isPrimaryMaster(auth.user)) {
+    return NextResponse.json(
+      {
+        error: "Only the Primary Master Admin can promote or demote administrators.",
+      },
+      { status: 403 }
+    );
+  }
+
+  const clientIp = getIpFromRequest(request);
+  const rateLimit = checkRateLimit(`admin_patch:${auth.user?.id}:${clientIp}`, 30, 60 * 1000);
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Too many admin requests. Please slow down." },
+      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
     );
   }
 
@@ -801,6 +875,15 @@ export async function PATCH(request: Request) {
 
   if (targetError || !targetAdmin) {
     return NextResponse.json({ error: "Administrator not found." }, { status: 404 });
+  }
+
+  // Server-side Primary Master target check
+  const isTargetPrimary = await isTargetPrimaryMaster(adminClient, userId);
+  if (isTargetPrimary) {
+    return NextResponse.json(
+      { error: "The Primary Master role cannot be modified." },
+      { status: 403 }
+    );
   }
 
   if (targetAdmin.role === newRole) {

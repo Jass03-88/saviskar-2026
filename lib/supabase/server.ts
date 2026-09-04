@@ -126,10 +126,36 @@ export async function requireMasterAdmin() {
 }
 
 /**
- * Require the Super Master Admin specifically.
+ * Determines if a given user is the Primary Master Admin.
  *
- * Exclusively jashan082006@gmail.com.
- * Used for role management.
+ * Checks against process.env.PRIMARY_ADMIN_USER_ID (immutable Supabase Auth user ID).
+ * If the environment variable is not configured, safely falls back to checking
+ * the normalized email address against process.env.PRIMARY_ADMIN_EMAIL or default "jashan082006@gmail.com".
+ */
+export function isPrimaryMaster(
+  user: { id?: string; email?: string | null } | null | undefined
+): boolean {
+  if (!user) return false;
+
+  const configuredUserId = process.env.PRIMARY_ADMIN_USER_ID?.trim();
+  if (configuredUserId) {
+    return user.id === configuredUserId;
+  }
+
+  const configuredEmail = (
+    process.env.PRIMARY_ADMIN_EMAIL?.trim() || "jashan082006@gmail.com"
+  ).toLowerCase();
+
+  return Boolean(
+    user.email && user.email.toLowerCase().trim() === configuredEmail
+  );
+}
+
+/**
+ * Require the Primary Master Admin (formerly Super Master) specifically.
+ *
+ * Enforces Master Admin access (including MFA/AAL2) and verifies Primary Master identity.
+ * Used for role management and master administrator creation/removal.
  */
 export async function requireSuperMasterAdmin() {
   const auth = await requireMasterAdmin();
@@ -138,7 +164,7 @@ export async function requireSuperMasterAdmin() {
     return auth;
   }
 
-  if (auth.user?.email?.toLowerCase().trim() !== "jashan082006@gmail.com") {
+  if (!isPrimaryMaster(auth.user)) {
     return {
       ...auth,
       error: "Super Master Admin access required" as const,
@@ -148,3 +174,5 @@ export async function requireSuperMasterAdmin() {
 
   return auth;
 }
+
+export const requirePrimaryMasterAdmin = requireSuperMasterAdmin;

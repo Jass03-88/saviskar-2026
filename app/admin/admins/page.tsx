@@ -23,6 +23,7 @@ type AdminRecord = {
   email: string | null;
   auth_created_at: string | null;
   last_sign_in_at: string | null;
+  isPrimary?: boolean;
 };
 
 export default function AdminManagementPage() {
@@ -163,7 +164,7 @@ export default function AdminManagementPage() {
             },
             body: JSON.stringify({
               email: cleanEmail,
-              role,
+              role: isSuperMaster ? role : "admin",
             }),
           }
         );
@@ -209,6 +210,10 @@ export default function AdminManagementPage() {
   async function removeAdmin(
     admin: AdminRecord
   ) {
+    if (admin.isPrimary) {
+      return;
+    }
+
     if (admin.role === "master" && !isSuperMaster) {
       return;
     }
@@ -319,6 +324,8 @@ export default function AdminManagementPage() {
   }
 
   async function changeRole(admin: AdminRecord, newRole: "master" | "admin") {
+    if (!isSuperMaster || admin.isPrimary) return;
+
     const actionStr = newRole === "master" ? "Promote" : "Demote";
     const confirmed = window.confirm(
       `${actionStr} ${admin.email ?? "this administrator"} ${newRole === "master" ? "to Master Admin" : "to Normal Admin"}?`
@@ -429,48 +436,43 @@ export default function AdminManagementPage() {
           </div>
         )}
 
-        {isSuperMaster ? (
-          <div className="mb-8 rounded-[28px] bg-black p-7 text-white md:p-9">
-
-            <div className="flex items-start gap-4">
-
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10">
-                <UserPlus size={19} />
-              </div>
-
-              <div>
-                <h2 className="text-xl font-semibold">
-                  Add Administrator
-                </h2>
-
-                <p className="mt-2 text-sm text-white/50">
-                  A new user will receive an
-                  invitation email. Existing
-                  Supabase users can also be
-                  granted Saviskar admin access.
-                </p>
-              </div>
-
+        <div className="mb-8 rounded-[28px] bg-black p-7 text-white md:p-9">
+          <div className="flex items-start gap-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10">
+              <UserPlus size={19} />
             </div>
 
-            <form
-              onSubmit={addAdmin}
-              className="mt-7 grid gap-4 md:grid-cols-[1fr_220px_auto]"
-            >
+            <div>
+              <h2 className="text-xl font-semibold">
+                Add Administrator
+              </h2>
 
-              <input
-                type="email"
-                value={email}
-                onChange={(event) =>
-                  setEmail(
-                    event.target.value
-                  )
-                }
-                placeholder="admin@example.com"
-                autoComplete="off"
-                className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-white/30 focus:border-white/30"
-              />
+              <p className="mt-2 text-sm text-white/50">
+                {isSuperMaster
+                  ? "A new user will receive an invitation email. Existing Supabase users can also be granted Saviskar admin access."
+                  : "Add registration-desk administrators. Master Admin creation is restricted to the Primary Master."}
+              </p>
+            </div>
+          </div>
 
+          <form
+            onSubmit={addAdmin}
+            className="mt-7 grid gap-4 md:grid-cols-[1fr_220px_auto]"
+          >
+            <input
+              type="email"
+              value={email}
+              onChange={(event) =>
+                setEmail(
+                  event.target.value
+                )
+              }
+              placeholder="admin@example.com"
+              autoComplete="off"
+              className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-white/30 focus:border-white/30"
+            />
+
+            {isSuperMaster ? (
               <select
                 value={role}
                 onChange={(event) =>
@@ -496,31 +498,37 @@ export default function AdminManagementPage() {
                   Master Admin
                 </option>
               </select>
-
-              <button
-                type="submit"
-                disabled={
-                  submitting ||
-                  !email.trim()
-                }
-                className="flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-medium text-black transition hover:bg-white/90 disabled:opacity-40"
+            ) : (
+              <select
+                value="admin"
+                disabled
+                className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white/60 outline-none cursor-not-allowed"
               >
-                <UserPlus size={15} />
+                <option
+                  value="admin"
+                  className="text-black"
+                >
+                  Normal Admin
+                </option>
+              </select>
+            )}
 
-                {submitting
-                  ? "Adding..."
-                  : "Add Admin"}
-              </button>
+            <button
+              type="submit"
+              disabled={
+                submitting ||
+                !email.trim()
+              }
+              className="flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-medium text-black transition hover:bg-white/90 disabled:opacity-40"
+            >
+              <UserPlus size={15} />
 
-            </form>
-          </div>
-        ) : (
-          <div className="mb-8 rounded-[28px] border border-black/10 bg-white p-7 text-black md:p-9">
-            <p className="text-sm">
-              Administrator role management is restricted to the Primary Master Admin.
-            </p>
-          </div>
-        )}
+              {submitting
+                ? "Adding..."
+                : "Add Admin"}
+            </button>
+          </form>
+        </div>
 
         <section className="mb-8">
 
@@ -729,7 +737,7 @@ function AdminRow({
 
       <div className="flex items-center gap-2">
         {isPrimary ? (
-          <div className="text-xs text-black/40">Primary administrator</div>
+          <div className="text-xs font-medium text-black/40">Primary administrator</div>
         ) : isSuperMaster ? (
           <>
             {master ? (
@@ -775,11 +783,21 @@ function AdminRow({
             )}
           </>
         ) : master ? (
-          <div className="flex items-center gap-2 text-xs text-green-700">
-            <ShieldCheck size={15} />
-            MFA required
+          <div className="flex items-center gap-1.5 text-xs text-black/40">
+            <ShieldCheck size={14} className="text-black/30" />
+            <span>Master management restricted to Primary Master</span>
           </div>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={removing}
+            className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+          >
+            <Trash2 size={14} />
+            {removing ? "Removing..." : "Remove access"}
+          </button>
+        )}
       </div>
 
     </div>

@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GET, POST, DELETE, PATCH } from "@/app/api/admin/admins/route";
 import * as serverLib from "@/lib/supabase/server";
+import { resetRateLimitStore } from "@/lib/rate-limit";
 
 // Mock environment variables
 process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
 process.env.SUPABASE_SECRET_KEY = "test-secret-key";
 
-// Mock the Supabase server utils by importing and spying
 const mockBuilder: any = {
   select: vi.fn().mockReturnThis(),
   insert: vi.fn().mockReturnThis(),
@@ -18,17 +18,24 @@ const mockBuilder: any = {
   maybeSingle: vi.fn().mockReturnThis(),
 };
 
-mockBuilder.then = function(resolve: any) {
+mockBuilder.then = function (resolve: any) {
   resolve({ data: null, error: null });
 };
 
-// For requireSuperMasterAdmin testing
 const mockServerClient = {
   auth: {
-    getUser: vi.fn().mockResolvedValue({ data: { user: { email: "jashan082006@gmail.com" } }, error: null }),
-    mfa: { getAuthenticatorAssuranceLevel: vi.fn().mockResolvedValue({ data: { currentLevel: "aal2" }, error: null }) }
+    getUser: vi.fn().mockResolvedValue({
+      data: { user: { id: "sm-id", email: "jashan082006@gmail.com" } },
+      error: null,
+    }),
+    mfa: {
+      getAuthenticatorAssuranceLevel: vi.fn().mockResolvedValue({
+        data: { currentLevel: "aal2" },
+        error: null,
+      }),
+    },
   },
-  from: vi.fn().mockReturnValue(mockBuilder)
+  from: vi.fn().mockReturnValue(mockBuilder),
 };
 
 vi.mock("@supabase/ssr", () => ({
@@ -36,18 +43,20 @@ vi.mock("@supabase/ssr", () => ({
 }));
 
 vi.mock("next/headers", () => ({
-  cookies: vi.fn().mockResolvedValue({ getAll: vi.fn(), setAll: vi.fn() })
+  cookies: vi.fn().mockResolvedValue({ getAll: vi.fn(), setAll: vi.fn() }),
 }));
 
-const mockFrom = vi.fn((table: string) => mockBuilder);
+const mockFrom = vi.fn((_table: string) => mockBuilder);
 
-const mockGetUserById = vi.fn().mockResolvedValue({ data: { user: { email: "test@example.com" } } });
+const mockGetUserById = vi.fn().mockResolvedValue({
+  data: { user: { id: "target-user", email: "test@example.com" } },
+});
 const mockListUsers = vi.fn().mockResolvedValue({ data: { users: [] }, error: null });
 const mockInviteUserByEmail = vi.fn().mockResolvedValue({ data: { user: { id: "new" } }, error: null });
 const mockDeleteUser = vi.fn();
 const mockResetPasswordForEmail = vi.fn().mockResolvedValue({ data: {}, error: null });
 
-// Mock Supabase JS client
+// Mock Supabase JS admin client
 vi.mock("@supabase/supabase-js", () => {
   return {
     createClient: () => {
@@ -67,264 +76,594 @@ vi.mock("@supabase/supabase-js", () => {
   };
 });
 
-describe("Admin Management API Authorization & Rules", () => {
+describe("Admin Management API Authorization & Hardened Rules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(serverLib, "requireMasterAdmin");
-    vi.spyOn(serverLib, "requireSuperMasterAdmin");
+    resetRateLimitStore();
+    delete process.env.PRIMARY_ADMIN_USER_ID;
+    delete process.env.PRIMARY_ADMIN_EMAIL;
+
+    // Reset default builder behavior
+    Object.keys(mockBuilder).forEach((key) => {
+      if (typeof mockBuilder[key].mockClear === "function") {
+        mockBuilder[key].mockClear();
+      }
+    });
+
+    // Reset default chainable builder behavior
+    mockBuilder.select = vi.fn().mockReturnThis();
+    mockBuilder.insert = vi.fn().mockReturnThis();
+    mockBuilder.delete = vi.fn().mockReturnThis();
+    mockBuilder.update = vi.fn().mockReturnThis();
+    mockBuilder.eq = vi.fn().mockReturnThis();
+    mockBuilder.order = vi.fn().mockReturnThis();
+    mockBuilder.limit = vi.fn().mockReturnThis();
+    mockBuilder.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    mockBuilder.then = function (resolve: any) {
+      resolve({ data: null, error: null });
+    };
+
+    mockGetUserById.mockResolvedValue({
+      data: { user: { id: "target-user", email: "test@example.com" } },
+    });
   });
 
-  const createMockRequest = (method: string, body?: any, url = "http://localhost/api/admin/admins") => {
+  const createMockRequest = (
+    method: string,
+    body?: any,
+    url = "http://localhost/api/admin/admins"
+  ) => {
     return {
       method,
       url,
+      headers: new Headers(),
       json: async () => body,
     } as unknown as Request;
   };
 
-  describe("Super Master Authority & Identification", () => {
-    it("14. Case/whitespace-normalized Super Master identity is handled correctly", async () => {
-      // Overwrite the mock to return a messy email
+  const mockAsPrimaryMaster = (id = "sm-id", email = "jashan082006@gmail.com") => {
+    vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+      supabase: {} as any,
+      user: { id, email } as any,
+      role: "master",
+      error: null,
+      status: 200,
+    });
+  };
+
+  const mockAsOtherMaster = (id = "other-master-id", email = "othermaster@example.com") => {
+    vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+      supabase: {} as any,
+      user: { id, email } as any,
+      role: "master",
+      error: null,
+      status: 200,
+    });
+  };
+
+  const mockAsNormalAdmin = (id = "normal-id", email = "normal@example.com") => {
+    vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+      supabase: {} as any,
+      user: { id, email } as any,
+      role: "admin",
+      error: "Master Admin access required" as const,
+      status: 403,
+    });
+  };
+
+  const mockAsUnauthenticated = () => {
+    vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+      supabase: {} as any,
+      user: null,
+      role: null,
+      error: "Unauthorized" as const,
+      status: 401,
+    });
+  };
+
+  const mockAsMfaRequired = (id = "mfa-id", email = "master-no-mfa@example.com") => {
+    vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+      supabase: {} as any,
+      user: { id, email } as any,
+      role: "master",
+      error: "MFA_REQUIRED" as const,
+      status: 403,
+    });
+  };
+
+  /* =========================================================
+     1. Primary Master Identity Determination
+  ========================================================= */
+  describe("Primary Master Identity Determination", () => {
+    it("identifies Primary Master via email fallback with case/whitespace normalization when env var is unset", () => {
+      expect(serverLib.isPrimaryMaster({ id: "any-id", email: "  jAshan082006@Gmail.cOm " })).toBe(true);
+      expect(serverLib.isPrimaryMaster({ id: "any-id", email: "other@gmail.com" })).toBe(false);
+      expect(serverLib.isPrimaryMaster(null)).toBe(false);
+    });
+
+    it("identifies Primary Master strictly via PRIMARY_ADMIN_USER_ID when configured", () => {
+      process.env.PRIMARY_ADMIN_USER_ID = "immutable-primary-uuid";
+
+      // Matching immutable user ID is primary regardless of email
+      expect(
+        serverLib.isPrimaryMaster({ id: "immutable-primary-uuid", email: "changed-email@domain.com" })
+      ).toBe(true);
+
+      // Wrong user ID even with old email is NOT primary
+      expect(
+        serverLib.isPrimaryMaster({ id: "impostor-uuid", email: "jashan082006@gmail.com" })
+      ).toBe(false);
+    });
+
+    it("requireSuperMasterAdmin succeeds for Primary Master and rejects others", async () => {
+      // Primary Master
       mockServerClient.auth.getUser.mockResolvedValueOnce({
-        data: { user: { id: "test", email: "  jAshan082006@Gmail.cOm " } },
+        data: { user: { id: "sm-id", email: "jashan082006@gmail.com" } },
         error: null,
       });
-      // Mock requireMasterAdmin's db check
       mockBuilder.maybeSingle.mockResolvedValueOnce({ data: { role: "master" }, error: null });
+      const primaryAuth = await serverLib.requireSuperMasterAdmin();
+      expect(primaryAuth.error).toBe(null);
 
-      const auth = await serverLib.requireSuperMasterAdmin();
-      expect(auth.error).toBe(null);
-      expect(auth.user?.email).toBe("  jAshan082006@Gmail.cOm ");
-    });
-
-    it("13. Forged email in request body cannot grant Super Master authority", async () => {
-      // Setup authenticated as normal admin, but sending super master email in body
-      vi.mocked(serverLib.requireSuperMasterAdmin).mockResolvedValue({
-        supabase: {} as any,
-        user: { id: "2", email: "attacker@gmail.com" } as any,
-        role: "admin",
-        error: "Super Master Admin access required",
-        status: 403,
-      } as any);
-
-      const res = await POST(createMockRequest("POST", { email: "jashan082006@gmail.com", role: "master" }));
-      expect(res.status).toBe(403);
-    });
-
-    it("15. Unauthorized direct API requests return 403", async () => {
-      vi.mocked(serverLib.requireSuperMasterAdmin).mockResolvedValue({
-        error: "Forbidden",
-        status: 403,
-      } as any);
-
-      const res = await PATCH(createMockRequest("PATCH", { userId: "123", newRole: "master" }));
-      expect(res.status).toBe(403);
-    });
-  });
-
-  describe("Role Access Control (7-12)", () => {
-    const methods = [
-      { name: "POST", handler: () => POST(createMockRequest("POST", { email: "test@example.com" })) },
-      { name: "PATCH", handler: () => PATCH(createMockRequest("PATCH", { userId: "123", newRole: "master" })) },
-      { name: "DELETE", handler: () => DELETE(createMockRequest("DELETE", null, "http://localhost/api?userId=123")) },
-    ];
-
-    describe("Other Master Admin Restrictions", () => {
-      beforeEach(() => {
-        vi.mocked(serverLib.requireSuperMasterAdmin).mockResolvedValue({
-          supabase: {} as any,
-          user: { id: "2", email: "othermaster@gmail.com" } as any,
-          role: "master",
-          error: "Super Master Admin access required",
-          status: 403,
-        } as any);
-      });
-
-      methods.forEach(({ name, handler }) => {
-        it(`7,8,9: Other Master Admin cannot ${name}`, async () => {
-          const res = await handler();
-          expect(res.status).toBe(403);
-        });
-      });
-    });
-
-    describe("Normal Admin Restrictions", () => {
-      beforeEach(() => {
-        vi.mocked(serverLib.requireSuperMasterAdmin).mockResolvedValue({
-          supabase: {} as any,
-          user: { id: "3", email: "normal@gmail.com" } as any,
-          role: "admin",
-          error: "Super Master Admin access required",
-          status: 403,
-        } as any);
-      });
-
-      methods.forEach(({ name, handler }) => {
-        it(`10,11,12: Normal Admin cannot ${name}`, async () => {
-          const res = await handler();
-          expect(res.status).toBe(403);
-        });
-      });
-    });
-  });
-
-  describe("Super Master Privileged Operations", () => {
-    beforeEach(() => {
-      vi.mocked(serverLib.requireSuperMasterAdmin).mockResolvedValue({
-        supabase: {} as any,
-        user: { id: "sm-id", email: "jashan082006@gmail.com" } as any,
-        role: "master",
+      // Other Master
+      mockServerClient.auth.getUser.mockResolvedValueOnce({
+        data: { user: { id: "other-id", email: "other@example.com" } },
         error: null,
-        status: 200,
       });
-      // Reset builder methods
-      Object.keys(mockBuilder).forEach(key => {
-        if (typeof mockBuilder[key].mockClear === "function") {
-          mockBuilder[key].mockClear();
-        }
+      mockBuilder.maybeSingle.mockResolvedValueOnce({ data: { role: "master" }, error: null });
+      const otherAuth = await serverLib.requireSuperMasterAdmin();
+      expect(otherAuth.status).toBe(403);
+      expect(otherAuth.error).toBe("Super Master Admin access required");
+    });
+  });
+
+  /* =========================================================
+     2. Comprehensive 28 Security Matrix Verification
+  ========================================================= */
+  describe("Security Matrix Verification (28 Scenarios)", () => {
+    // 1. Normal Admin POST role=admin -> DENY 403
+    it("1. Normal Admin POST role=admin -> DENY (403)", async () => {
+      mockAsNormalAdmin();
+      const res = await POST(createMockRequest("POST", { email: "newadmin@example.com", role: "admin" }));
+      expect(res.status).toBe(403);
+    });
+
+    // 2. Normal Admin POST role=master -> DENY 403
+    it("2. Normal Admin POST role=master -> DENY (403)", async () => {
+      mockAsNormalAdmin();
+      const res = await POST(createMockRequest("POST", { email: "newmaster@example.com", role: "master" }));
+      expect(res.status).toBe(403);
+    });
+
+    // 3. Normal Admin DELETE normal admin -> DENY 403
+    it("3. Normal Admin DELETE normal admin -> DENY (403)", async () => {
+      mockAsNormalAdmin();
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=target-normal"));
+      expect(res.status).toBe(403);
+    });
+
+    // 4. Normal Admin DELETE master -> DENY 403
+    it("4. Normal Admin DELETE master -> DENY (403)", async () => {
+      mockAsNormalAdmin();
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=target-master"));
+      expect(res.status).toBe(403);
+    });
+
+    // 5. Normal Admin PATCH promotion -> DENY 403
+    it("5. Normal Admin PATCH promotion -> DENY (403)", async () => {
+      mockAsNormalAdmin();
+      const res = await PATCH(createMockRequest("PATCH", { userId: "target-normal", newRole: "master" }));
+      expect(res.status).toBe(403);
+    });
+
+    // 6. Other Master POST role=admin -> ALLOW 201
+    it("6. Other Master POST role=admin -> ALLOW (201)", async () => {
+      mockAsOtherMaster();
+      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res = await POST(createMockRequest("POST", { email: "newnormal@example.com", role: "admin" }));
+      expect(res.status).toBe(201);
+      expect(mockInviteUserByEmail).toHaveBeenCalledWith("newnormal@example.com", {
+        data: { saviskar_role: "admin" },
+        redirectTo: "http://localhost/admin/accept-invite",
       });
     });
 
-    it("1. Super Master can promote Normal -> Master", async () => {
-      // For the first query: .select().maybeSingle() -> returns the target user
-      mockBuilder.maybeSingle.mockResolvedValueOnce({ data: { user_id: "target-1", role: "admin" }, error: null });
-      // For the second query: .update().eq() -> returns success
-      // We can just let .then() return the default { error: null }
-      
-      const res = await PATCH(createMockRequest("PATCH", { userId: "target-1", newRole: "master" }));
-      expect(res.status).toBe(200);
-      expect(mockFrom).toHaveBeenCalledWith("admins");
-      expect(mockBuilder.update).toHaveBeenCalledWith({ role: "master" });
-      
-      // 21. Correct audit log
-      expect(mockBuilder.insert).toHaveBeenCalledWith({
-        admin_id: "sm-id",
-        action_type: "PROMOTE_ADMIN",
-        target_id: "target-1",
-        details: { previous_role: "admin", new_role: "master" }
-      });
+    // 7. Other Master POST role=master -> DENY 403
+    it("7. Other Master POST role=master -> DENY (403)", async () => {
+      mockAsOtherMaster();
+      const res = await POST(createMockRequest("POST", { email: "newmaster@example.com", role: "master" }));
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.error).toBe("Only the Primary Master Admin can create Master Admins.");
     });
 
-    it("2. Super Master can demote Master -> Normal", async () => {
-      mockBuilder.maybeSingle.mockResolvedValueOnce({ data: { user_id: "target-2", role: "master" }, error: null });
-      
-      const res = await PATCH(createMockRequest("PATCH", { userId: "target-2", newRole: "admin" }));
-      expect(res.status).toBe(200);
-      expect(mockBuilder.update).toHaveBeenCalledWith({ role: "admin" });
-
-      // 21. Correct audit log
-      expect(mockBuilder.insert).toHaveBeenCalledWith({
-        admin_id: "sm-id",
-        action_type: "DEMOTE_ADMIN",
-        target_id: "target-2",
-        details: { previous_role: "master", new_role: "admin" }
+    // 8. Other Master DELETE normal admin -> ALLOW 200
+    it("8. Other Master DELETE normal admin -> ALLOW (200)", async () => {
+      mockAsOtherMaster();
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "target-normal", role: "admin" },
+        error: null,
       });
-    });
 
-    it("3. Super Master can remove Normal Admin", async () => {
-      mockBuilder.maybeSingle.mockResolvedValueOnce({ data: { user_id: "target-3", role: "admin" }, error: null });
-      
-      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api?userId=target-3"));
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=target-normal"));
       expect(res.status).toBe(200);
       expect(mockBuilder.delete).toHaveBeenCalled();
-      
-      // 21. Correct audit log
-      expect(mockBuilder.insert).toHaveBeenCalledWith({
-        admin_id: "sm-id",
-        action_type: "REMOVE_ADMIN",
-        target_id: "target-3",
-        details: { previous_role: "admin" }
+      expect(mockBuilder.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action_type: "REMOVE_ADMIN",
+          target_id: "target-normal",
+        })
+      );
+    });
+
+    // 9. Other Master DELETE another Master -> DENY 403
+    it("9. Other Master DELETE another Master -> DENY (403)", async () => {
+      mockAsOtherMaster();
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "target-other-master", role: "master" },
+        error: null,
+      });
+      mockGetUserById.mockResolvedValueOnce({
+        data: { user: { id: "target-other-master", email: "secondmaster@example.com" } },
+      });
+
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=target-other-master"));
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.error).toBe("Only the Primary Master Admin can remove Master Admins.");
+      expect(mockBuilder.delete).not.toHaveBeenCalled();
+    });
+
+    // 10. Other Master DELETE Primary Master -> DENY 403
+    it("10. Other Master DELETE Primary Master -> DENY (403)", async () => {
+      mockAsOtherMaster();
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "primary-master-id", role: "master" },
+        error: null,
+      });
+      mockGetUserById.mockResolvedValueOnce({
+        data: { user: { id: "primary-master-id", email: "jashan082006@gmail.com" } },
+      });
+
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=primary-master-id"));
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.error).toBe("The Primary Master administrator cannot be removed.");
+      expect(mockBuilder.delete).not.toHaveBeenCalled();
+    });
+
+    // 11. Other Master PATCH normal -> master -> DENY 403
+    it("11. Other Master PATCH normal -> master -> DENY (403)", async () => {
+      mockAsOtherMaster();
+      const res = await PATCH(createMockRequest("PATCH", { userId: "target-normal", newRole: "master" }));
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.error).toBe("Only the Primary Master Admin can promote or demote administrators.");
+    });
+
+    // 12. Other Master PATCH master -> normal -> DENY 403
+    it("12. Other Master PATCH master -> normal -> DENY (403)", async () => {
+      mockAsOtherMaster();
+      const res = await PATCH(createMockRequest("PATCH", { userId: "target-master", newRole: "admin" }));
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.error).toBe("Only the Primary Master Admin can promote or demote administrators.");
+    });
+
+    // 13. Primary Master POST role=admin -> ALLOW 201
+    it("13. Primary Master POST role=admin -> ALLOW (201)", async () => {
+      mockAsPrimaryMaster();
+      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res = await POST(createMockRequest("POST", { email: "deskadmin@example.com", role: "admin" }));
+      expect(res.status).toBe(201);
+    });
+
+    // 14. Primary Master POST role=master -> ALLOW 201
+    it("14. Primary Master POST role=master -> ALLOW (201)", async () => {
+      mockAsPrimaryMaster();
+      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res = await POST(createMockRequest("POST", { email: "secondmaster@example.com", role: "master" }));
+      expect(res.status).toBe(201);
+      expect(mockInviteUserByEmail).toHaveBeenCalledWith("secondmaster@example.com", {
+        data: { saviskar_role: "master" },
+        redirectTo: "http://localhost/admin/accept-invite",
       });
     });
 
-    it("4. Super Master can remove another Master Admin", async () => {
-      mockBuilder.maybeSingle.mockResolvedValueOnce({ data: { user_id: "target-4", role: "master" }, error: null });
-      
-      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api?userId=target-4"));
+    // 15 & 16. Primary Master can create 3rd, 4th, unlimited Masters (no 2-master limit)
+    it("15 & 16. Primary Master can create 3rd, 4th, and unlimited Masters without limit error", async () => {
+      mockAsPrimaryMaster();
+
+      // Simulate 5 existing master admins already in the DB
+      const fiveExistingMasters = [
+        { user_id: "m1", role: "master" },
+        { user_id: "m2", role: "master" },
+        { user_id: "m3", role: "master" },
+        { user_id: "m4", role: "master" },
+        { user_id: "m5", role: "master" },
+      ];
+
+      // 3rd / 6th Master creation
+      mockBuilder.select.mockReturnValueOnce({
+        limit: vi.fn().mockResolvedValueOnce({ data: fiveExistingMasters, error: null }),
+      });
+      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res3 = await POST(createMockRequest("POST", { email: "master3@example.com", role: "master" }));
+      expect(res3.status).toBe(201);
+
+      // 4th / 7th Master creation
+      mockBuilder.select.mockReturnValueOnce({
+        limit: vi.fn().mockResolvedValueOnce({ data: fiveExistingMasters, error: null }),
+      });
+      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res4 = await POST(createMockRequest("POST", { email: "master4@example.com", role: "master" }));
+      expect(res4.status).toBe(201);
+    });
+
+    // 17. Primary Master DELETE normal admin -> ALLOW 200
+    it("17. Primary Master DELETE normal admin -> ALLOW (200)", async () => {
+      mockAsPrimaryMaster();
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "target-normal", role: "admin" },
+        error: null,
+      });
+
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=target-normal"));
       expect(res.status).toBe(200);
       expect(mockBuilder.delete).toHaveBeenCalled();
-      
-      // 21. Correct audit log
-      expect(mockBuilder.insert).toHaveBeenCalledWith({
-        admin_id: "sm-id",
-        action_type: "REMOVE_MASTER_ADMIN",
-        target_id: "target-4",
-        details: { previous_role: "master" }
-      });
+      expect(mockBuilder.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action_type: "REMOVE_ADMIN",
+          target_id: "target-normal",
+        })
+      );
     });
 
-    it("5. Super Master cannot remove itself", async () => {
-      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api?userId=sm-id"));
+    // 18. Primary Master DELETE another Master -> ALLOW 200
+    it("18. Primary Master DELETE another Master -> ALLOW (200)", async () => {
+      mockAsPrimaryMaster();
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "target-master", role: "master" },
+        error: null,
+      });
+      mockGetUserById.mockResolvedValueOnce({
+        data: { user: { id: "target-master", email: "othermaster@example.com" } },
+      });
+
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=target-master"));
+      expect(res.status).toBe(200);
+      expect(mockBuilder.delete).toHaveBeenCalled();
+      expect(mockBuilder.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action_type: "REMOVE_MASTER_ADMIN",
+          target_id: "target-master",
+        })
+      );
+    });
+
+    // 19. Primary Master DELETE self -> DENY 400
+    it("19. Primary Master DELETE self -> DENY (400)", async () => {
+      mockAsPrimaryMaster("sm-id", "jashan082006@gmail.com");
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=sm-id"));
       const data = await res.json();
       expect(res.status).toBe(400);
       expect(data.error).toBe("You cannot remove yourself.");
     });
 
-    it("6. Super Master cannot demote itself", async () => {
+    // 20. Primary Master PATCH another Master -> admin -> ALLOW 200
+    it("20. Primary Master PATCH another Master -> admin -> ALLOW (200)", async () => {
+      mockAsPrimaryMaster();
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "target-master-id", role: "master" },
+        error: null,
+      });
+      mockGetUserById.mockResolvedValueOnce({
+        data: { user: { id: "target-master-id", email: "othermaster@example.com" } },
+      });
+
+      const res = await PATCH(createMockRequest("PATCH", { userId: "target-master-id", newRole: "admin" }));
+      expect(res.status).toBe(200);
+      expect(mockBuilder.update).toHaveBeenCalledWith({ role: "admin" });
+      expect(mockBuilder.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action_type: "DEMOTE_ADMIN",
+          target_id: "target-master-id",
+        })
+      );
+    });
+
+    // 21. Primary Master PATCH normal -> master -> ALLOW 200
+    it("21. Primary Master PATCH normal -> master -> ALLOW (200)", async () => {
+      mockAsPrimaryMaster();
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "target-normal-id", role: "admin" },
+        error: null,
+      });
+      mockGetUserById.mockResolvedValueOnce({
+        data: { user: { id: "target-normal-id", email: "normal@example.com" } },
+      });
+
+      const res = await PATCH(createMockRequest("PATCH", { userId: "target-normal-id", newRole: "master" }));
+      expect(res.status).toBe(200);
+      expect(mockBuilder.update).toHaveBeenCalledWith({ role: "master" });
+      expect(mockBuilder.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action_type: "PROMOTE_ADMIN",
+          target_id: "target-normal-id",
+        })
+      );
+    });
+
+    // 22. Primary Master PATCH self -> admin -> DENY 400
+    it("22. Primary Master PATCH self -> admin -> DENY (400)", async () => {
+      mockAsPrimaryMaster("sm-id", "jashan082006@gmail.com");
       const res = await PATCH(createMockRequest("PATCH", { userId: "sm-id", newRole: "admin" }));
       const data = await res.json();
       expect(res.status).toBe(400);
       expect(data.error).toBe("You cannot change your own role.");
     });
 
-    it("16, 17, 18, 19, 20. Removing an admin does NOT touch auth, participants, payments, or events", async () => {
-      mockBuilder.maybeSingle.mockResolvedValueOnce({ data: { user_id: "target-delete", role: "master" }, error: null });
-      
-      await DELETE(createMockRequest("DELETE", null, "http://localhost/api?userId=target-delete"));
-      
-      // 16. Removes only admins mapping
-      expect(mockBuilder.delete).toHaveBeenCalled();
-      const tablesAccessed = mockFrom.mock.calls.map(call => call[0]);
-      expect(tablesAccessed).toContain("admins");
-      expect(tablesAccessed).toContain("admin_audit_logs");
-      
-      // 18, 19, 20. Does not touch other tables
-      expect(tablesAccessed).not.toContain("participants");
-      expect(tablesAccessed).not.toContain("payment_orders");
-      expect(tablesAccessed).not.toContain("events");
+    // 23. Unauthenticated POST -> DENY 401
+    it("23. Unauthenticated POST -> DENY (401)", async () => {
+      mockAsUnauthenticated();
+      const res = await POST(createMockRequest("POST", { email: "test@example.com", role: "admin" }));
+      expect(res.status).toBe(401);
+    });
 
-      // 17. Supabase Auth is NOT deleted
+    // 24. Unauthenticated DELETE -> DENY 401
+    it("24. Unauthenticated DELETE -> DENY (401)", async () => {
+      mockAsUnauthenticated();
+      const res = await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=123"));
+      expect(res.status).toBe(401);
+    });
+
+    // 25. Unauthenticated PATCH -> DENY 401
+    it("25. Unauthenticated PATCH -> DENY (401)", async () => {
+      mockAsUnauthenticated();
+      const res = await PATCH(createMockRequest("PATCH", { userId: "123", newRole: "admin" }));
+      expect(res.status).toBe(401);
+    });
+
+    // 26. Master without required MFA/AAL2 -> DENY 403
+    it("26. Master without required MFA/AAL2 -> DENY (403)", async () => {
+      mockAsMfaRequired();
+      const res = await POST(createMockRequest("POST", { email: "test@example.com", role: "admin" }));
+      const data = await res.json();
+      expect(res.status).toBe(403);
+      expect(data.error).toBe("Master Admin MFA verification required.");
+    });
+
+    // 27. Forged client role/isSuperMaster field in body -> MUST NOT bypass authorization
+    it("27. Forged client role/isSuperMaster in body does not elevate permissions", async () => {
+      mockAsOtherMaster();
+      const res = await POST(
+        createMockRequest("POST", {
+          email: "target@example.com",
+          role: "master",
+          isSuperMaster: true,
+          requesterRole: "master",
+        })
+      );
+      expect(res.status).toBe(403);
+    });
+
+    // 28. Forged target role query parameter does not bypass server-side check
+    it("28. Forged target role in query parameters does not bypass authoritative DB check", async () => {
+      mockAsOtherMaster();
+      // Server checks database: target is actually a master!
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "target-master", role: "master" },
+        error: null,
+      });
+      mockGetUserById.mockResolvedValueOnce({
+        data: { user: { id: "target-master", email: "master@example.com" } },
+      });
+
+      // Attacker appends forged role=admin in query string
+      const res = await DELETE(
+        createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=target-master&role=admin&targetRole=admin")
+      );
+      expect(res.status).toBe(403);
+      expect(mockBuilder.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  /* =========================================================
+     3. Safety, Audit & Data Integrity
+  ========================================================= */
+  describe("Safety, Audit & Data Integrity", () => {
+    it("removing an admin only deletes from admins table; does not touch auth, participants, or payments", async () => {
+      mockAsPrimaryMaster();
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "target-del", role: "admin" },
+        error: null,
+      });
+
+      await DELETE(createMockRequest("DELETE", null, "http://localhost/api/admin/admins?userId=target-del"));
+
+      expect(mockBuilder.delete).toHaveBeenCalled();
+      const tables = mockFrom.mock.calls.map((c) => c[0]);
+      expect(tables).toContain("admins");
+      expect(tables).toContain("admin_audit_logs");
+      expect(tables).not.toContain("participants");
+      expect(tables).not.toContain("payment_orders");
+      expect(tables).not.toContain("events");
       expect(mockDeleteUser).not.toHaveBeenCalled();
     });
 
-    it("22. Repeated/double role-management requests cannot create inconsistent role state", async () => {
-      // Target is already an admin
-      mockBuilder.maybeSingle.mockResolvedValueOnce({ data: { user_id: "target-double", role: "admin" }, error: null });
-      
-      // Try to demote to admin again
-      const res = await PATCH(createMockRequest("PATCH", { userId: "target-double", newRole: "admin" }));
-      const data = await res.json();
-      
-      expect(res.status).toBe(400);
-      expect(data.error).toBe("Administrator already has this role.");
-      expect(mockBuilder.update).not.toHaveBeenCalled(); // Ensure no DB update was made
-    });
-
-    it("new-user invitation redirects to /admin/accept-invite", async () => {
-      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+    it("existing user re-invitation sends reset email and logs audit", async () => {
+      mockAsPrimaryMaster();
+      mockListUsers.mockResolvedValueOnce({
+        data: { users: [{ id: "existing-u", email: "exist@example.com" }] },
+        error: null,
+      });
       mockBuilder.insert.mockResolvedValueOnce({ error: null });
 
-      const res = await POST(createMockRequest("POST", { email: "new-user@example.com", role: "admin" }));
+      const res = await POST(createMockRequest("POST", { email: "exist@example.com", role: "admin" }));
       expect(res.status).toBe(201);
-      
-      // Assert the invitation API was called with the correct redirectTo
-      expect(mockInviteUserByEmail).toHaveBeenCalledWith("new-user@example.com", {
-        data: { saviskar_role: "admin" },
-        redirectTo: "http://localhost/admin/accept-invite",
-      });
-    });
-
-    it("existing-user re-invitation sends password reset and redirects to /admin/reset-password", async () => {
-      mockListUsers.mockResolvedValueOnce({ data: { users: [{ id: "existing-user", email: "existing-user@example.com" }] }, error: null });
-      mockBuilder.insert.mockResolvedValueOnce({ error: null }); // insert admin
-
-      const res = await POST(createMockRequest("POST", { email: "existing-user@example.com", role: "admin" }));
-      expect(res.status).toBe(201);
-      
-      // Assert the recovery API was called with the correct redirectTo
-      expect(mockResetPasswordForEmail).toHaveBeenCalledWith("existing-user@example.com", {
+      expect(mockResetPasswordForEmail).toHaveBeenCalledWith("exist@example.com", {
         redirectTo: "http://localhost/admin/reset-password",
       });
+      expect(mockBuilder.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action_type: "ADD_ADMIN",
+          target_id: "existing-u",
+        })
+      );
+    });
+
+    it("prevents re-adding an already configured administrator with 409 Conflict", async () => {
+      mockAsPrimaryMaster();
+      mockBuilder.select.mockReturnValueOnce({
+        limit: vi.fn().mockResolvedValueOnce({
+          data: [{ user_id: "already-admin-id", role: "admin" }],
+          error: null,
+        }),
+      });
+      mockListUsers.mockResolvedValueOnce({
+        data: { users: [{ id: "already-admin-id", email: "existing@example.com" }] },
+        error: null,
+      });
+
+      const res = await POST(createMockRequest("POST", { email: "existing@example.com", role: "admin" }));
+      expect(res.status).toBe(409);
+    });
+
+    it("GET endpoint returns admins list, isSuperMaster flag and explicit capabilities", async () => {
+      mockAsPrimaryMaster();
+      mockBuilder.order.mockResolvedValueOnce({
+        data: [
+          { user_id: "sm-id", role: "master", created_at: "2026-01-01" },
+          { user_id: "u2", role: "admin", created_at: "2026-01-02" },
+        ],
+        error: null,
+      });
+      mockGetUserById.mockImplementation((id: string) => {
+        if (id === "sm-id") {
+          return Promise.resolve({ data: { user: { email: "jashan082006@gmail.com" } } });
+        }
+        return Promise.resolve({ data: { user: { email: "admin2@example.com" } } });
+      });
+
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.isSuperMaster).toBe(true);
+      expect(data.canCreateMaster).toBe(true);
+      expect(data.canCreateNormal).toBe(true);
+      expect(data.admins).toHaveLength(2);
+      expect(data.admins[0].isPrimary).toBe(true);
+      expect(data.admins[1].isPrimary).toBe(false);
     });
   });
 });
