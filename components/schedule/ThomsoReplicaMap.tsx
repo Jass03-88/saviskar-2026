@@ -619,7 +619,12 @@ export default function ThomsoReplicaMap({
                       onPointerEnter={(e) => {
                         if (e.pointerType !== "touch") setHoveredVenueId(venue.id);
                       }}
-                      onClick={() => handleFlyToVenue(venue)}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onTouchStart={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleFlyToVenue(venue);
+                      }}
                       aria-label={`${venue.name} — ${eventCount} events`}
                     >
                       {/* Central Glowing Dot */}
@@ -744,7 +749,14 @@ export default function ThomsoReplicaMap({
                       {/* What: Title, Category, Description */}
                       <div className="venue__what">
                         <h3>{ev.name}</h3>
-                        <p className="venue__kind">{ev.category}</p>
+                        <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                          <p className="venue__kind">{ev.category}</p>
+                          {ev.room && (
+                            <span className="font-mono text-[10px] text-zinc-300 bg-white/[0.08] px-2 py-0.5 rounded-full border border-white/10">
+                              📍 {ev.room}
+                            </span>
+                          )}
+                        </div>
                         {ev.description && (
                           <p className="venue__blurb">{ev.description}</p>
                         )}

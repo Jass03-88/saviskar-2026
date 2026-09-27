@@ -577,14 +577,14 @@
   gap: 4px;
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-left: 3px solid var(--accent, #a855f7);
   border-radius: 12px;
-  background: rgba(10, 8, 18, 0.76);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1),
-              0 10px 25px -5px rgba(0, 0, 0, 0.6);
+  background: rgba(10, 8, 20, 0.52);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.12),
+              0 10px 30px -5px rgba(0, 0, 0, 0.55);
   cursor: pointer;
   text-align: left;
   transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
@@ -592,12 +592,12 @@
 
 .rail__card:hover,
 .rail__card:focus-visible {
-  background: rgba(20, 14, 34, 0.92);
-  border-color: rgba(168, 85, 247, 0.5);
+  background: rgba(24, 18, 42, 0.75);
+  border-color: rgba(168, 85, 247, 0.55);
   border-left-color: var(--accent, #a855f7);
   transform: translateX(4px);
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2),
-              0 12px 30px -5px rgba(0, 0, 0, 0.8),
+              0 12px 30px -5px rgba(0, 0, 0, 0.75),
               0 0 15px var(--accent-glow, rgba(168, 85, 247, 0.3));
   outline: none;
 }
@@ -660,19 +660,22 @@
 /* ────────────────────────────────────────────────────────────────────────────
    5. VENUE SIDE DRAWER (.venue & .venue--right)
    Slides in opposite to building with event schedule matrix
+   High-translucency frosted cosmic glass
    ──────────────────────────────────────────────────────────────────────────── */
 .venue {
   position: absolute;
   inset: 0;
   z-index: 40;
   display: flex;
-  background: linear-gradient(100deg, rgba(8, 6, 14, 0.98), rgba(8, 6, 14, 0.94) 45%, rgba(8, 6, 14, 0.35) 75%, transparent 100%);
+  background: linear-gradient(100deg, rgba(6, 4, 12, 0.78), rgba(6, 4, 12, 0.5) 45%, rgba(6, 4, 12, 0.1) 75%, transparent 100%);
   animation: venue-in 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .venue--right {
   flex-direction: row-reverse;
-  background: linear-gradient(260deg, rgba(8, 6, 14, 0.98), rgba(8, 6, 14, 0.94) 45%, rgba(8, 6, 14, 0.35) 75%, transparent 100%);
+  background: linear-gradient(260deg, rgba(6, 4, 12, 0.78), rgba(6, 4, 12, 0.5) 45%, rgba(6, 4, 12, 0.1) 75%, transparent 100%);
 }
 
 @keyframes venue-in {
@@ -688,16 +691,21 @@
   padding-top: clamp(80px, 12vh, 100px);
   overflow-y: auto;
   color: #ffffff;
-  background: linear-gradient(180deg, rgba(12, 9, 20, 0.96), rgba(8, 6, 14, 0.96));
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.12),
-              0 0 60px rgba(0, 0, 0, 0.85),
-              -10px 0 35px var(--accent-glow, rgba(168, 85, 247, 0.15));
+  background: linear-gradient(180deg, rgba(14, 10, 24, 0.68), rgba(8, 6, 16, 0.72));
+  backdrop-filter: blur(32px) saturate(190%);
+  -webkit-backdrop-filter: blur(32px) saturate(190%);
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 1px 0 1px rgba(255, 255, 255, 0.15),
+              0 0 60px rgba(0, 0, 0, 0.75),
+              -10px 0 35px var(--accent-glow, rgba(168, 85, 247, 0.2));
 }
 
 .venue--right .venue__body {
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.12),
-              0 0 60px rgba(0, 0, 0, 0.85),
-              10px 0 35px var(--accent-glow, rgba(168, 85, 247, 0.15));
+  border-right: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset -1px 0 1px rgba(255, 255, 255, 0.15),
+              0 0 60px rgba(0, 0, 0, 0.75),
+              10px 0 35px var(--accent-glow, rgba(168, 85, 247, 0.2));
 }
 
 .venue__back {
@@ -782,10 +790,12 @@
   align-items: start;
   gap: 14px;
   padding: 14px 14px 14px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
-  transition: background 0.2s ease, border-color 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .venue__row:last-child {
@@ -801,12 +811,14 @@
   width: 3px;
   border-radius: 2px;
   background: var(--accent, #a855f7);
-  opacity: 0.5;
+  opacity: 0.6;
   transition: opacity 0.2s ease;
 }
 
 .venue__row:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateX(2px);
 }
 
 .venue__row:hover::before {

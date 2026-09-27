@@ -15,7 +15,13 @@ import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/ui/Navbar";
 import ScheduleTimeline from "@/components/schedule/ScheduleTimeline";
 import ThomsoReplicaMap from "@/components/schedule/ThomsoReplicaMap";
-import { CAMPUS_VENUES, FESTIVAL_SCHEDULE } from "@/data/scheduleData";
+import {
+  CAMPUS_VENUES,
+  FESTIVAL_SCHEDULE,
+  ScheduleEvent,
+  mapDbEventToScheduleEvent,
+  resolveVenueId,
+} from "@/data/scheduleData";
 
 type Event = {
   id: string;
@@ -72,7 +78,16 @@ export default function SchedulePage() {
           }));
           setEvents(mappedFallback);
         } else {
-          setEvents(data as Event[]);
+          // Normalize venue display for events so null/TBD venues resolve to proper pavilion names
+          const enrichedEvents: Event[] = (data as Event[]).map((ev) => {
+            const vId = resolveVenueId(ev.venue, ev.name, ev.category);
+            const matchedVenue = CAMPUS_VENUES.find((v) => v.id === vId);
+            return {
+              ...ev,
+              venue: ev.venue && ev.venue !== "TBD" ? ev.venue : (matchedVenue?.name || "CGC Campus"),
+            };
+          });
+          setEvents(enrichedEvents);
         }
       } catch {
         const mappedFallback: Event[] = FESTIVAL_SCHEDULE.map((s) => ({
@@ -95,6 +110,12 @@ export default function SchedulePage() {
 
     loadSchedule();
   }, []);
+
+  // Compute live mapped ScheduleEvents from backend database rows
+  const mappedScheduleEvents = useMemo<ScheduleEvent[]>(() => {
+    if (events.length === 0) return FESTIVAL_SCHEDULE;
+    return events.map((ev) => mapDbEventToScheduleEvent(ev));
+  }, [events]);
 
   const dayCount = useMemo(
     () =>
@@ -122,7 +143,7 @@ export default function SchedulePage() {
         <div className="w-full h-screen overflow-hidden">
           <ThomsoReplicaMap
             onSwitchToTimeline={() => setViewMode("timeline")}
-            externalEvents={FESTIVAL_SCHEDULE}
+            externalEvents={mappedScheduleEvents}
           />
         </div>
       ) : (
