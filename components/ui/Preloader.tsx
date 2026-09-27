@@ -4,9 +4,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { FastForward, Disc3, ShieldCheck, Activity } from "lucide-react";
 
+import { GLIMPSE_175_UNIQUE_TILES, MAIN_GALLERY_GDRIVE_IMAGES } from "@/data/gdriveManifest";
+
 interface PreloaderProps {
   onComplete?: () => void;
   minDurationSeconds?: number;
+  mode?: "all" | "landing" | "gallery";
 }
 
 // Retrieve all critical landing page assets to load & decode before entering
@@ -31,30 +34,50 @@ const getLandingAssets = (): string[] => {
         "/images/scene-finale-celebration.webp",
       ];
 
-  // 2. Critical UI & Hero visual assets
+  // 2. Critical UI, Hero & Realm visual assets
   const coreVisuals = [
     "/images/hero.webp",
     "/images/concert-mission-centerstage.webp",
     "/logo.png",
     "/PreLoader/preloader.webp",
+    "/images/realm-technical-v2.webp",
+    "/images/realm-cultural-v2.webp",
+    "/images/realm-nontech-v2.webp",
+    "/images/realm-sports.webp",
+    "/images/realm-aivishkar-ai.webp",
   ];
 
-  return [...stadiumTextures, ...coreVisuals];
+  // 3. All 175 Unique 3D Dome Glimpse Gallery Tiles (Google Drive CDN thumbnails)
+  const domeTiles = GLIMPSE_175_UNIQUE_TILES.map((t) =>
+    t.thumbnailSrc ? t.thumbnailSrc.replace(/=s\d+$/, "=s400") : t.src
+  );
+
+  return [...stadiumTextures, ...coreVisuals, ...domeTiles];
+};
+
+const getGalleryAssets = (): string[] => {
+  if (typeof window === "undefined") return [];
+  // Main Gallery photos (Google Drive CDN thumbnails)
+  const mainGalleryPhotos = MAIN_GALLERY_GDRIVE_IMAGES.map((img) =>
+    img.thumbnailSrc ? img.thumbnailSrc.replace(/=s\d+$/, "=s800") : img.src
+  );
+  return ["/logo.png", ...mainGalleryPhotos];
 };
 
 const STATUS_STEPS = [
   { at: 0, text: "INITIALIZING AEVORIAN FREQUENCIES // CGC UNIVERSITY MOHALI" },
   { at: 18, text: "FETCHING HIGH-RES STADIUM MESH & 3D VENUE TEXTURES" },
-  { at: 42, text: "CALIBRATING 50+ REALMS & STAGE PYROTECHNICS" },
-  { at: 65, text: "SYNCHRONIZING CINEMATIC SHADERS & AUDIO RIGS" },
-  { at: 85, text: "FINALIZING ASSET SYNC • PRIMING IMMERSIVE REALM" },
-  { at: 94, text: "ALL SYSTEMS PRIMED • AWAKENING FESTIVAL REALM" },
+  { at: 38, text: "STREAMING GOOGLE DRIVE CDN MEDIA & 175 DOME TILES" },
+  { at: 62, text: "CALIBRATING 50+ REALMS & STAGE PYROTECHNICS" },
+  { at: 80, text: "PRIMING FESTIVAL ARCHIVE & HIGH-FIDELITY ASSETS" },
+  { at: 92, text: "ALL SYSTEMS PRIMED • AWAKENING FESTIVAL REALM" },
   { at: 99, text: "AEVORIAN REVERIE UNLOCKED • ENTERING SAVISKAR 2026" },
 ];
 
 export default function Preloader({
   onComplete,
   minDurationSeconds = 1.6,
+  mode = "all",
 }: PreloaderProps) {
   const [showPreloader, setShowPreloader] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
@@ -125,26 +148,52 @@ export default function Preloader({
 
     let isMounted = true;
 
-    const preloadImage = (src: string): Promise<void> => {
+    const preloadSingleImage = (src: string, timeoutMs = 4000): Promise<void> => {
       return new Promise<void>((resolve) => {
-        const img = new Image();
-        img.src = src;
-        if (img.complete) {
-          if (typeof img.decode === "function") {
-            img.decode().then(() => resolve()).catch(() => resolve());
-          } else {
-            resolve();
-          }
-          return;
-        }
-        img.onload = () => {
-          if (typeof img.decode === "function") {
-            img.decode().then(() => resolve()).catch(() => resolve());
-          } else {
+        let resolved = false;
+        const done = () => {
+          if (!resolved) {
+            resolved = true;
             resolve();
           }
         };
-        img.onerror = () => resolve();
+
+        const timer = setTimeout(done, timeoutMs);
+        const img = new Image();
+        img.referrerPolicy = "no-referrer";
+        img.decoding = "async";
+        img.src = src;
+
+        if (img.complete) {
+          clearTimeout(timer);
+          if (typeof img.decode === "function") {
+            img.decode().then(done).catch(done);
+          } else {
+            done();
+          }
+          return;
+        }
+
+        img.onload = () => {
+          clearTimeout(timer);
+          if (typeof img.decode === "function") {
+            img.decode().then(done).catch(done);
+          } else {
+            done();
+          }
+        };
+
+        img.onerror = () => {
+          clearTimeout(timer);
+          // Fast single retry
+          const retryImg = new Image();
+          retryImg.referrerPolicy = "no-referrer";
+          retryImg.decoding = "async";
+          retryImg.src = src;
+          retryImg.onload = done;
+          retryImg.onerror = done;
+          setTimeout(done, 1200);
+        };
       });
     };
 
@@ -192,15 +241,17 @@ export default function Preloader({
       setTimeout(onReady, 4000);
     });
 
-    const imagesToPreload = getLandingAssets();
-    const assetPromises: Promise<unknown>[] = [
-      ...imagesToPreload.map(preloadImage),
-      fontPromise,
-      docPromise,
-      videoPromise,
-    ];
+    const allImagesToPreload = Array.from(
+      new Set(
+        mode === "gallery"
+          ? getGalleryAssets()
+          : mode === "landing"
+          ? getLandingAssets()
+          : [...getLandingAssets(), ...getGalleryAssets()]
+      )
+    );
 
-    const totalAssets = assetPromises.length;
+    const totalAssets = allImagesToPreload.length + 3; // + font, doc, video
     totalAssetsRef.current = totalAssets;
     let completedCount = 0;
     completedAssetsRef.current = 0;
@@ -209,23 +260,56 @@ export default function Preloader({
       setAssetCount({ loaded: 0, total: totalAssets });
     }
 
-    assetPromises.forEach((promise) => {
-      Promise.resolve(promise).finally(() => {
-        if (!isMounted) return;
-        completedCount++;
-        completedAssetsRef.current = completedCount;
-        setAssetCount({ loaded: completedCount, total: totalAssets });
-        if (completedCount >= totalAssets) {
-          assetsReadyRef.current = true;
-          setAssetsLoaded(true);
+    const onSingleAssetDone = () => {
+      if (!isMounted) return;
+      completedCount++;
+      completedAssetsRef.current = completedCount;
+      setAssetCount({ loaded: completedCount, total: totalAssets });
+      if (completedCount >= totalAssets) {
+        assetsReadyRef.current = true;
+        setAssetsLoaded(true);
+      }
+    };
+
+    fontPromise.finally(onSingleAssetDone);
+    docPromise.finally(onSingleAssetDone);
+    videoPromise.finally(onSingleAssetDone);
+
+    // Concurrency queue for images (16 parallel workers)
+    const concurrency = 16;
+    let queueIdx = 0;
+
+    const worker = async () => {
+      while (queueIdx < allImagesToPreload.length) {
+        if (!isMounted) break;
+        const currentIdx = queueIdx++;
+        const url = allImagesToPreload[currentIdx];
+        try {
+          await preloadSingleImage(url);
+        } catch {
+          // ignore
         }
-      });
+        onSingleAssetDone();
+      }
+    };
+
+    const workerPool = Array.from(
+      { length: Math.min(concurrency, allImagesToPreload.length) },
+      () => worker()
+    );
+
+    Promise.all(workerPool).finally(() => {
+      if (!isMounted) return;
+      if (completedCount >= totalAssets) {
+        assetsReadyRef.current = true;
+        setAssetsLoaded(true);
+      }
     });
 
     return () => {
       isMounted = false;
     };
-  }, [showPreloader]);
+  }, [showPreloader, mode]);
 
   // Smooth, monotonic cinematic progress engine driven by REAL asset loading
   useEffect(() => {

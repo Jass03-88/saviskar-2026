@@ -64,6 +64,7 @@ function GalleryCardImage({
         alt={alt}
         fill
         unoptimized
+        referrerPolicy="no-referrer"
         loading="lazy"
         decoding="async"
         sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
@@ -77,6 +78,7 @@ function GalleryCardImage({
 }
 
 import Navbar from "@/components/ui/Navbar";
+import Preloader from "@/components/ui/Preloader";
 import {
   GALLERY_IMAGES,
   GALLERY_VIDEOS,
@@ -267,6 +269,9 @@ export default function RedesignedGalleryPage() {
 
   return (
     <main className="relative min-h-screen bg-[#040407] text-white selection:bg-violet-500 selection:text-white">
+      {/* Cinematic Asset Preloader for Gallery Archive */}
+      <Preloader mode="gallery" minDurationSeconds={1.2} />
+
       {/* Universal Navigation */}
       <Navbar />
 

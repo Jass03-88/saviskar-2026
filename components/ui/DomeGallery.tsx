@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { useGesture } from '@use-gesture/react';
 import './DomeGallery.css';
 
@@ -116,6 +115,8 @@ function computeItemBaseRotation(offsetX: number, offsetY: number, sizeX: number
   const rotateX = unit * (offsetY - (sizeY - 1) / 2);
   return { rotateX, rotateY };
 }
+
+
 
 export default function DomeGallery({
   images = DEFAULT_IMAGES,
@@ -546,6 +547,7 @@ export default function DomeGallery({
       const rawSrc = parent.dataset.src || el.querySelector('img')?.src || '';
       const enlargedSrc = rawSrc.includes('googleusercontent.com') ? rawSrc.replace(/=s\d+$/, '=s1600') : rawSrc;
       const img = document.createElement('img');
+      img.referrerPolicy = 'no-referrer';
       img.src = enlargedSrc;
       overlay.appendChild(img);
       viewerRef.current?.appendChild(overlay);
@@ -682,12 +684,13 @@ export default function DomeGallery({
                   onClick={onTileClick}
                   onPointerUp={onTilePointerUp}
                 >
-                  <Image
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
                     src={it.src}
-                    alt={it.alt || 'Festival moment'}
-                    width={160}
-                    height={160}
-                    unoptimized
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    loading="eager"
+                    decoding="async"
                     draggable={false}
                   />
                 </div>

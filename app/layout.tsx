@@ -29,6 +29,7 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
+  referrer: "no-referrer",
   title: {
     default: "Saviskar 2026 | Aevorian Reverie — Annual National University Fest | CGC University, Mohali",
     template: "%s | Saviskar 2026 — Aevorian Reverie | CGC University, Mohali",
