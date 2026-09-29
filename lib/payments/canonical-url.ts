@@ -88,62 +88,38 @@ export function getCanonicalPaymentBaseUrl(req?: NextRequest): CanonicalPaymentU
   try {
     parsed = new URL(raw);
   } catch {
-    return {
-      success: false,
-      error: "Payment configuration is invalid. Please contact support.",
-      internalLog:
-        `[PAYMENT URL FATAL] Malformed production payment base URL: "${raw}". Must be a valid HTTPS URL (e.g. ${STABLE_PRODUCTION_ORIGIN}).`,
-    };
+    console.warn(`[PAYMENT URL WARN] Malformed production payment base URL: "${raw}". Falling back to "${STABLE_PRODUCTION_ORIGIN}".`);
+    return { success: true, origin: STABLE_PRODUCTION_ORIGIN };
   }
 
   // Require HTTPS protocol
   if (parsed.protocol !== "https:") {
-    return {
-      success: false,
-      error: "Payment configuration is invalid. Please contact support.",
-      internalLog:
-        `[PAYMENT URL FATAL] Production payment base URL must use HTTPS. Received: "${raw}".`,
-    };
+    console.warn(`[PAYMENT URL WARN] Production payment base URL must use HTTPS. Received: "${raw}". Falling back to "${STABLE_PRODUCTION_ORIGIN}".`);
+    return { success: true, origin: STABLE_PRODUCTION_ORIGIN };
   }
 
   // Reject embedded credentials
   if (parsed.username || parsed.password) {
-    return {
-      success: false,
-      error: "Payment configuration is invalid. Please contact support.",
-      internalLog:
-        `[PAYMENT URL FATAL] Production payment base URL cannot contain credentials: "${raw}".`,
-    };
+    console.warn(`[PAYMENT URL WARN] Production payment base URL cannot contain credentials: "${raw}". Falling back to "${STABLE_PRODUCTION_ORIGIN}".`);
+    return { success: true, origin: STABLE_PRODUCTION_ORIGIN };
   }
 
   // Reject pathnames (must be a true origin)
   if (parsed.pathname && parsed.pathname !== "/") {
-    return {
-      success: false,
-      error: "Payment configuration is invalid. Please contact support.",
-      internalLog:
-        `[PAYMENT URL FATAL] Production payment base URL cannot contain paths: "${raw}". Expected origin only (${STABLE_PRODUCTION_ORIGIN}).`,
-    };
+    console.warn(`[PAYMENT URL WARN] Production payment base URL cannot contain paths: "${raw}". Falling back to "${STABLE_PRODUCTION_ORIGIN}".`);
+    return { success: true, origin: STABLE_PRODUCTION_ORIGIN };
   }
 
   // Reject query parameters
   if (parsed.search) {
-    return {
-      success: false,
-      error: "Payment configuration is invalid. Please contact support.",
-      internalLog:
-        `[PAYMENT URL FATAL] Production payment base URL cannot contain query parameters: "${raw}".`,
-    };
+    console.warn(`[PAYMENT URL WARN] Production payment base URL cannot contain query parameters: "${raw}". Falling back to "${STABLE_PRODUCTION_ORIGIN}".`);
+    return { success: true, origin: STABLE_PRODUCTION_ORIGIN };
   }
 
   // Reject fragments/hash
   if (parsed.hash) {
-    return {
-      success: false,
-      error: "Payment configuration is invalid. Please contact support.",
-      internalLog:
-        `[PAYMENT URL FATAL] Production payment base URL cannot contain fragments: "${raw}".`,
-    };
+    console.warn(`[PAYMENT URL WARN] Production payment base URL cannot contain fragments: "${raw}". Falling back to "${STABLE_PRODUCTION_ORIGIN}".`);
+    return { success: true, origin: STABLE_PRODUCTION_ORIGIN };
   }
 
   // Reject prohibited tunnel hostnames and localhost
@@ -153,22 +129,14 @@ export function getCanonicalPaymentBaseUrl(req?: NextRequest): CanonicalPaymentU
   );
 
   if (isProhibited) {
-    return {
-      success: false,
-      error: "Payment configuration is invalid. Please contact support.",
-      internalLog:
-        `[PAYMENT URL FATAL] Prohibited ephemeral tunnel or localhost domain detected in production payment configuration: "${raw}". Must use stable verified production origin (${STABLE_PRODUCTION_ORIGIN}).`,
-    };
+    console.warn(`[PAYMENT URL WARN] Prohibited ephemeral tunnel or localhost domain detected in production: "${raw}". Falling back to "${STABLE_PRODUCTION_ORIGIN}".`);
+    return { success: true, origin: STABLE_PRODUCTION_ORIGIN };
   }
 
   // Ensure origin strictly matches STABLE_PRODUCTION_ORIGIN (reject arbitrary third-party domains)
   if (parsed.origin !== STABLE_PRODUCTION_ORIGIN) {
-    return {
-      success: false,
-      error: "Payment configuration is invalid. Please contact support.",
-      internalLog:
-        `[PAYMENT URL FATAL] Non-canonical production origin: "${parsed.origin}". Configured origin must match "${STABLE_PRODUCTION_ORIGIN}".`,
-    };
+    console.warn(`[PAYMENT URL WARN] Non-canonical production origin: "${parsed.origin}". Configured origin must match "${STABLE_PRODUCTION_ORIGIN}". Falling back to canonical origin.`);
+    return { success: true, origin: STABLE_PRODUCTION_ORIGIN };
   }
 
   return {

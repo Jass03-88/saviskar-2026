@@ -169,7 +169,10 @@ describe("Canonical Payment Callback URL & Resume Destination Hardening", () => 
       // Prohibited tunnel must also be rejected under VERCEL_ENV === 'production'
       process.env.PAYMENT_CALLBACK_BASE_URL = "https://test.trycloudflare.com";
       const resBad = getCanonicalPaymentBaseUrl();
-      expect(resBad.success).toBe(false);
+      expect(resBad.success).toBe(true);
+      if (resBad.success) {
+        expect(resBad.origin).toBe("https://saviskar-26.vercel.app");
+      }
     });
 
     it("falls back to NEXT_PUBLIC_SITE_URL in production if callback var is unset", () => {
@@ -196,88 +199,90 @@ describe("Canonical Payment Callback URL & Resume Destination Hardening", () => 
       }
     });
 
-    it("STRICTLY REJECTS trycloudflare.com ephemeral tunnels in production", () => {
+    it("STRICTLY FALLS BACK for trycloudflare.com ephemeral tunnels in production", () => {
       vi.stubEnv("NODE_ENV", "production");
       process.env.PAYMENT_CALLBACK_BASE_URL =
         "https://spreading-dans-edges-addition.trycloudflare.com";
 
       const res = getCanonicalPaymentBaseUrl();
-      expect(res.success).toBe(false);
-      if (!res.success) {
-        expect(res.error).toBe("Payment configuration is invalid. Please contact support.");
-        expect(res.internalLog).toContain("Prohibited ephemeral tunnel");
+      expect(res.success).toBe(true);
+      if (res.success) {
+        expect(res.origin).toBe(STABLE_PRODUCTION_ORIGIN);
       }
     });
 
-    it("STRICTLY REJECTS ngrok-free.app and other ngrok tunnels in production", () => {
+    it("STRICTLY FALLS BACK for ngrok-free.app and other ngrok tunnels in production", () => {
       vi.stubEnv("NODE_ENV", "production");
       process.env.PAYMENT_CALLBACK_BASE_URL = "https://foo-bar.ngrok-free.app";
 
       const res = getCanonicalPaymentBaseUrl();
-      expect(res.success).toBe(false);
-      if (!res.success) {
-        expect(res.internalLog).toContain("Prohibited ephemeral tunnel");
+      expect(res.success).toBe(true);
+      if (res.success) {
+        expect(res.origin).toBe(STABLE_PRODUCTION_ORIGIN);
       }
     });
 
-    it("STRICTLY REJECTS localhost and non-HTTPS in production", () => {
+    it("STRICTLY FALLS BACK for localhost and non-HTTPS in production", () => {
       vi.stubEnv("NODE_ENV", "production");
 
       process.env.PAYMENT_CALLBACK_BASE_URL = "http://localhost:3000";
       const resLocal = getCanonicalPaymentBaseUrl();
-      expect(resLocal.success).toBe(false);
+      expect(resLocal.success).toBe(true);
+      if (resLocal.success) {
+        expect(resLocal.origin).toBe(STABLE_PRODUCTION_ORIGIN);
+      }
 
       process.env.PAYMENT_CALLBACK_BASE_URL = "http://saviskar-26.vercel.app";
       const resHttp = getCanonicalPaymentBaseUrl();
-      expect(resHttp.success).toBe(false);
-      if (!resHttp.success) {
-        expect(resHttp.internalLog).toContain("must use HTTPS");
+      expect(resHttp.success).toBe(true);
+      if (resHttp.success) {
+        expect(resHttp.origin).toBe(STABLE_PRODUCTION_ORIGIN);
       }
     });
 
-    it("STRICTLY REJECTS paths, queries, fragments, and credentials in production", () => {
+    it("STRICTLY FALLS BACK for paths, queries, fragments, and credentials in production", () => {
       vi.stubEnv("NODE_ENV", "production");
 
       // Path rejection
       process.env.PAYMENT_CALLBACK_BASE_URL = "https://saviskar-26.vercel.app/api/payments";
       const resPath = getCanonicalPaymentBaseUrl();
-      expect(resPath.success).toBe(false);
-      if (!resPath.success) expect(resPath.internalLog).toContain("cannot contain paths");
+      expect(resPath.success).toBe(true);
+      if (resPath.success) expect(resPath.origin).toBe(STABLE_PRODUCTION_ORIGIN);
 
       // Query rejection
       process.env.PAYMENT_CALLBACK_BASE_URL = "https://saviskar-26.vercel.app?ref=123";
       const resQuery = getCanonicalPaymentBaseUrl();
-      expect(resQuery.success).toBe(false);
-      if (!resQuery.success) expect(resQuery.internalLog).toContain("cannot contain query parameters");
+      expect(resQuery.success).toBe(true);
+      if (resQuery.success) expect(resQuery.origin).toBe(STABLE_PRODUCTION_ORIGIN);
 
       // Fragment rejection
       process.env.PAYMENT_CALLBACK_BASE_URL = "https://saviskar-26.vercel.app#checkout";
       const resHash = getCanonicalPaymentBaseUrl();
-      expect(resHash.success).toBe(false);
-      if (!resHash.success) expect(resHash.internalLog).toContain("cannot contain fragments");
+      expect(resHash.success).toBe(true);
+      if (resHash.success) expect(resHash.origin).toBe(STABLE_PRODUCTION_ORIGIN);
 
       // Credential rejection
       process.env.PAYMENT_CALLBACK_BASE_URL = "https://user:pass@saviskar-26.vercel.app";
       const resCred = getCanonicalPaymentBaseUrl();
-      expect(resCred.success).toBe(false);
-      if (!resCred.success) expect(resCred.internalLog).toContain("cannot contain credentials");
+      expect(resCred.success).toBe(true);
+      if (resCred.success) expect(resCred.origin).toBe(STABLE_PRODUCTION_ORIGIN);
     });
 
-    it("STRICTLY REJECTS arbitrary third-party HTTPS domains in production", () => {
+    it("STRICTLY FALLS BACK for arbitrary third-party HTTPS domains in production", () => {
       vi.stubEnv("NODE_ENV", "production");
 
       process.env.PAYMENT_CALLBACK_BASE_URL = "https://saviskar.co.in"; // Netlify site
       const resNetlify = getCanonicalPaymentBaseUrl();
-      expect(resNetlify.success).toBe(false);
-      if (!resNetlify.success) {
-        expect(resNetlify.internalLog).toContain("Non-canonical production origin");
+      expect(resNetlify.success).toBe(true);
+      if (resNetlify.success) {
+        expect(resNetlify.origin).toBe(STABLE_PRODUCTION_ORIGIN);
       }
 
       process.env.PAYMENT_CALLBACK_BASE_URL = "https://attacker-domain.com";
       const resAttacker = getCanonicalPaymentBaseUrl();
-      expect(resAttacker.success).toBe(false);
-      if (!resAttacker.success) {
-        expect(resAttacker.internalLog).toContain("Non-canonical production origin");
+      expect(resAttacker.success).toBe(true);
+      if (resAttacker.success) {
+        expect(resAttacker.origin).toBe(STABLE_PRODUCTION_ORIGIN);
       }
     });
 
@@ -317,7 +322,7 @@ describe("Canonical Payment Callback URL & Resume Destination Hardening", () => 
       expect(data.checkoutConfig.options.furl).toBe("https://saviskar-26.vercel.app/api/payments/payu/failure");
     });
 
-    it("fails safely and does NOT create gateway order if tunnel URL is configured in production", async () => {
+    it("succeeds and uses canonical fallback if tunnel URL is configured in production", async () => {
       vi.stubEnv("NODE_ENV", "production");
       process.env.PAYMENT_CALLBACK_BASE_URL =
         "https://spreading-dans-edges-addition.trycloudflare.com";
@@ -328,10 +333,10 @@ describe("Canonical Payment Callback URL & Resume Destination Hardening", () => 
       });
 
       const res = await createPaymentOrder(req);
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(200);
       const data = await res.json();
-      expect(data.success).toBe(false);
-      expect(data.error).toBe("Payment configuration is invalid. Please contact support.");
+      expect(data.success).toBe(true);
+      expect(data.checkoutConfig.options.surl).toBe("https://saviskar-26.vercel.app/api/payments/payu/success");
     });
   });
 
