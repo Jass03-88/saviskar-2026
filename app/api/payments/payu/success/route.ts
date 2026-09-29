@@ -107,7 +107,9 @@ export async function POST(request: NextRequest) {
         paymentOrderId,
         status: fetchedPayment.status,
       });
-      return NextResponse.redirect(new URL("/payment/resume?error=payment-not-paid", resumeUrl), 303);
+      const redirectUrl = new URL(resumeUrl);
+      redirectUrl.searchParams.set("error", "payment-not-paid");
+      return NextResponse.redirect(redirectUrl, 303);
     }
 
     const expectedAmountPaise = Number(paymentOrder.amount) * 100;
@@ -117,7 +119,9 @@ export async function POST(request: NextRequest) {
         expectedPaise: expectedAmountPaise,
         actualPaise: fetchedPayment.amount,
       });
-      return NextResponse.redirect(new URL("/payment/resume?error=amount-mismatch", resumeUrl), 303);
+      const redirectUrl = new URL(resumeUrl);
+      redirectUrl.searchParams.set("error", "amount-mismatch");
+      return NextResponse.redirect(redirectUrl, 303);
     }
   } catch (err) {
     captureException(err, {
@@ -127,7 +131,9 @@ export async function POST(request: NextRequest) {
       extra: { paymentOrderId, gatewayPaymentId },
     });
     console.error("Server-side payment verification failed (fail-closed):", err instanceof Error ? err.message : String(err));
-    return NextResponse.redirect(new URL("/payment/resume?error=verification-failed", resumeUrl), 303);
+    const redirectUrl = new URL(resumeUrl);
+    redirectUrl.searchParams.set("error", "verification-failed");
+    return NextResponse.redirect(redirectUrl, 303);
   }
 
   // ─── Database-Enforced Idempotency Claim ─────────────────
@@ -145,7 +151,9 @@ export async function POST(request: NextRequest) {
 
   if (claimError && !isDuplicate) {
     console.error("Database error claiming payment event:", claimError);
-    return NextResponse.redirect(new URL("/payment/resume?error=database-error", resumeUrl), 303);
+    const redirectUrl = new URL(resumeUrl);
+    redirectUrl.searchParams.set("error", "database-error");
+    return NextResponse.redirect(redirectUrl, 303);
   }
 
   if (isDuplicate) {
@@ -164,7 +172,9 @@ export async function POST(request: NextRequest) {
 
   if (updateOrderError) {
     console.error("Failed to update payment_orders status:", updateOrderError);
-    return NextResponse.redirect(new URL("/payment/resume?error=database-error", resumeUrl), 303);
+    const redirectUrl = new URL(resumeUrl);
+    redirectUrl.searchParams.set("error", "database-error");
+    return NextResponse.redirect(redirectUrl, 303);
   }
 
   // ─── Update Linked participant_events ───────────────────

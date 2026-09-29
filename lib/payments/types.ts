@@ -175,6 +175,7 @@ export interface PaymentGateway {
     currency: string;
     payer: CreateOrderParams["payer"];
     orderReference: string;
+    baseUrl?: string;
   }): CheckoutConfig;
 
   /**

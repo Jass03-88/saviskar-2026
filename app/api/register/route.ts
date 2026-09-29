@@ -1136,7 +1136,7 @@ export async function POST(
         console.log(
           `[REGISTER EMAIL] Withholding Entry QR pass for unpaid event ${result.event_id} (payment_status: ${peRow.payment_status}). Pass will be issued upon payment verification.`
         );
-        continue;
+        // We do not continue here. The email will still be sent as 'Payment Pending' and the QR will be omitted.
       }
 
       const isTeam = eventMeta.registration_type === "team";

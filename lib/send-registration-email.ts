@@ -759,7 +759,7 @@ export async function sendRegistrationEmail(
               ` : ""}
 
               <!-- QR -->
-
+              ${!(requiresPayment && !receiptPdf) ? `
               <div
                 style="
                   margin-top: 34px;
@@ -849,6 +849,7 @@ export async function sendRegistrationEmail(
                 </div>
 
               </div>
+              ` : ""}
 
               <!-- FOOTER -->
 
@@ -909,40 +910,50 @@ export async function sendRegistrationEmail(
         ? `Payment Confirmed — Saviskar 2026 | Receipt ${recipient.participantId}`
         : `You're Registered — Saviskar 2026 | ${recipient.participantId}`;
 
-      const { data: resendData, error: resendError } = await resend.emails.send({
+      const attachments = (qrBuffer || receiptPdf)
+        ? [
+            ...(qrBuffer
+              ? [
+                  {
+                    filename: "qr.png",
+                    content: qrBuffer,
+                    contentId: "saviskar-entry-qr",
+                    contentType: "image/png",
+                  },
+                ]
+              : []),
+            ...(receiptPdf
+              ? [
+                  {
+                    filename: receiptPdf.filename,
+                    content: receiptPdf.buffer,
+                    contentType: "application/pdf",
+                  },
+                ]
+              : []),
+          ]
+        : undefined;
+
+      let { data, error } = await resend.emails.send({
         from: fromEmail,
         to: [recipient.email],
         subject: subjectLine,
         html: emailHtml,
-        ...((qrBuffer || receiptPdf)
-          ? {
-              attachments: [
-                ...(qrBuffer
-                  ? [
-                      {
-                        filename: "qr.png",
-                        content: qrBuffer,
-                        contentId: "saviskar-entry-qr",
-                        contentType: "image/png",
-                      },
-                    ]
-                  : []),
-                ...(receiptPdf
-                  ? [
-                      {
-                        filename: receiptPdf.filename,
-                        content: receiptPdf.buffer,
-                        contentType: "application/pdf",
-                      },
-                    ]
-                  : []),
-              ],
-            }
-          : {}),
+        ...(attachments ? { attachments } : {}),
       });
 
-      const data = resendData;
-      const error = resendError;
+      if (error && (error as { statusCode?: number; message?: string }).statusCode === 403 && String((error as { message?: string }).message || "").includes("domain is not verified")) {
+        console.warn(`[REGISTER EMAIL] Domain not verified in Resend. Retrying with onboarding fallback for ${recipient.email}...`);
+        const fallbackRes = await resend.emails.send({
+          from: "Saviskar 2026 <onboarding@resend.dev>",
+          to: [recipient.email],
+          subject: subjectLine,
+          html: emailHtml,
+          ...(attachments ? { attachments } : {}),
+        });
+        data = fallbackRes.data;
+        error = fallbackRes.error;
+      }
 
       if (error) {
         console.error(

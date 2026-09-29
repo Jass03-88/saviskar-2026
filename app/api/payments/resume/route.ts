@@ -34,7 +34,8 @@ function errorResponse(
 }
 
 export async function GET(request: NextRequest) {
-  const token = request.nextUrl.searchParams.get("token")?.trim();
+  try {
+    const token = request.nextUrl.searchParams.get("token")?.trim();
 
   if (!token) {
     return errorResponse(
@@ -210,4 +211,8 @@ export async function GET(request: NextRequest) {
       headers: { "Cache-Control": "no-store" },
     }
   );
+  } catch (err) {
+    console.error("Resume API Unhandled Error:", err);
+    return errorResponse("An unexpected error occurred while loading payment details.", 500, "INTERNAL_ERROR");
+  }
 }

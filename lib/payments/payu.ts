@@ -73,6 +73,7 @@ export class PayUGateway implements PaymentGateway {
     currency: string;
     payer: CreateOrderParams["payer"];
     orderReference: string;
+    baseUrl?: string;
   }): CheckoutConfig {
     const amountStr = (params.amount / 100).toFixed(2); // Convert paise to INR
     const productinfo = "Saviskar 2026 Registration";
@@ -81,7 +82,7 @@ export class PayUGateway implements PaymentGateway {
     const phone = params.payer.phone?.trim() || "9999999999";
     const udf1 = params.orderReference; 
 
-    const baseUrl = getSiteBaseUrl();
+    const baseUrl = params.baseUrl || getSiteBaseUrl();
     const surl = `${baseUrl}/api/payments/payu/success`;
     const furl = `${baseUrl}/api/payments/payu/failure`;
 
@@ -235,9 +236,18 @@ export class PayUGateway implements PaymentGateway {
       }>;
     };
     try {
-      data = await response.json();
-    } catch {
-      throw new Error(`fetchPaymentDetails: Malformed JSON response for payment ${gatewayPaymentId}.`);
+      const text = await response.text();
+      try {
+        data = JSON.parse(text);
+      } catch {
+        console.error(`PayU fetchPaymentDetails JSON parse failed for ${gatewayPaymentId}. Raw response: ${text.substring(0, 500)}`);
+        throw new Error(`fetchPaymentDetails: Malformed JSON response for payment ${gatewayPaymentId}.`);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Malformed JSON')) {
+        throw err;
+      }
+      throw new Error(`fetchPaymentDetails: Failed to read response for payment ${gatewayPaymentId}.`);
     }
     
     if (data.status !== 1) {

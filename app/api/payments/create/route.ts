@@ -277,6 +277,18 @@ export async function POST(
   const payerEmail = payer.email ?? "";
   const payerPhone = payer.phone ?? "";
 
+  let resolvedBaseUrl: string | undefined;
+  if (process.env.NODE_ENV !== "production") {
+    const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+    const protocol = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", "") === "https" ? "https" : "http");
+    resolvedBaseUrl = host ? `${protocol}://${host}` : undefined;
+  } else {
+    const prodUrl = process.env.PAYMENT_CALLBACK_BASE_URL || process.env.NEXT_PUBLIC_SITE_URL;
+    if (prodUrl) {
+      resolvedBaseUrl = prodUrl.replace(/\/+$/, "");
+    }
+  }
+
   // ─── If Gateway Order Already Exists, Reuse It ──────────
 
   if (paymentOrder.gateway_order_id) {
@@ -284,33 +296,105 @@ export async function POST(
       paymentOrder.gateway ?? undefined
     );
 
-    const checkoutConfig =
-      gateway.getCheckoutConfig({
-        gatewayOrderId:
-          paymentOrder.gateway_order_id,
-        amount: Number(paymentOrder.amount) * 100,
-        currency: paymentOrder.currency ?? "INR",
-        payer: {
-          name: payerName,
-          email: payerEmail,
-          phone: payerPhone,
-        },
-        orderReference:
-          paymentOrder.order_reference,
+    // ─── STUCK/ALREADY-CAPTURED TRANSACTION RECOVERY ────────
+    let isAlreadyPaid = false;
+    let fetchedGatewayPaymentId = "";
+    try {
+      const details = await gateway.fetchPaymentDetails(paymentOrder.gateway_order_id);
+      if (details.status === "paid") {
+        isAlreadyPaid = true;
+        fetchedGatewayPaymentId = details.gatewayPaymentId;
+      }
+    } catch (err) {
+      console.error("PayU Verify Payment failed, timed out, or transaction not found. Failing closed:", err instanceof Error ? err.message : String(err));
+      return errorResponse(
+        "Unable to verify current payment status with the gateway. Please try again later.",
+        502
+      );
+    }
+
+    if (isAlreadyPaid) {
+      console.log("Transaction already captured on gateway. Recovering stuck transaction.", {
+        paymentOrderId: paymentOrder.id,
+        gatewayOrderId: paymentOrder.gateway_order_id
       });
 
-    return NextResponse.json(
-      {
-        success: true,
-        gatewayOrderId:
-          paymentOrder.gateway_order_id,
-        checkoutConfig,
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store",
-        },
+      const { data: eventClaim, error: claimError } = await supabaseAdmin
+        .from("processed_payment_events")
+        .insert({
+          order_id: paymentOrder.id,
+          payment_id: fetchedGatewayPaymentId,
+          event_type: "payment.captured.recovery",
+        })
+        .select("id")
+        .maybeSingle();
+
+      const isDuplicate = claimError?.code === "23505" || (!claimError && !eventClaim);
+
+      if (!isDuplicate) {
+        await supabaseAdmin
+          .from("payment_orders")
+          .update({
+            status: "paid",
+            gateway_payment_id: fetchedGatewayPaymentId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", paymentOrder.id);
+
+        const { data: orderItems } = await supabaseAdmin
+          .from("payment_order_items")
+          .select("participant_event_id, participant_id")
+          .eq("payment_order_id", paymentOrder.id);
+
+        const participantEventIds = (orderItems ?? [])
+          .map((item) => item.participant_event_id)
+          .filter(Boolean) as string[];
+
+        if (participantEventIds.length > 0) {
+          await supabaseAdmin
+            .from("participant_events")
+            .update({
+              payment_status: "paid",
+              payment_id: fetchedGatewayPaymentId,
+              updated_at: new Date().toISOString(),
+            })
+            .in("id", participantEventIds);
+        }
+
+        if (paymentOrder.payer_participant_id) {
+          await supabaseAdmin
+            .from("payments")
+            .insert({
+              participant_id: paymentOrder.payer_participant_id,
+              participant_event_id: participantEventIds[0] ?? null,
+              amount: Number(paymentOrder.amount),
+              status: "paid",
+              gateway: gateway.name,
+              gateway_payment_id: fetchedGatewayPaymentId,
+              gateway_order_id: paymentOrder.gateway_order_id,
+            });
+        }
+
+        const { ensurePaymentConfirmationSent } = await import("@/lib/payments/post-payment");
+        await ensurePaymentConfirmationSent(paymentOrder.id);
       }
+
+      return NextResponse.json(
+        {
+          success: true,
+          gatewayOrderId: paymentOrder.gateway_order_id,
+          alreadyPaid: true,
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    // If it's not paid, we cannot safely reuse the txnid (PayU rejects reused txnids that were attempted).
+    // The DB schema does not safely support multiple gateway attempts per payment_order without overwriting history.
+    console.warn("Existing payment order is not paid (status: pending/failed). Database schema does not support multiple gateway order IDs per payment_order safely without overwriting history. Rejecting reuse.");
+    return errorResponse(
+      "This payment session has already been initiated. If you did not complete the payment, please cancel this registration and create a new one to try again.",
+      400
     );
   }
 
@@ -388,6 +472,7 @@ export async function POST(
       },
       orderReference:
         paymentOrder.order_reference,
+      baseUrl: resolvedBaseUrl,
     });
 
   console.log(
