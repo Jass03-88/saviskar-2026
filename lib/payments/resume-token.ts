@@ -13,6 +13,7 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { getCanonicalPaymentBaseUrl, STABLE_PRODUCTION_ORIGIN } from "./canonical-url";
 
 export type PaymentResumeTokenPayload = {
   /** Internal UUID of the payment_orders record */
@@ -194,13 +195,15 @@ export function verifyPaymentResumeToken(
  * Resolves the application base URL for email links.
  */
 export function getSiteBaseUrl(): string {
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (siteUrl) {
-    return siteUrl.replace(/\/+$/, "");
+  const result = getCanonicalPaymentBaseUrl();
+  if (result.success) {
+    return result.origin;
   }
-  const vercelUrl = process.env.VERCEL_URL?.trim();
-  if (vercelUrl) {
-    return `https://${vercelUrl.replace(/\/+$/, "")}`;
+  const isProduction =
+    process.env.NODE_ENV === "production" ||
+    process.env.VERCEL_ENV === "production";
+  if (isProduction) {
+    return STABLE_PRODUCTION_ORIGIN;
   }
   return "http://localhost:3000";
 }

@@ -99,7 +99,7 @@ describe("P0 Fixes: Callback URL Security", () => {
 
   it("1. Production uses configured callback origin and ignores malicious Host header", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    process.env.PAYMENT_CALLBACK_BASE_URL = "https://trusted-prod.com";
+    process.env.PAYMENT_CALLBACK_BASE_URL = "https://saviskar-26.vercel.app";
     
     const req = new NextRequest("https://attacker.com/api/payments/create", {
       method: "POST",
@@ -110,7 +110,7 @@ describe("P0 Fixes: Callback URL Security", () => {
     const res = await POST(req);
     const data = await res.json();
     expect(data.success).toBe(true);
-    expect(data.checkoutConfig.options.surl).toBe("https://trusted-prod.com/api/payments/payu/success");
+    expect(data.checkoutConfig.options.surl).toBe("https://saviskar-26.vercel.app/api/payments/payu/success");
   });
 
   it("2. Local development can use dynamic public tunnel origin", async () => {

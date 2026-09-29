@@ -27,6 +27,7 @@ import { captureException } from "@/lib/monitoring/error-reporter";
 import { getPaymentGateway } from "@/lib/payments";
 import { getRegistrationSession } from "@/lib/auth/session";
 import { verifyPaymentResumeToken } from "@/lib/payments/resume-token";
+import { getCanonicalPaymentBaseUrl } from "@/lib/payments/canonical-url";
 
 function errorResponse(
   message: string,
@@ -277,17 +278,12 @@ export async function POST(
   const payerEmail = payer.email ?? "";
   const payerPhone = payer.phone ?? "";
 
-  let resolvedBaseUrl: string | undefined;
-  if (process.env.NODE_ENV !== "production") {
-    const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
-    const protocol = request.headers.get("x-forwarded-proto") || (request.nextUrl.protocol.replace(":", "") === "https" ? "https" : "http");
-    resolvedBaseUrl = host ? `${protocol}://${host}` : undefined;
-  } else {
-    const prodUrl = process.env.PAYMENT_CALLBACK_BASE_URL || process.env.NEXT_PUBLIC_SITE_URL;
-    if (prodUrl) {
-      resolvedBaseUrl = prodUrl.replace(/\/+$/, "");
-    }
+  const baseUrlResult = getCanonicalPaymentBaseUrl(request);
+  if (!baseUrlResult.success) {
+    console.error(baseUrlResult.internalLog);
+    return errorResponse(baseUrlResult.error, 500);
   }
+  const resolvedBaseUrl = baseUrlResult.origin;
 
   // ─── If Gateway Order Already Exists, Reuse It ──────────
 

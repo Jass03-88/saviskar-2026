@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getPaymentGateway } from "@/lib/payments";
 import { generatePaymentResumeUrl } from "@/lib/payments/resume-token";
+import { getCanonicalPaymentBaseUrl, STABLE_PRODUCTION_ORIGIN } from "@/lib/payments/canonical-url";
 import { WebhookEvent } from "@/lib/payments/types";
 
 export async function POST(request: NextRequest) {
@@ -83,11 +84,17 @@ export async function POST(request: NextRequest) {
     participantPublicId = payer?.participant_id ?? "";
   }
 
+  const baseUrlResult = getCanonicalPaymentBaseUrl(request);
+  if (!baseUrlResult.success) {
+    console.error(baseUrlResult.internalLog);
+  }
+  const redirectBase = baseUrlResult.success ? baseUrlResult.origin : STABLE_PRODUCTION_ORIGIN;
+
   const resumeUrl = generatePaymentResumeUrl({
     paymentOrderId,
     participantId: participantPublicId,
     payerParticipantUuid,
-    baseUrl: process.env.NEXT_PUBLIC_SITE_URL || request.nextUrl.origin,
+    baseUrl: redirectBase,
   });
 
   // We can update the status of paymentOrder to 'failed' if we wanted to, 
