@@ -8,6 +8,7 @@ import {
   WebhookValidationResult,
   VerifyPaymentParams,
   VerifyPaymentResult,
+  PaymentVerificationError,
 } from "./types";
 import {
   generatePayURequestHash,
@@ -188,7 +189,7 @@ export class PayUGateway implements PaymentGateway {
 
   async fetchPaymentDetails(gatewayPaymentId: string): Promise<FetchedPaymentDetails> {
     if (!gatewayPaymentId) {
-      throw new Error("fetchPaymentDetails: gatewayPaymentId is required.");
+      throw new PaymentVerificationError("provider_error", "fetchPaymentDetails: gatewayPaymentId is required.");
     }
     const command = "verify_payment";
     const var1 = gatewayPaymentId; // PayU verify payment takes txnid as var1. So we pass txnid as gatewayPaymentId.
@@ -216,12 +217,35 @@ export class PayUGateway implements PaymentGateway {
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
-      throw new Error(`fetchPaymentDetails: Network/timeout error fetching payment ${gatewayPaymentId}: ${err instanceof Error ? err.message : String(err)}`);
+      const isTimeout =
+        err instanceof Error &&
+        (err.name === "TimeoutError" || err.message.toLowerCase().includes("timeout"));
+      throw new PaymentVerificationError(
+        isTimeout ? "timeout" : "network",
+        `fetchPaymentDetails: Network or timeout error fetching payment ${gatewayPaymentId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
     }
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => "(unreadable)");
-      throw new Error(`fetchPaymentDetails: PayU returned ${response.status} for payment ${gatewayPaymentId}: ${errorBody}`);
+      throw new PaymentVerificationError(
+        "provider_error",
+        `fetchPaymentDetails: PayU returned HTTP ${response.status} for payment ${gatewayPaymentId}: ${errorBody}`
+      );
+    }
+
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (readErr) {
+      throw new PaymentVerificationError(
+        "network",
+        `fetchPaymentDetails: Failed to read response stream for payment ${gatewayPaymentId}: ${
+          readErr instanceof Error ? readErr.message : String(readErr)
+        }`
+      );
     }
 
     let data: {
@@ -236,34 +260,78 @@ export class PayUGateway implements PaymentGateway {
       }>;
     };
     try {
-      const text = await response.text();
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.error(`PayU fetchPaymentDetails JSON parse failed for ${gatewayPaymentId}. Raw response: ${text.substring(0, 500)}`);
-        throw new Error(`fetchPaymentDetails: Malformed JSON response for payment ${gatewayPaymentId}.`);
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('Malformed JSON')) {
-        throw err;
-      }
-      throw new Error(`fetchPaymentDetails: Failed to read response for payment ${gatewayPaymentId}.`);
+      data = JSON.parse(text);
+    } catch {
+      console.error(
+        `PayU fetchPaymentDetails JSON parse failed for ${gatewayPaymentId}. Raw response: ${text.substring(0, 500)}`
+      );
+      throw new PaymentVerificationError(
+        "malformed",
+        `fetchPaymentDetails: Malformed non-JSON response from PayU for payment ${gatewayPaymentId}.`
+      );
     }
-    
-    if (data.status !== 1) {
-      throw new Error(`fetchPaymentDetails: PayU verification failed for ${gatewayPaymentId}: ${data.msg}`);
+
+    // 1. Detect credential / environment mismatch error from PayU
+    if (data.status === 0 && data.msg?.toLowerCase().includes("invalid hash")) {
+      console.error(
+        `[PAYU CONFIG ERROR] PayU command hash rejected ("Invalid Hash."). Check that PAYU_ENVIRONMENT ("${this.environment}") matches the configured merchant key and salt.`
+      );
+      throw new PaymentVerificationError(
+        "invalid_credentials",
+        `PayU verification rejected command hash ("${data.msg}"). Verify PAYU_ENVIRONMENT matches key and salt.`
+      );
     }
-    
+
     const transaction = data.transaction_details?.[var1];
-    if (!transaction) {
-      throw new Error(`fetchPaymentDetails: Transaction not found in PayU response for ${gatewayPaymentId}.`);
+
+    // 2. Transaction Not Found (status: 0 with 'Not Found', or transaction object with status 'Not Found')
+    // This happens when checkout was opened but attendee never entered/submitted payment details on PayU.
+    if (
+      (data.status === 0 &&
+        (!transaction ||
+          transaction.status === "Not Found" ||
+          transaction.mihpayid === "Not Found" ||
+          data.msg?.includes("0 out of") ||
+          data.msg?.toLowerCase().includes("no transactions found"))) ||
+      (transaction &&
+        (transaction.status === "Not Found" || transaction.mihpayid === "Not Found"))
+    ) {
+      return {
+        gatewayPaymentId: "",
+        gatewayOrderId: var1,
+        status: "not_found",
+        amount: 0,
+        currency: "INR",
+        rawStatus: transaction?.status || data.msg || "Not Found",
+      };
     }
-    
+
+    // 3. If transaction is completely absent and status !== 0
+    if (!transaction) {
+      throw new PaymentVerificationError(
+        "provider_error",
+        `fetchPaymentDetails: PayU returned status ${data.status} (${data.msg}) without transaction details for ${gatewayPaymentId}.`
+      );
+    }
+
+    // 4. Map PayU transaction status safely
+    const rawStatus = (transaction.status || "").toLowerCase().trim();
     let parsedStatus = "failed";
-    if (transaction.status === "success") {
+
+    if (rawStatus === "success") {
       parsedStatus = "paid";
-    } else if (transaction.status === "pending" || transaction.status === "in progress") {
+    } else if (rawStatus === "pending" || rawStatus === "in progress") {
       parsedStatus = "pending";
+    } else if (
+      rawStatus === "failure" ||
+      rawStatus === "failed" ||
+      rawStatus === "bounced" ||
+      rawStatus === "usercancelled" ||
+      rawStatus === "dropped"
+    ) {
+      parsedStatus = "failed";
+    } else if (rawStatus === "not found") {
+      parsedStatus = "not_found";
     }
 
     const amt = parseFloat(transaction.amt || transaction.amount || "0");
@@ -275,6 +343,7 @@ export class PayUGateway implements PaymentGateway {
       status: parsedStatus,
       amount: amountInPaise,
       currency: "INR",
+      rawStatus: transaction.status,
     };
   }
 }

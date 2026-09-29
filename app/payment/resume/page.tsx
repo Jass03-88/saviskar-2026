@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
 
@@ -56,55 +56,63 @@ function PaymentResumeContent() {
   const [paymentCompleted, setPaymentCompleted] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState("");
 
-  useEffect(() => {
+  const fetchOrderDetails = useCallback(async () => {
     if (!token) return;
 
-    async function fetchOrderDetails() {
+    try {
+      setLoading(true);
+      setErrorMessage("");
+
+      const res = await fetch(
+        `/api/payments/resume?token=${encodeURIComponent(token)}`,
+        {
+          headers: { Accept: "application/json" },
+        }
+      );
+
+      let json: ResumeOrderData | null = null;
       try {
-        setLoading(true);
-        setErrorMessage("");
-
-        const res = await fetch(
-          `/api/payments/resume?token=${encodeURIComponent(token)}`,
-          {
-            headers: { Accept: "application/json" },
-          }
-        );
-
-        const json = (await res.json()) as ResumeOrderData;
-
-        if (!res.ok || !json.success) {
-          throw new Error(
-            json.error || "This payment link is invalid or has expired."
-          );
+        const text = await res.text();
+        if (text && text.trim().length > 0) {
+          json = JSON.parse(text);
         }
-
-        setData(json);
-
-        if (json.status === "paid") {
-          setPaymentCompleted(true);
-          if (json.participant?.participantId) {
-            const qr = await QRCode.toDataURL(json.participant.participantId, {
-              width: 500,
-              margin: 2,
-              errorCorrectionLevel: "H",
-            });
-            setQrCodeUrl(qr);
-          }
-        }
-      } catch (err) {
-        setErrorMessage(
-          err instanceof Error
-            ? err.message
-            : "Could not load payment information."
-        );
-      } finally {
-        setLoading(false);
+      } catch {
+        json = null;
       }
-    }
 
-    fetchOrderDetails();
+      if (!res.ok || !json?.success) {
+        throw new Error(
+          json?.error || "This payment link is invalid or has expired."
+        );
+      }
+
+      setData(json);
+
+      if (json.status === "paid") {
+        setPaymentCompleted(true);
+        if (json.participant?.participantId) {
+          const qr = await QRCode.toDataURL(json.participant.participantId, {
+            width: 500,
+            margin: 2,
+            errorCorrectionLevel: "H",
+          });
+          setQrCodeUrl(qr);
+        }
+      }
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error
+          ? err.message
+          : "Could not load payment information."
+      );
+    } finally {
+      setLoading(false);
+    }
   }, [token]);
+
+  useEffect(() => {
+    fetchOrderDetails();
+  }, [fetchOrderDetails]);
 
   async function handleCheckout() {
     if (!data || !data.paymentOrderId) return;
@@ -127,11 +135,96 @@ function PaymentResumeContent() {
         }),
       });
 
-      const createJson = await createRes.json();
+      let createJson: {
+        success?: boolean;
+        error?: string;
+        code?: string;
+        alreadyPaid?: boolean;
+        participantId?: string;
+        participant?: {
+          participantId?: string;
+          name?: string;
+          email?: string;
+          college?: string;
+        };
+        paymentOrderId?: string;
+        resumeToken?: string;
+        checkoutConfig?: {
+          postUrl?: string;
+          options?: Record<string, unknown>;
+        };
+      } | null = null;
 
-      if (!createRes.ok || !createJson.success) {
+      try {
+        const text = await createRes.text();
+        if (text && text.trim().length > 0) {
+          createJson = JSON.parse(text);
+        }
+      } catch {
+        createJson = null;
+      }
+
+      if (!createRes.ok || !createJson?.success) {
+        if (
+          createJson?.code === "VERIFICATION_UNAVAILABLE" ||
+          createRes.status === 503 ||
+          createRes.status === 502
+        ) {
+          throw new Error(
+            "Payment verification is temporarily unavailable. Please try again in a few moments."
+          );
+        }
+        if (
+          createJson?.code === "PAYMENT_PENDING" ||
+          createRes.status === 409
+        ) {
+          throw new Error(
+            createJson?.error ||
+              "A payment attempt is currently being processed by the gateway. Please complete it on your payment app or wait a few moments before retrying."
+          );
+        }
         throw new Error(
-          createJson.error || "Could not initialize payment with gateway."
+          createJson?.error || "Could not initialize payment with gateway. Please try again."
+        );
+      }
+
+      // Check if order was already paid
+      if (createJson.alreadyPaid) {
+        setPaymentCompleted(true);
+        const resolvedParticipantId =
+          createJson.participantId ||
+          createJson.participant?.participantId ||
+          data.participant?.participantId;
+        if (resolvedParticipantId) {
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  participant: prev.participant
+                    ? { ...prev.participant, participantId: resolvedParticipantId }
+                    : undefined,
+                }
+              : prev
+          );
+          const qr = await QRCode.toDataURL(resolvedParticipantId, {
+            width: 500,
+            margin: 2,
+            errorCorrectionLevel: "H",
+          });
+          setQrCodeUrl(qr);
+        }
+        return;
+      }
+
+      if (createJson.paymentOrderId && createJson.paymentOrderId !== data.paymentOrderId) {
+        setData((prev) => (prev ? { ...prev, paymentOrderId: createJson.paymentOrderId! } : prev));
+      }
+
+      if (createJson.resumeToken && typeof window !== "undefined") {
+        window.history.replaceState(
+          null,
+          "",
+          `/payment/resume?token=${encodeURIComponent(createJson.resumeToken)}`
         );
       }
 
@@ -198,24 +291,38 @@ function PaymentResumeContent() {
             </div>
 
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-red-400">
-              Payment Link Notice
+              Payment Status Notice
             </p>
 
             <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-              Unable to Resume Payment
+              Unable to Complete Payment
             </h1>
 
             <p className="mt-4 max-w-md text-sm leading-6 text-white/60">
               {errorMessage}
             </p>
 
-            <button
-              type="button"
-              onClick={() => router.push("/register")}
-              className="mt-8 rounded-full bg-white px-8 py-3.5 text-xs font-semibold uppercase tracking-wider text-black transition hover:bg-white/90"
-            >
-              Go to Registration
-            </button>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+              {data && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMessage("");
+                    fetchOrderDetails();
+                  }}
+                  className="rounded-full bg-white px-8 py-3.5 text-xs font-semibold uppercase tracking-wider text-black transition hover:bg-white/90"
+                >
+                  Check Status Again
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => router.push("/register")}
+                className="rounded-full border border-white/20 px-8 py-3.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:bg-white/10"
+              >
+                Go to Registration
+              </button>
+            </div>
           </div>
         ) : paymentCompleted ? (
           <div className="flex min-h-[500px] flex-col items-center justify-center rounded-[32px] border border-white/10 bg-white/[0.03] p-8 text-center md:p-14">

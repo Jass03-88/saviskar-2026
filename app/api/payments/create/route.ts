@@ -21,23 +21,32 @@
  *   5. Returns checkout config to the frontend
  */
 
+import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { captureException } from "@/lib/monitoring/error-reporter";
-import { getPaymentGateway } from "@/lib/payments";
+import { getPaymentGateway, FetchedPaymentDetails } from "@/lib/payments";
 import { getRegistrationSession } from "@/lib/auth/session";
-import { verifyPaymentResumeToken } from "@/lib/payments/resume-token";
+import {
+  verifyPaymentResumeToken,
+  createPaymentResumeToken,
+} from "@/lib/payments/resume-token";
 import { getCanonicalPaymentBaseUrl } from "@/lib/payments/canonical-url";
 
 function errorResponse(
   message: string,
-  status: number
+  status: number,
+  code?: string,
+  headers?: Record<string, string>
 ) {
   return NextResponse.json(
-    { success: false, error: message },
+    { success: false, error: message, ...(code ? { code } : {}) },
     {
       status,
-      headers: { "Cache-Control": "no-store" },
+      headers: {
+        "Cache-Control": "no-store",
+        ...headers,
+      },
     }
   );
 }
@@ -58,7 +67,8 @@ export async function POST(
     );
     return errorResponse(
       "Payment service is not configured.",
-      500
+      500,
+      "CONFIG_ERROR"
     );
   }
 
@@ -83,7 +93,8 @@ export async function POST(
   } catch {
     return errorResponse(
       "Invalid request body.",
-      400
+      400,
+      "INVALID_REQUEST"
     );
   }
 
@@ -95,7 +106,8 @@ export async function POST(
   if (!paymentOrderId) {
     return errorResponse(
       "Payment order ID is required.",
-      400
+      400,
+      "MISSING_PAYMENT_ORDER_ID"
     );
   }
 
@@ -110,7 +122,8 @@ export async function POST(
   if (headerToken && bodyToken && headerToken !== bodyToken) {
     return errorResponse(
       "Mismatched payment resume tokens provided.",
-      400
+      400,
+      "TOKEN_MISMATCH"
     );
   }
 
@@ -145,23 +158,16 @@ export async function POST(
     );
     return errorResponse(
       "Could not find the payment order.",
-      500
+      500,
+      "DATABASE_ERROR"
     );
   }
 
   if (!paymentOrder) {
     return errorResponse(
       "Payment order not found.",
-      404
-    );
-  }
-
-  if (paymentOrder.status !== "pending") {
-    return errorResponse(
-      paymentOrder.status === "paid"
-        ? "This payment has already been completed."
-        : `Payment order is ${paymentOrder.status}.`,
-      400
+      404,
+      "ORDER_NOT_FOUND"
     );
   }
 
@@ -170,7 +176,8 @@ export async function POST(
   ) {
     return errorResponse(
       "Payment order has no amount.",
-      400
+      400,
+      "INVALID_AMOUNT"
     );
   }
 
@@ -179,7 +186,8 @@ export async function POST(
   if (!paymentOrder.payer_participant_id) {
     return errorResponse(
       "Payment order is missing payer information.",
-      400
+      400,
+      "MISSING_PAYER_INFO"
     );
   }
 
@@ -202,7 +210,8 @@ export async function POST(
     );
     return errorResponse(
       "Payer information not found.",
-      404
+      404,
+      "PAYER_NOT_FOUND"
     );
   }
 
@@ -216,7 +225,8 @@ export async function POST(
   if (itemsError || !orderItems || orderItems.length === 0) {
     return errorResponse(
       "Payment order has no linked items.",
-      400
+      400,
+      "EMPTY_ORDER_ITEMS"
     );
   }
 
@@ -227,7 +237,8 @@ export async function POST(
   if (itemsMismatch) {
     return errorResponse(
       "Payment order items are inconsistent.",
-      403
+      403,
+      "ORDER_ITEMS_MISMATCH"
     );
   }
 
@@ -265,12 +276,14 @@ export async function POST(
     if (!session.authenticated && !resumeToken) {
       return errorResponse(
         "Payment authorization required.",
-        401
+        401,
+        "AUTH_REQUIRED"
       );
     }
     return errorResponse(
       "Unauthorized access to this payment order.",
-      403
+      403,
+      "FORBIDDEN"
     );
   }
 
@@ -281,39 +294,94 @@ export async function POST(
   const baseUrlResult = getCanonicalPaymentBaseUrl(request);
   if (!baseUrlResult.success) {
     console.error(baseUrlResult.internalLog);
-    return errorResponse(baseUrlResult.error, 500);
+    return errorResponse(baseUrlResult.error, 500, "CANONICAL_URL_ERROR");
   }
   const resolvedBaseUrl = baseUrlResult.origin;
 
-  // ─── If Gateway Order Already Exists, Reuse It ──────────
+  // ─── If Order Is Already Paid in DB, Return Idempotent Success ─
+  if (paymentOrder.status === "paid") {
+    const participantPublicId = payer.participant_id ?? "";
+    const resumeToken = createPaymentResumeToken({
+      paymentOrderId: paymentOrder.id,
+      participantId: participantPublicId,
+      payerParticipantUuid: paymentOrder.payer_participant_id ?? "",
+    });
+
+    return NextResponse.json(
+      {
+        success: true,
+        alreadyPaid: true,
+        paymentOrderId: paymentOrder.id,
+        gatewayOrderId: paymentOrder.gateway_order_id,
+        participantId: participantPublicId,
+        participant: {
+          participantId: participantPublicId,
+          name: payerName,
+          email: payerEmail,
+        },
+        resumeToken,
+        resumeUrl: `${resolvedBaseUrl}/payment/resume?token=${encodeURIComponent(resumeToken)}`,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  }
+
+  if (paymentOrder.status === "failed") {
+    // If order was marked failed, check if another active pending attempt already exists for these participant events
+    const participantEventIds = orderItems.map((item) => item.participant_event_id).filter(Boolean);
+    if (participantEventIds.length > 0) {
+      const { data: activeOrder } = await supabaseAdmin
+        .from("payment_order_items")
+        .select("payment_orders!inner(id, status)")
+        .in("participant_event_id", participantEventIds)
+        .eq("payment_orders.status", "pending")
+        .limit(1)
+        .maybeSingle();
+
+      if (activeOrder) {
+        return errorResponse(
+          "A payment attempt is currently active. Please complete it or wait a moment before trying again.",
+          409,
+          "CONCURRENT_RETRY_CONFLICT"
+        );
+      }
+    }
+  } else if (paymentOrder.status !== "pending") {
+    return errorResponse(
+      `Payment order cannot be processed (status: ${paymentOrder.status}).`,
+      400,
+      "INVALID_ORDER_STATUS"
+    );
+  }
+
+  // ─── If Gateway Order Already Exists, Verify & Handle Retry ───
 
   if (paymentOrder.gateway_order_id) {
-    const gateway = getPaymentGateway(
-      paymentOrder.gateway ?? undefined
-    );
+    const gateway = getPaymentGateway(paymentOrder.gateway ?? undefined);
 
-    // ─── STUCK/ALREADY-CAPTURED TRANSACTION RECOVERY ────────
-    let isAlreadyPaid = false;
-    let fetchedGatewayPaymentId = "";
+    let details: FetchedPaymentDetails;
     try {
-      const details = await gateway.fetchPaymentDetails(paymentOrder.gateway_order_id);
-      if (details.status === "paid") {
-        isAlreadyPaid = true;
-        fetchedGatewayPaymentId = details.gatewayPaymentId;
-      }
+      details = await gateway.fetchPaymentDetails(paymentOrder.gateway_order_id);
     } catch (err) {
-      console.error("PayU Verify Payment failed, timed out, or transaction not found. Failing closed:", err instanceof Error ? err.message : String(err));
+      console.error(
+        "PayU Verify Payment failed. Failing safely without creating duplicate order:",
+        err instanceof Error ? err.message : String(err)
+      );
       return errorResponse(
-        "Unable to verify current payment status with the gateway. Please try again later.",
-        502
+        "Unable to verify current payment status with the gateway. Please try again in a few moments.",
+        503,
+        "VERIFICATION_UNAVAILABLE"
       );
     }
 
-    if (isAlreadyPaid) {
-      console.log("Transaction already captured on gateway. Recovering stuck transaction.", {
+    // ─── Case A: Transaction Is Already Paid on Gateway ──────────
+    if (details.status === "paid") {
+      console.log("Transaction already captured on gateway. Reconciling payment order.", {
         paymentOrderId: paymentOrder.id,
-        gatewayOrderId: paymentOrder.gateway_order_id
+        gatewayOrderId: paymentOrder.gateway_order_id,
       });
+
+      const fetchedGatewayPaymentId = details.gatewayPaymentId;
 
       const { data: eventClaim, error: claimError } = await supabaseAdmin
         .from("processed_payment_events")
@@ -375,26 +443,180 @@ export async function POST(
         await ensurePaymentConfirmationSent(paymentOrder.id);
       }
 
+      const participantPublicId = payer.participant_id ?? "";
+      const resumeToken = createPaymentResumeToken({
+        paymentOrderId: paymentOrder.id,
+        participantId: participantPublicId,
+        payerParticipantUuid: paymentOrder.payer_participant_id ?? "",
+      });
+
+      const resumeUrl = `${resolvedBaseUrl}/payment/resume?token=${encodeURIComponent(resumeToken)}`;
+
       return NextResponse.json(
         {
           success: true,
-          gatewayOrderId: paymentOrder.gateway_order_id,
           alreadyPaid: true,
+          paymentOrderId: paymentOrder.id,
+          gatewayOrderId: paymentOrder.gateway_order_id,
+          participantId: participantPublicId,
+          participant: {
+            participantId: participantPublicId,
+            name: payerName,
+            email: payerEmail,
+          },
+          resumeToken,
+          resumeUrl,
         },
         { headers: { "Cache-Control": "no-store" } }
       );
     }
 
-    // If it's not paid, we cannot safely reuse the txnid (PayU rejects reused txnids that were attempted).
-    // The DB schema does not safely support multiple gateway attempts per payment_order without overwriting history.
-    console.warn("Existing payment order is not paid (status: pending/failed). Database schema does not support multiple gateway order IDs per payment_order safely without overwriting history. Rejecting reuse.");
-    return errorResponse(
-      "This payment session has already been initiated. If you did not complete the payment, please cancel this registration and create a new one to try again.",
-      400
+    // ─── Case B: Active Pending Payment in Progress on Gateway ───
+    if (details.status === "pending") {
+      return errorResponse(
+        "A payment attempt is currently being processed by the gateway. Please complete it on your payment app or wait a few moments before retrying.",
+        409,
+        "PAYMENT_PENDING"
+      );
+    }
+
+    // ─── Case C: Failed or Safely Abandoned (Not Found) Attempt ──
+    // The previous txnid must NEVER be reused for PayU checkout.
+    // Atomically transition via database RPC:
+    // Locks participant events and old order, checks concurrency, marks old order 'failed',
+    // creates new 'pending' order, and copies order items atomically.
+    console.log(
+      `Payment attempt ${paymentOrder.gateway_order_id} resolved to status "${details.status}". Initiating atomic retry via RPC.`
+    );
+
+    const newOrderRef = `SVK-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
+
+    const { data: retryRpcResult, error: rpcError } = await supabaseAdmin
+      .rpc("create_payment_retry_attempt", {
+        p_payment_order_id: paymentOrder.id,
+        p_new_order_reference: newOrderRef,
+      });
+
+    if (rpcError || !retryRpcResult || !retryRpcResult.new_order_id) {
+      console.error("create_payment_retry_attempt RPC failed:", rpcError);
+      const errorMsg = rpcError?.message || "";
+      if (rpcError?.code === "40001" || errorMsg.includes("ACTIVE_ATTEMPT_EXISTS")) {
+        return errorResponse(
+          "A payment attempt is currently active. Please complete it or wait a moment before trying again.",
+          409,
+          "CONCURRENT_RETRY_CONFLICT"
+        );
+      }
+      if (rpcError?.code === "23505" || errorMsg.includes("ALREADY_PAID") || errorMsg.includes("EVENT_ALREADY_PAID")) {
+        return errorResponse(
+          "This registration has already been paid.",
+          400,
+          "ALREADY_PAID"
+        );
+      }
+      return errorResponse(
+        "Could not initiate a retry payment order. Please try again.",
+        500,
+        "RETRY_RPC_FAILED"
+      );
+    }
+
+    const newPaymentOrderId = retryRpcResult.new_order_id as string;
+    const effectiveOrderReference = (retryRpcResult.order_reference as string) || newOrderRef;
+    const effectiveAmount = Number(retryRpcResult.amount || paymentOrder.amount);
+    const effectiveCurrency = (retryRpcResult.currency as string) || paymentOrder.currency || "INR";
+
+    // Create fresh gateway order with unique transaction ID
+    let newGatewayResult;
+    try {
+      newGatewayResult = await gateway.createOrder({
+        orderReference: effectiveOrderReference,
+        amountInSmallestUnit: Math.round(effectiveAmount * 100),
+        currency: effectiveCurrency,
+        payer: {
+          name: payerName,
+          email: payerEmail,
+          phone: payerPhone,
+        },
+      });
+    } catch (createErr) {
+      console.error("Gateway order creation failed during retry:", createErr);
+      // Mark the newly created pending order as failed so it never blocks future retries as an orphaned pending attempt
+      await supabaseAdmin
+        .from("payment_orders")
+        .update({
+          status: "failed",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", newPaymentOrderId);
+
+      return errorResponse(
+        "Could not initialize checkout with payment gateway. Please try again.",
+        500,
+        "GATEWAY_ORDER_FAILED"
+      );
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from("payment_orders")
+      .update({
+        gateway: gateway.name,
+        gateway_order_id: newGatewayResult.gatewayOrderId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", newPaymentOrderId);
+
+    if (updateError) {
+      console.error("Failed to update new payment order with gateway info:", updateError);
+      // Fail closed: mark the new order as failed so we don't leave an unrecorded gateway order
+      await supabaseAdmin
+        .from("payment_orders")
+        .update({
+          status: "failed",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", newPaymentOrderId);
+
+      return errorResponse(
+        "Could not finalize payment session. Please try again.",
+        500,
+        "GATEWAY_RECORD_UPDATE_FAILED"
+      );
+    }
+
+    const checkoutConfig = gateway.getCheckoutConfig({
+      gatewayOrderId: newGatewayResult.gatewayOrderId,
+      amount: Math.round(effectiveAmount * 100),
+      currency: effectiveCurrency,
+      payer: {
+        name: payerName,
+        email: payerEmail,
+        phone: payerPhone,
+      },
+      orderReference: effectiveOrderReference,
+      baseUrl: resolvedBaseUrl,
+    });
+
+    const participantPublicId = payer.participant_id ?? "";
+    const newResumeToken = createPaymentResumeToken({
+      paymentOrderId: newPaymentOrderId,
+      participantId: participantPublicId,
+      payerParticipantUuid: paymentOrder.payer_participant_id ?? "",
+    });
+
+    return NextResponse.json(
+      {
+        success: true,
+        paymentOrderId: newPaymentOrderId,
+        gatewayOrderId: newGatewayResult.gatewayOrderId,
+        checkoutConfig,
+        resumeToken: newResumeToken,
+      },
+      { headers: { "Cache-Control": "no-store" } }
     );
   }
 
-  // ─── Create Gateway Order ──────────────────────────────
+  // ─── Create Gateway Order (First Attempt) ───────────────────
 
   const gateway = getPaymentGateway();
 
@@ -402,12 +624,9 @@ export async function POST(
 
   try {
     gatewayResult = await gateway.createOrder({
-      orderReference:
-        paymentOrder.order_reference,
-      amountInSmallestUnit:
-        Number(paymentOrder.amount) * 100,
-      currency:
-        paymentOrder.currency ?? "INR",
+      orderReference: paymentOrder.order_reference,
+      amountInSmallestUnit: Number(paymentOrder.amount) * 100,
+      currency: paymentOrder.currency ?? "INR",
       payer: {
         name: payerName,
         email: payerEmail,
@@ -420,74 +639,80 @@ export async function POST(
       orderId: paymentOrder.id,
       extra: { paymentOrderId: paymentOrder.id },
     });
-    console.error(
-      "Gateway order creation failed:",
-      err
-    );
-    return errorResponse(
-      "Could not create payment order with the payment gateway.",
-      500
-    );
-  }
-
-  // ─── Update Payment Order With Gateway Info ─────────────
-
-  const { error: updateError } =
+    console.error("Gateway order creation failed:", err);
     await supabaseAdmin
       .from("payment_orders")
       .update({
-        gateway: gateway.name,
-        gateway_order_id:
-          gatewayResult.gatewayOrderId,
+        status: "failed",
         updated_at: new Date().toISOString(),
       })
       .eq("id", paymentOrderId);
 
-  if (updateError) {
-    console.error(
-      "Failed to update payment order with gateway info:",
-      updateError
+    return errorResponse(
+      "Could not create payment order with the payment gateway.",
+      500,
+      "GATEWAY_ORDER_FAILED"
     );
-    // Non-fatal: the gateway order exists, frontend can still proceed
   }
 
-  // ─── Build Checkout Config ─────────────────────────────
+  // ─── Update Payment Order With Gateway Info ─────────────────
 
-  const checkoutConfig =
-    gateway.getCheckoutConfig({
-      gatewayOrderId:
-        gatewayResult.gatewayOrderId,
-      amount:
-        Number(paymentOrder.amount) * 100,
-      currency:
-        paymentOrder.currency ?? "INR",
-      payer: {
-        name: payerName,
-        email: payerEmail,
-        phone: payerPhone,
-      },
-      orderReference:
-        paymentOrder.order_reference,
-      baseUrl: resolvedBaseUrl,
-    });
-
-  console.log(
-    "Gateway order created:",
-    {
-      paymentOrderId,
-      gatewayOrderId:
-        gatewayResult.gatewayOrderId,
+  const { error: updateError } = await supabaseAdmin
+    .from("payment_orders")
+    .update({
+      status: "pending",
       gateway: gateway.name,
-      amount: paymentOrder.amount,
-    }
-  );
+      gateway_order_id: gatewayResult.gatewayOrderId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", paymentOrderId);
+
+  if (updateError) {
+    console.error("Failed to update payment order with gateway info:", updateError);
+    await supabaseAdmin
+      .from("payment_orders")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", paymentOrderId);
+
+    return errorResponse(
+      "Could not record payment gateway information.",
+      500,
+      "GATEWAY_RECORD_UPDATE_FAILED"
+    );
+  }
+
+  // ─── Build Checkout Config ─────────────────────────────────
+
+  const checkoutConfig = gateway.getCheckoutConfig({
+    gatewayOrderId: gatewayResult.gatewayOrderId,
+    amount: Number(paymentOrder.amount) * 100,
+    currency: paymentOrder.currency ?? "INR",
+    payer: {
+      name: payerName,
+      email: payerEmail,
+      phone: payerPhone,
+    },
+    orderReference: paymentOrder.order_reference,
+    baseUrl: resolvedBaseUrl,
+  });
+
+  const participantPublicId = payer.participant_id ?? "";
+  const checkoutResumeToken = createPaymentResumeToken({
+    paymentOrderId: paymentOrder.id,
+    participantId: participantPublicId,
+    payerParticipantUuid: paymentOrder.payer_participant_id ?? "",
+  });
 
   return NextResponse.json(
     {
       success: true,
-      gatewayOrderId:
-        gatewayResult.gatewayOrderId,
+      paymentOrderId: paymentOrder.id,
+      gatewayOrderId: gatewayResult.gatewayOrderId,
       checkoutConfig,
+      resumeToken: checkoutResumeToken,
     },
     {
       headers: {

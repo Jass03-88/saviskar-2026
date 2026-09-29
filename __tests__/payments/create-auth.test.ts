@@ -288,15 +288,18 @@ describe("Section 6 & 8: Payment Create Authorization & Amount Authority", () =>
     expect(res.status).toBe(403);
   });
 
-  it("8. Attempt to create payment for an already-paid order -> rejected with 400", async () => {
+  it("8. Attempt to create payment for an already-paid order -> returns alreadyPaid contract without checkoutConfig", async () => {
     const aliceSession = createRegistrationSessionToken("alice@example.com", 60_000);
     mockCookieStore.set(SESSION_COOKIE_NAME, aliceSession);
 
     const req = makeRequest({ paymentOrderId: "po-already-paid" });
     const res = await POST(req);
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.error).toContain("already been completed");
+    expect(data.success).toBe(true);
+    expect(data.alreadyPaid).toBe(true);
+    expect(data.participantId).toBeDefined();
+    expect(data.checkoutConfig).toBeUndefined();
   });
 });

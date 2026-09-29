@@ -27,6 +27,7 @@ export type {
   WebhookEvent,
   WebhookValidationResult,
 } from "./types";
+export { PaymentVerificationError } from "./types";
 
 export {
   createPaymentResumeToken,

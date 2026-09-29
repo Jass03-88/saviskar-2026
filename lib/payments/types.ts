@@ -82,21 +82,53 @@ export type VerifyPaymentResult = {
 // ─────────────────────────────────────────────────────────────────
 
 export type FetchedPaymentDetails = {
-  /** Gateway payment ID. */
+  /** Gateway payment ID (or empty string if unpaid/not found). */
   gatewayPaymentId: string;
 
-  /** Gateway order ID the payment belongs to. */
+  /** Gateway order ID (txnid) the payment belongs to. */
   gatewayOrderId: string;
 
-  /** Payment status from the gateway (e.g. "captured", "authorized", "failed"). */
-  status: string;
+  /**
+   * Payment status from the gateway:
+   * - "paid" / "captured": payment succeeded and funds captured
+   * - "pending" / "in progress": payment initiated and currently awaiting capture
+   * - "failed" / "cancelled": payment failed, dropped, or cancelled
+   * - "not_found": transaction never initiated or recorded by gateway
+   */
+  status: "paid" | "pending" | "failed" | "not_found" | string;
 
   /** Amount in smallest currency unit (paise for INR). */
   amount: number;
 
   /** ISO 4217 currency code. */
   currency: string;
+
+  /** Raw status text from gateway if available. */
+  rawStatus?: string;
 };
+
+export class PaymentVerificationError extends Error {
+  readonly errorType:
+    | "timeout"
+    | "network"
+    | "malformed"
+    | "invalid_credentials"
+    | "provider_error";
+
+  constructor(
+    errorType:
+      | "timeout"
+      | "network"
+      | "malformed"
+      | "invalid_credentials"
+      | "provider_error",
+    message: string
+  ) {
+    super(message);
+    this.name = "PaymentVerificationError";
+    this.errorType = errorType;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Checkout Config (browser-side)

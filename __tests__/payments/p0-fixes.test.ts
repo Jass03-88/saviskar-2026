@@ -25,11 +25,45 @@ let mockGatewayFetchThrows = false;
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
+    rpc: (name: string) => {
+      if (name === "create_payment_retry_attempt") {
+        return Promise.resolve({
+          data: {
+            success: true,
+            old_order_id: "po_uuid_001",
+            new_order_id: "new_po_uuid_002",
+            order_reference: "SVK-NEW-1",
+            payer_participant_id: "payer_uuid_001",
+            amount: 299,
+            currency: "INR",
+            status: "pending",
+            items_count: 1,
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    },
     from: (table: string) => {
       if (table === "payment_orders") {
         return {
           select: () => makeThenableChain(() => Promise.resolve({ data: mockPaymentOrder, error: null })),
           update: () => makeThenableChain(),
+          insert: () => ({
+            select: () => ({
+              single: () => Promise.resolve({
+                data: {
+                  id: "new_po_uuid_002",
+                  order_reference: "SVK-NEW-1",
+                  payer_participant_id: "payer_uuid_001",
+                  amount: 299,
+                  currency: "INR",
+                  status: "pending",
+                },
+                error: null,
+              }),
+            }),
+          }),
         };
       }
       if (table === "participants") {
@@ -46,6 +80,7 @@ vi.mock("@supabase/supabase-js", () => ({
             data: [{ participant_event_id: "pe-1", participant_id: "payer_uuid_001" }],
             error: null
           })),
+          insert: () => makeThenableChain(),
         };
       }
       if (table === "processed_payment_events") {
@@ -163,7 +198,7 @@ describe("P0 Fixes: Stuck Transaction Recovery", () => {
     expect(ensurePaymentConfirmationSent).toHaveBeenCalledWith("po_uuid_001");
   });
 
-  it("4. Failed/Unpaid/Pending transaction fails closed and rejects txnid reuse", async () => {
+  it("4. Pending transaction in progress fails safely with 409 PAYMENT_PENDING", async () => {
     mockGatewayStatus = "pending"; // PayU says pending
     mockGatewayFetchThrows = false;
 
@@ -176,11 +211,11 @@ describe("P0 Fixes: Stuck Transaction Recovery", () => {
     const data = await res.json();
     
     expect(data.success).toBe(false);
-    expect(data.error).toContain("This payment session has already been initiated");
-    expect(res.status).toBe(400);
+    expect(data.code).toBe("PAYMENT_PENDING");
+    expect(res.status).toBe(409);
   });
 
-  it("5. Malformed Verify Payment response or timeout fails closed", async () => {
+  it("5. Malformed Verify Payment response or timeout fails safely with 503 VERIFICATION_UNAVAILABLE", async () => {
     mockGatewayFetchThrows = true;
 
     const req = new NextRequest("http://localhost/api/payments/create", {
@@ -192,13 +227,33 @@ describe("P0 Fixes: Stuck Transaction Recovery", () => {
     const data = await res.json();
     
     expect(data.success).toBe(false);
+    expect(data.code).toBe("VERIFICATION_UNAVAILABLE");
     expect(data.error).toContain("Unable to verify current payment status with the gateway");
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(503);
+  });
+
+  it("6. Failed or abandoned transaction safely creates new payment attempt with fresh txnid", async () => {
+    mockGatewayStatus = "failed"; // PayU says failed/dropped
+    mockGatewayFetchThrows = false;
+
+    const req = new NextRequest("http://localhost/api/payments/create", {
+      method: "POST",
+      body: JSON.stringify({ paymentOrderId: "po_uuid_001" }),
+    });
+
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(data.success).toBe(true);
+    expect(data.paymentOrderId).toBe("new_po_uuid_002");
+    expect(data.gatewayOrderId).toBe("new_gateway_order_id");
+    expect(data.checkoutConfig).toBeDefined();
+    expect(res.status).toBe(200);
   });
 });
 
 describe("P0 Fixes: Resume Endpoint Fallback", () => {
-  it("6. resume endpoint always returns JSON on failure", async () => {
+  it("7. resume endpoint always returns JSON on failure", async () => {
     // missing token -> triggers errorResponse
     const req = new NextRequest("http://localhost/api/payments/resume");
     const res = await GET(req);

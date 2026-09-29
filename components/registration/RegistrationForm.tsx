@@ -961,13 +961,78 @@ export default function RegistrationForm({
         body: JSON.stringify({ paymentOrderId }),
       });
 
-      const createResult = await createResponse.json();
+      let createResult: {
+        success?: boolean;
+        error?: string;
+        code?: string;
+        alreadyPaid?: boolean;
+        participantId?: string;
+        paymentOrderId?: string;
+        checkoutConfig?: {
+          postUrl?: string;
+          options?: Record<string, unknown>;
+        };
+      } | null = null;
 
-      if (!createResponse.ok || !createResult.success) {
+      try {
+        const text = await createResponse.text();
+        if (text && text.trim().length > 0) {
+          createResult = JSON.parse(text);
+        }
+      } catch {
+        createResult = null;
+      }
+
+      if (!createResponse.ok || !createResult?.success) {
+        if (
+          createResult?.code === "VERIFICATION_UNAVAILABLE" ||
+          createResponse.status === 503 ||
+          createResponse.status === 502
+        ) {
+          throw new Error(
+            "Payment verification is temporarily unavailable. Please try again in a few moments."
+          );
+        }
+        if (
+          createResult?.code === "PAYMENT_PENDING" ||
+          createResponse.status === 409
+        ) {
+          throw new Error(
+            createResult?.error ||
+              "A payment attempt is currently being processed by the gateway. Please complete it on your payment app or wait a few moments before retrying."
+          );
+        }
         throw new Error(
-          createResult.error ||
+          createResult?.error ||
           "Could not initialize payment. Please try again."
         );
+      }
+
+      // Check if order was already paid
+      if (createResult.alreadyPaid) {
+        const confirmedId = createResult.participantId || currentParticipantId || participantId;
+        if (confirmedId) {
+          setParticipantId(confirmedId);
+          try {
+            const qrData = await QRCode.toDataURL(confirmedId, {
+              width: 500,
+              margin: 2,
+              errorCorrectionLevel: "H",
+            });
+            setQrCode(qrData);
+          } catch (qrErr) {
+            console.error("QR generation error:", qrErr);
+          }
+        }
+        setSubmitted(true);
+        setPaymentPending(false);
+        setPaymentProcessing(false);
+        return;
+      }
+
+      // Update pending payment order ID if a fresh order attempt was created on retry
+      if (createResult.paymentOrderId) {
+        setPendingPaymentOrderId(createResult.paymentOrderId);
       }
 
       // 2. Submit PayU Hosted Checkout form
@@ -1034,10 +1099,25 @@ export default function RegistrationForm({
         }),
       });
 
-      const recoveryPayload = await recoveryResponse.json();
+      let recoveryPayload: {
+        success?: boolean;
+        paymentOrderId?: string;
+        error?: string;
+      } | null = null;
 
-      if (!recoveryResponse.ok) {
-        throw new Error(recoveryPayload.error || "Could not initialize payment recovery.");
+      try {
+        const text = await recoveryResponse.text();
+        if (text && text.trim().length > 0) {
+          recoveryPayload = JSON.parse(text);
+        }
+      } catch {
+        recoveryPayload = null;
+      }
+
+      if (!recoveryResponse.ok || !recoveryPayload) {
+        throw new Error(
+          recoveryPayload?.error || "Could not initialize payment recovery. Please try again."
+        );
       }
 
       const { paymentOrderId } = recoveryPayload;
