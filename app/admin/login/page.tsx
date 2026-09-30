@@ -12,6 +12,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -302,12 +303,13 @@ export default function AdminLoginPage() {
             className="space-y-8"
           >
 
-            <label className="block">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-black/40">
+            <div className="block">
+              <label htmlFor="email" className="block text-[10px] font-semibold uppercase tracking-[0.18em] text-black/40">
                 Email
-              </span>
+              </label>
 
               <input
+                id="email"
                 type="email"
                 required
                 autoComplete="email"
@@ -318,14 +320,24 @@ export default function AdminLoginPage() {
                 placeholder="admin@example.com"
                 className="mt-2 w-full border-b border-black/15 bg-transparent py-4 text-black outline-none transition placeholder:text-black/20 focus:border-black"
               />
-            </label>
+            </div>
 
-            <label className="block">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-black/40">
-                Password
-              </span>
+            <div className="block">
+              <div className="flex items-center justify-between">
+                <label htmlFor="password" className="text-[10px] font-semibold uppercase tracking-[0.18em] text-black/40">
+                  Password
+                </label>
+
+                <Link
+                  href="/admin/forgot-password"
+                  className="text-[10px] font-medium uppercase tracking-wider text-black/40 transition hover:text-black"
+                >
+                  Forgot password?
+                </Link>
+              </div>
 
               <input
+                id="password"
                 type="password"
                 required
                 autoComplete="current-password"
@@ -336,7 +348,7 @@ export default function AdminLoginPage() {
                 placeholder="Enter your password"
                 className="mt-2 w-full border-b border-black/15 bg-transparent py-4 text-black outline-none transition placeholder:text-black/20 focus:border-black"
               />
-            </label>
+            </div>
 
             {errorMessage && (
               <div className="flex items-center gap-3 rounded-2xl bg-red-50 px-4 py-4 text-sm text-red-700">

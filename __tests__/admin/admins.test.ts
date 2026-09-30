@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GET, POST, DELETE, PATCH } from "@/app/api/admin/admins/route";
 import { POST as RESET_POST } from "@/app/api/admin/admins/reset-password/route";
+import { POST as FORGOT_PASSWORD_POST } from "@/app/api/admin/auth/forgot-password/route";
+import { POST as SELF_RESET_PASSWORD_POST } from "@/app/api/admin/auth/reset-password/route";
 import { GET as getEvents } from "@/app/api/admin/events/route";
 import * as serverLib from "@/lib/supabase/server";
 
@@ -70,6 +72,14 @@ const mockFrom = vi.fn((table?: string) => {
 const mockGetUserById = vi.fn().mockResolvedValue({
   data: { user: { id: "target-user", email: "test@example.com" } },
 });
+const mockGetUser = vi.fn().mockResolvedValue({
+  data: { user: { id: "target-user", email: "test@example.com" } },
+  error: null,
+});
+const mockUpdateUserById = vi.fn().mockResolvedValue({
+  data: { user: { id: "target-user" } },
+  error: null,
+});
 const mockListUsers = vi.fn().mockResolvedValue({ data: { users: [] }, error: null });
 const mockInviteUserByEmail = vi.fn().mockResolvedValue({ data: { user: { id: "new" } }, error: null });
 const mockDeleteUser = vi.fn();
@@ -82,9 +92,12 @@ vi.mock("@supabase/supabase-js", () => {
       return {
         from: mockFrom,
         auth: {
+          getUser: mockGetUser,
           resetPasswordForEmail: mockResetPasswordForEmail,
           admin: {
             getUserById: mockGetUserById,
+            getUser: mockGetUser,
+            updateUserById: mockUpdateUserById,
             listUsers: mockListUsers,
             inviteUserByEmail: mockInviteUserByEmail,
             deleteUser: mockDeleteUser,
@@ -875,6 +888,214 @@ describe("Admin Management API Security & RBAC", () => {
         createMockRequest("POST", { userId: "any-admin-uuid" })
       );
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe("9. SELF-SERVICE FORGOT PASSWORD (POST /api/admin/auth/forgot-password)", () => {
+    it("Always returns success regardless of email validity (No Enumeration)", async () => {
+      mockResetPasswordForEmail.mockResolvedValueOnce({
+        data: {},
+        error: null,
+      });
+
+      const res = await FORGOT_PASSWORD_POST(
+        createMockRequest("POST", { email: "somebody@example.com" })
+      );
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.message).toContain("If an administrator account exists for this email");
+      expect(mockResetPasswordForEmail).toHaveBeenCalledWith(
+        "somebody@example.com",
+        expect.objectContaining({ redirectTo: expect.any(String) })
+      );
+    });
+
+    it("Requires email parameter", async () => {
+      const res = await FORGOT_PASSWORD_POST(
+        createMockRequest("POST", {})
+      );
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe("Email is required.");
+    });
+  });
+
+  describe("10. SELF-SERVICE PASSWORD RESET UPDATE (POST /api/admin/auth/reset-password)", () => {
+    it("Requires Bearer authorization header", async () => {
+      const req = {
+        headers: new Headers(),
+        json: async () => ({ password: "ValidPassword123" }),
+      } as unknown as Request;
+
+      const res = await SELF_RESET_PASSWORD_POST(req);
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.error).toContain("Missing or invalid authorization session");
+    });
+
+    it("Rejects invalid recovery token", async () => {
+      mockGetUser.mockResolvedValueOnce({
+        data: { user: null },
+        error: { message: "Invalid token" },
+      });
+
+      const headers = new Headers();
+      headers.set("Authorization", "Bearer invalid-token");
+      const req = {
+        headers,
+        json: async () => ({ password: "ValidPassword123" }),
+      } as unknown as Request;
+
+      const res = await SELF_RESET_PASSWORD_POST(req);
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.error).toContain("invalid or has expired");
+    });
+
+    it("Rejects user not in admins table", async () => {
+      mockGetUser.mockResolvedValueOnce({
+        data: { user: { id: "non-admin-user", email: "nonadmin@example.com" } },
+        error: null,
+      });
+
+      mockBuilder.single = vi.fn().mockResolvedValueOnce({
+        data: null,
+        error: { message: "Not found" },
+      });
+
+      const headers = new Headers();
+      headers.set("Authorization", "Bearer valid-token");
+      const req = {
+        headers,
+        json: async () => ({ password: "ValidPassword123" }),
+      } as unknown as Request;
+
+      const res = await SELF_RESET_PASSWORD_POST(req);
+      expect(res.status).toBe(403);
+    });
+
+    it("Validates password complexity", async () => {
+      mockGetUser.mockResolvedValueOnce({
+        data: { user: { id: "admin-user", email: "admin@example.com" } },
+        error: null,
+      });
+
+      mockBuilder.single = vi.fn().mockResolvedValueOnce({
+        data: { user_id: "admin-user", role: "admin" },
+        error: null,
+      });
+
+      const headers = new Headers();
+      headers.set("Authorization", "Bearer valid-token");
+      const req = {
+        headers,
+        json: async () => ({ password: "short" }),
+      } as unknown as Request;
+
+      const res = await SELF_RESET_PASSWORD_POST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain("at least 8 characters");
+    });
+
+    it("Successfully updates password for valid admin recovery session", async () => {
+      mockGetUser.mockResolvedValueOnce({
+        data: { user: { id: "admin-user", email: "admin@example.com" } },
+        error: null,
+      });
+
+      mockBuilder.single = vi.fn().mockResolvedValueOnce({
+        data: { user_id: "admin-user", role: "admin" },
+        error: null,
+      });
+
+      mockUpdateUserById.mockResolvedValueOnce({
+        data: { user: { id: "admin-user" } },
+        error: null,
+      });
+
+      const headers = new Headers();
+      headers.set("Authorization", "Bearer valid-token");
+      const req = {
+        headers,
+        json: async () => ({ password: "NewStrongPassword123" }),
+      } as unknown as Request;
+
+      const res = await SELF_RESET_PASSWORD_POST(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(mockUpdateUserById).toHaveBeenCalledWith(
+        "admin-user",
+        { password: "NewStrongPassword123" }
+      );
+    });
+
+    it("Ignored client-provided userId/email and updates ONLY authenticated token user", async () => {
+      mockGetUser.mockResolvedValueOnce({
+        data: { user: { id: "legitimate-token-user", email: "legit@example.com" } },
+        error: null,
+      });
+
+      mockBuilder.single = vi.fn().mockResolvedValueOnce({
+        data: { user_id: "legitimate-token-user", role: "admin" },
+        error: null,
+      });
+
+      mockUpdateUserById.mockResolvedValueOnce({
+        data: { user: { id: "legitimate-token-user" } },
+        error: null,
+      });
+
+      const headers = new Headers();
+      headers.set("Authorization", "Bearer valid-token");
+      // Malicious caller tries to inject victim's user ID and email
+      const req = {
+        headers,
+        json: async () => ({
+          password: "NewStrongPassword123",
+          userId: "victim-user-id",
+          email: "victim@example.com",
+        }),
+      } as unknown as Request;
+
+      const res = await SELF_RESET_PASSWORD_POST(req);
+      expect(res.status).toBe(200);
+      // Confirmed: ONLY updates the token's authenticated user ID, NOT victim-user-id!
+      expect(mockUpdateUserById).toHaveBeenCalledWith(
+        "legitimate-token-user",
+        { password: "NewStrongPassword123" }
+      );
+      expect(mockUpdateUserById).not.toHaveBeenCalledWith(
+        "victim-user-id",
+        expect.anything()
+      );
+    });
+
+    it("Rejects missing password in payload", async () => {
+      mockGetUser.mockResolvedValueOnce({
+        data: { user: { id: "admin-user", email: "admin@example.com" } },
+        error: null,
+      });
+
+      mockBuilder.single = vi.fn().mockResolvedValueOnce({
+        data: { user_id: "admin-user", role: "admin" },
+        error: null,
+      });
+
+      const headers = new Headers();
+      headers.set("Authorization", "Bearer valid-token");
+      const req = {
+        headers,
+        json: async () => ({}),
+      } as unknown as Request;
+
+      const res = await SELF_RESET_PASSWORD_POST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe("New password is required.");
     });
   });
 });

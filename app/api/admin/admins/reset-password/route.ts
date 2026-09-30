@@ -20,6 +20,36 @@ function getIpFromRequest(request: Request): string {
   return "127.0.0.1";
 }
 
+function getRequestOrigin(request: Request): string {
+  const origin = request.headers.get("origin");
+  if (origin && !origin.includes("null")) {
+    return origin.replace(/\/+$/, "");
+  }
+
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
+  if (forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}`.replace(/\/+$/, "");
+  }
+
+  const host = request.headers.get("host");
+  if (host) {
+    const proto = host.includes("localhost") || host.includes("127.0.0.1") ? "http" : "https";
+    return `${proto}://${host}`.replace(/\/+$/, "");
+  }
+
+  try {
+    const urlOrigin = new URL(request.url).origin;
+    if (urlOrigin && !urlOrigin.includes("null")) {
+      return urlOrigin.replace(/\/+$/, "");
+    }
+  } catch {
+    // ignore
+  }
+
+  return (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/+$/, "");
+}
+
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const secretKey = process.env.SUPABASE_SECRET_KEY;
@@ -115,7 +145,7 @@ export async function POST(request: Request) {
   const email = userResp.user.email;
 
   // 3. Send the password reset email
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? new URL(request.url).origin;
+  const siteUrl = getRequestOrigin(request);
   const redirectTo = `${siteUrl}/admin/reset-password`;
 
   const { error: resetError } = await adminClient.auth.resetPasswordForEmail(email, {

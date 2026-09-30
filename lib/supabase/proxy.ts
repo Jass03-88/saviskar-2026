@@ -46,7 +46,8 @@ export async function updateSession(request: NextRequest) {
   const isInvitePath = pathname === "/admin/invite";
   const isResetPath = pathname === "/admin/reset-password";
   const isMfaPath = pathname === "/admin/login/mfa";
-  const isExemptPath = isLoginPath || isInvitePath || isResetPath || isMfaPath || isInviteAcceptPath;
+  const isForgotPasswordPath = pathname === "/admin/forgot-password";
+  const isExemptPath = isLoginPath || isInvitePath || isResetPath || isMfaPath || isInviteAcceptPath || isForgotPasswordPath;
 
   if (!user) {
     if (!isExemptPath) {

@@ -10,6 +10,7 @@ const EXEMPT_PATHS = [
   "/admin/invite",
   "/admin/accept-invite",
   "/admin/reset-password",
+  "/admin/forgot-password",
 ];
 
 export function AdminSessionWatcher() {

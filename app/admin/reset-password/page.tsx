@@ -76,6 +76,40 @@ export default function ResetPasswordPage() {
     async function initialize() {
       try {
         const hash = typeof window !== "undefined" ? window.location.hash : "";
+        const search = typeof window !== "undefined" ? window.location.search : "";
+
+        // Check for error in hash or query parameters (e.g. otp_expired)
+        const hashParams = new URLSearchParams(hash.startsWith("#") ? hash.substring(1) : hash);
+        const searchParams = new URLSearchParams(search.startsWith("?") ? search.substring(1) : search);
+        const errorDesc = hashParams.get("error_description") || searchParams.get("error_description") || hashParams.get("error") || searchParams.get("error");
+
+        if (errorDesc) {
+          if (!mounted) return;
+          setError("This password reset link is invalid or has expired. Please request a new one.");
+          setState("error");
+          return;
+        }
+
+        // Support PKCE code exchange if present in query params
+        const code = searchParams.get("code");
+        if (code) {
+          try {
+            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+            if (exchangeError) {
+              console.error("CODE EXCHANGE ERROR:", exchangeError);
+              if (!mounted) return;
+              setError("This password reset link is invalid or has expired. Please request a new one.");
+              setState("error");
+              return;
+            }
+          } finally {
+            if (typeof window !== "undefined") {
+              window.history.replaceState(null, "", window.location.pathname);
+            }
+          }
+        }
+
+        // Support implicit/hash flow (#access_token=...&refresh_token=...)
         const parsed = parseAuthHash(hash);
 
         if (parsed.error && parsed.error !== "missing_hash" && parsed.error !== "empty_hash") {
@@ -211,20 +245,25 @@ export default function ResetPasswordPage() {
 
       if (
         sessionError ||
-        !session?.user
+        !session?.access_token
       ) {
         throw new Error(
           "Your session is no longer valid. Please request a new link."
         );
       }
 
-      const { error: updateError } =
-        await supabase.auth.updateUser({
-          password,
-        });
+      const res = await fetch("/api/admin/auth/reset-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ password }),
+      });
 
-      if (updateError) {
-        throw updateError;
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(resData.error || "Failed to update password.");
       }
 
       await supabase.auth.signOut();
