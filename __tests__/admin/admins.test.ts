@@ -17,6 +17,7 @@ type QueryBuilderMock = {
   order: ReturnType<typeof vi.fn>;
   limit: ReturnType<typeof vi.fn>;
   maybeSingle: ReturnType<typeof vi.fn>;
+  single: ReturnType<typeof vi.fn>;
   then?: (resolve: (value: { data: unknown; error: unknown }) => void) => void;
   [key: string]: unknown;
 };
@@ -30,6 +31,7 @@ const mockBuilder: QueryBuilderMock = {
   order: vi.fn().mockReturnThis(),
   limit: vi.fn().mockReturnThis(),
   maybeSingle: vi.fn().mockReturnThis(),
+  single: vi.fn().mockReturnThis(),
 };
 
 mockBuilder.then = function (resolve: (value: { data: unknown; error: unknown }) => void) {
@@ -116,6 +118,7 @@ describe("Admin Management API Security & RBAC", () => {
     mockBuilder.order = vi.fn().mockReturnThis();
     mockBuilder.limit = vi.fn().mockReturnThis();
     mockBuilder.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    mockBuilder.single = vi.fn().mockResolvedValue({ data: null, error: null });
     mockBuilder.then = function (resolve: (value: { data: unknown; error: unknown }) => void) {
       resolve({ data: null, error: null });
     };
@@ -817,7 +820,7 @@ describe("Admin Management API Security & RBAC", () => {
   describe("8. PASSWORD RESET (POST /api/admin/admins/reset-password)", () => {
     it("Allows Primary Master to reset a Master Admin", async () => {
       mockAsPrimaryMaster("primary-uuid", "primarymaster@example.com");
-      mockBuilder.maybeSingle.mockResolvedValueOnce({
+      mockBuilder.single.mockResolvedValueOnce({
         data: { user_id: "master-admin-uuid", role: "master" },
         error: null,
       });
@@ -829,7 +832,7 @@ describe("Admin Management API Security & RBAC", () => {
 
     it("Allows Primary Master to reset a Normal Admin", async () => {
       mockAsPrimaryMaster("primary-uuid", "primarymaster@example.com");
-      mockBuilder.maybeSingle.mockResolvedValueOnce({
+      mockBuilder.single.mockResolvedValueOnce({
         data: { user_id: "normal-admin-uuid", role: "admin" },
         error: null,
       });
@@ -842,7 +845,7 @@ describe("Admin Management API Security & RBAC", () => {
     it("PREVENTS Master Admin from resetting Primary Master", async () => {
       mockAsOtherMaster("master-admin-uuid", "masteradmin@example.com");
       process.env.PRIMARY_ADMIN_USER_ID = "primary-uuid";
-      mockBuilder.maybeSingle.mockResolvedValueOnce({
+      mockBuilder.single.mockResolvedValueOnce({
         data: { user_id: "primary-uuid", role: "master" },
         error: null,
       });
@@ -856,7 +859,7 @@ describe("Admin Management API Security & RBAC", () => {
 
     it("Allows Master Admin to reset a Normal Admin", async () => {
       mockAsOtherMaster("master-admin-uuid", "masteradmin@example.com");
-      mockBuilder.maybeSingle.mockResolvedValueOnce({
+      mockBuilder.single.mockResolvedValueOnce({
         data: { user_id: "normal-admin-uuid", role: "admin" },
         error: null,
       });
