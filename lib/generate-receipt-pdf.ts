@@ -97,14 +97,6 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   // Helper to paginate if content exceeds page bounds
   const checkPageOverflow = (neededHeight: number) => {
     if (cursorY - neededHeight < 80) {
-      currentPage.drawText(`Page ${pageNumber}`, {
-        x: PAGE_WIDTH - MARGIN - 40,
-        y: 35,
-        size: 8,
-        font: helvetica,
-        color: rgb(0.5, 0.5, 0.5),
-      });
-
       currentPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
       pageNumber++;
       cursorY = PAGE_HEIGHT - 50;
@@ -499,15 +491,26 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     color: rgb(0.5, 0.5, 0.5),
   });
 
-  if (pageNumber > 1) {
-    currentPage.drawText(`Page ${pageNumber} of ${pageNumber}`, {
-      x: PAGE_WIDTH - MARGIN - 60,
-      y: footerY - 28,
-      size: 8,
+  // --- PAGE LABELS (Second Pass across all pages: Page X of N) ---
+  const totalPages = pdfDoc.getPageCount();
+  const pages = pdfDoc.getPages();
+  const pageLabelFontSize = 8;
+  const pageLabelY = 35; // Positioned in bottom margin area, well below any content and legal notices
+
+  pages.forEach((page, index) => {
+    const pageNum = index + 1;
+    const label = `Page ${pageNum} of ${totalPages}`;
+    const labelWidth = helvetica.widthOfTextAtSize(label, pageLabelFontSize);
+    const labelX = PAGE_WIDTH - MARGIN - labelWidth;
+
+    page.drawText(label, {
+      x: labelX,
+      y: pageLabelY,
+      size: pageLabelFontSize,
       font: helvetica,
       color: rgb(0.5, 0.5, 0.5),
     });
-  }
+  });
 
   // Save the PDF
   const pdfBytes = await pdfDoc.save();

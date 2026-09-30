@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyPaymentResumeToken } from "@/lib/payments/resume-token";
+import { resolveReceiptTeamMembers } from "@/lib/payments/team-members";
 
 function errorResponse(
   message: string,
@@ -191,22 +192,33 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  // 8. Look up Team Members if any item is linked to participant_events
-  const participantEventIds = (orderItems || [])
+  const isAnyTeamEvent = (orderItems || []).some((item) => {
+    const rawEvent = item.events;
+    const event = Array.isArray(rawEvent) ? rawEvent[0] : rawEvent;
+    return event?.registration_type === "team";
+  });
+
+  // 8. Look up Team Members strictly for team events
+  const teamParticipantEventIds = (orderItems || [])
+    .filter((item) => {
+      const rawEvent = item.events;
+      const event = Array.isArray(rawEvent) ? rawEvent[0] : rawEvent;
+      return event?.registration_type === "team";
+    })
     .map((item) => item.participant_event_id)
     .filter(Boolean) as string[];
 
-  let teamMembers: Array<{
-    participantId: string;
+  let teamMemberRows: Array<{
+    id: string;
     name: string;
     email: string | null;
     phone: string | null;
-    college: string | null;
-    isTeamLeader: boolean;
-    role: string;
+    is_team_leader: boolean;
+    participant_event_id: string;
+    participants: { participant_id?: string; college?: string } | { participant_id?: string; college?: string }[] | null;
   }> = [];
 
-  if (participantEventIds.length > 0) {
+  if (isAnyTeamEvent && teamParticipantEventIds.length > 0) {
     const { data: members, error: membersError } = await supabaseAdmin
       .from("participant_event_members")
       .select(`
@@ -221,50 +233,27 @@ export async function GET(request: NextRequest) {
           college
         )
       `)
-      .in("participant_event_id", participantEventIds)
+      .in("participant_event_id", teamParticipantEventIds)
       .order("is_team_leader", { ascending: false });
 
     if (membersError) {
       console.error("Resume API: Team members lookup error:", membersError);
-    } else if (members && members.length > 0) {
-      const mapped = members
-        .map((row) => {
-          const pData = Array.isArray(row.participants)
-            ? row.participants[0]
-            : row.participants;
-          const memberPid = String(pData?.participant_id || "");
-          const isLeader = row.is_team_leader === true;
-
-          return {
-            participantId: memberPid || (isLeader ? payer?.participant_id || participantId : ""),
-            name: row.name || (isLeader ? payer?.name || "Team Leader" : "Team Member"),
-            college: pData?.college || payer?.college || null,
-            email: row.email || null,
-            phone: row.phone || null,
-            isTeamLeader: isLeader,
-            role: isLeader ? "Team Head" : "Team Member",
-          };
-        })
-        .filter((m) => Boolean(m.participantId));
-
-      const hasLeader = mapped.some((m) => m.isTeamLeader);
-      if (!hasLeader && payer) {
-        mapped.unshift({
-          participantId: payer.participant_id || participantId,
-          name: payer.name || "Team Head",
-          email: payer.email || null,
-          phone: payer.phone || null,
-          college: payer.college || null,
-          isTeamLeader: true,
-          role: "Team Head",
-        });
-      } else {
-        mapped.sort((a, b) => (b.isTeamLeader ? 1 : 0) - (a.isTeamLeader ? 1 : 0));
-      }
-
-      teamMembers = mapped;
+    } else if (members) {
+      teamMemberRows = members as unknown as typeof teamMemberRows;
     }
   }
+
+  const teamMembers = resolveReceiptTeamMembers({
+    isAnyTeamEvent,
+    teamMemberRows,
+    payer: payer ? {
+      participant_id: payer.participant_id || participantId,
+      name: payer.name,
+      email: payer.email,
+      phone: payer.phone,
+      college: payer.college,
+    } : null,
+  });
 
   return NextResponse.json(
     {
