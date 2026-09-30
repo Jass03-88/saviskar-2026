@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { generateReceiptPdf, ReceiptData } from "../generate-receipt-pdf";
+import { generateReceiptPdf, ReceiptData, ReceiptTeamMember } from "../generate-receipt-pdf";
 import { sendRegistrationEmail } from "../send-registration-email";
 import crypto from "crypto";
 
@@ -157,7 +157,91 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     const primaryEvent = Array.isArray(primaryItem.events) ? primaryItem.events[0] : primaryItem.events;
     const primaryPe = Array.isArray(primaryItem.participant_events) ? primaryItem.participant_events[0] : primaryItem.participant_events;
 
-    // 3. GENERATE MULTI-EVENT PDF
+    // Collect all participant_event_ids for linked events
+    const participantEventIds = typedItems
+      .map((item) => {
+        const peData = Array.isArray(item.participant_events) ? item.participant_events[0] : item.participant_events;
+        return peData?.id || item.participant_event_id;
+      })
+      .filter(Boolean) as string[];
+
+    let teamMemberRows: Array<{
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      is_team_leader: boolean;
+      participant_event_id: string;
+      participants: { participant_id?: string; college?: string } | { participant_id?: string; college?: string }[] | null;
+    }> = [];
+
+    if (participantEventIds.length > 0) {
+      const { data: members, error: membersError } = await supabaseAdmin
+        .from("participant_event_members")
+        .select(`
+          id,
+          name,
+          email,
+          phone,
+          is_team_leader,
+          participant_event_id,
+          participants (
+            participant_id,
+            college
+          )
+        `)
+        .in("participant_event_id", participantEventIds)
+        .order("is_team_leader", { ascending: false });
+
+      if (membersError) {
+        console.error("[RECEIPT] team members lookup error:", membersError);
+      } else if (members) {
+        teamMemberRows = members as unknown as typeof teamMemberRows;
+      }
+    }
+
+    const isAnyTeamEvent = receiptItems.some((item) => item.registrationType === "team");
+    let receiptTeamMembers: ReceiptTeamMember[] = [];
+
+    if (isAnyTeamEvent || teamMemberRows.length > 0) {
+      const mapped: ReceiptTeamMember[] = teamMemberRows
+        .map((row) => {
+          const pData = Array.isArray(row.participants) ? row.participants[0] : row.participants;
+          const memberPid = String(pData?.participant_id || "");
+          const isLeader = row.is_team_leader === true || memberPid === String(participant.participant_id);
+          return {
+            participantId: memberPid,
+            name: String(row.name || ""),
+            college: pData?.college || participant.college || null,
+            email: row.email || null,
+            phone: row.phone || null,
+            isTeamLeader: isLeader,
+            role: isLeader ? "Team Head" : "Team Member",
+          };
+        })
+        .filter((m) => Boolean(m.participantId));
+
+      // Ensure Team Head is present and at the top
+      const hasLeader = mapped.some((m) => m.isTeamLeader);
+      if (!hasLeader) {
+        mapped.unshift({
+          participantId: participant.participant_id,
+          name: participant.name,
+          email: participant.email,
+          phone: participant.phone,
+          college: participant.college,
+          isTeamLeader: true,
+          role: "Team Head",
+        });
+      } else {
+        // Sort Team Head first
+        mapped.sort((a, b) => (b.isTeamLeader ? 1 : 0) - (a.isTeamLeader ? 1 : 0));
+      }
+
+      receiptTeamMembers = mapped;
+    }
+
+    // 3. GENERATE MULTI-EVENT PDF (including complete team members if team registration)
     const receiptData: ReceiptData = {
       receiptReference: `RCP-${order.order_reference}`,
       paymentDate: paymentDateStr,
@@ -167,6 +251,7 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       phone: participant.phone,
       college: participant.college,
       items: receiptItems,
+      teamMembers: receiptTeamMembers.length > 0 ? receiptTeamMembers : undefined,
       eventName: primaryEvent?.name ?? "Saviskar Event",
       eventCategory: primaryEvent?.category ?? null,
       registrationType: primaryEvent?.registration_type === "team" ? ("team" as const) : ("individual" as const),
@@ -177,33 +262,21 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       gatewayPaymentId: order.gateway_payment_id || "",
     };
 
-    console.log(`[RECEIPT] generating multi-event PDF with ${receiptItems.length} item(s)`);
+    console.log(`[RECEIPT] generating multi-event PDF with ${receiptItems.length} item(s) and ${receiptTeamMembers.length} member(s)`);
     const pdfBuffer = await generateReceiptPdf(receiptData);
     console.log(`[RECEIPT] PDF generated + byte size: ${pdfBuffer.byteLength}`);
 
-    // Get team members for primary event if any
-    const primaryPeId = primaryPe?.id || primaryItem.participant_event_id;
-    const { data: teamMemberRows } = await supabaseAdmin
-      .from("participant_event_members")
-      .select(`
-        name, email, phone, is_team_leader,
-        participants ( participant_id, college )
-      `)
-      .eq("participant_event_id", primaryPeId);
-
-    const emailMembers = (teamMemberRows ?? [])
-      .map((row) => {
-        const pData = Array.isArray(row.participants) ? row.participants[0] : row.participants;
-        return {
-          participantId: String(pData?.participant_id ?? ""),
-          name: String(row.name ?? ""),
-          college: String(pData?.college ?? ""),
-          email: String(row.email ?? ""),
-          phone: String(row.phone ?? ""),
-          isTeamLeader: row.is_team_leader === true,
-        };
-      })
-      .filter((row) => row.participantId !== String(participant.participant_id));
+    // Members to send in email (excluding primary leader who is already primary recipient)
+    const emailMembers = receiptTeamMembers
+      .filter((row) => row.participantId !== String(participant.participant_id))
+      .map((row) => ({
+        participantId: row.participantId,
+        name: row.name,
+        college: row.college || "",
+        email: row.email || "",
+        phone: row.phone || "",
+        isTeamLeader: row.isTeamLeader === true,
+      }));
 
     // Summary event label for email
     const eventNameLabel = receiptItems.length === 1
@@ -212,7 +285,7 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
 
     // 4. SEND EMAIL
     const emailResult = await sendRegistrationEmail({
-      registrationId: primaryPeId,
+      registrationId: primaryPe?.id || primaryItem.participant_event_id,
       participantId: participant.participant_id,
       eventName: eventNameLabel,
       eventCategory: primaryEvent?.category ?? null,

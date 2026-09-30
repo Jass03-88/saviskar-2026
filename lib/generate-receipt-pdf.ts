@@ -1,5 +1,15 @@
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from 'pdf-lib';
 
+export type ReceiptTeamMember = {
+  participantId: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  college?: string | null;
+  isTeamLeader?: boolean;
+  role?: string;
+};
+
 export type ReceiptLineItem = {
   eventName: string;
   category?: string | null;
@@ -28,6 +38,9 @@ export type ReceiptData = {
   eventCategory?: string | null;
   registrationType?: 'individual' | 'team';
   teamName?: string | null;
+
+  // Team members (for team registrations)
+  teamMembers?: ReceiptTeamMember[];
 
   // Payment
   amount: number;
@@ -73,12 +86,50 @@ function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: numbe
 
 export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  let currentPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  let pageNumber = 1;
 
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   let cursorY = PAGE_HEIGHT - 60;
+
+  // Helper to paginate if content exceeds page bounds
+  const checkPageOverflow = (neededHeight: number) => {
+    if (cursorY - neededHeight < 80) {
+      currentPage.drawText(`Page ${pageNumber}`, {
+        x: PAGE_WIDTH - MARGIN - 40,
+        y: 35,
+        size: 8,
+        font: helvetica,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+
+      currentPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      pageNumber++;
+      cursorY = PAGE_HEIGHT - 50;
+
+      currentPage.drawText('SAVISKAR 2026 — PAYMENT RECEIPT (Contd.)', {
+        x: MARGIN,
+        y: cursorY,
+        size: 9,
+        font: helveticaBold,
+        color: rgb(0.4, 0.4, 0.4),
+      });
+
+      currentPage.drawText(`Receipt No: ${data.receiptReference}`, {
+        x: PAGE_WIDTH - MARGIN - 180,
+        y: cursorY,
+        size: 8,
+        font: helvetica,
+        color: rgb(0.5, 0.5, 0.5),
+      });
+
+      cursorY -= 12;
+      drawDivider(currentPage, cursorY);
+      cursorY -= 20;
+    }
+  };
 
   // Normalize line items
   const lineItems: ReceiptLineItem[] =
@@ -95,7 +146,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
         ];
 
   // --- HEADER ---
-  page.drawText('SAVISKAR 2026', {
+  currentPage.drawText('SAVISKAR 2026', {
     x: MARGIN,
     y: cursorY,
     size: 10,
@@ -106,7 +157,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   cursorY -= 40;
 
   // "PAYMENT RECEIPT" and "PAID" badge
-  page.drawText('PAYMENT RECEIPT', {
+  currentPage.drawText('PAYMENT RECEIPT', {
     x: MARGIN,
     y: cursorY,
     size: 24,
@@ -120,7 +171,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   const badgeWidth = helveticaBold.widthOfTextAtSize(badgeText, badgeSize) + 20;
   const badgeHeight = 20;
   
-  page.drawRectangle({
+  currentPage.drawRectangle({
     x: PAGE_WIDTH - MARGIN - badgeWidth,
     y: cursorY - 3,
     width: badgeWidth,
@@ -130,7 +181,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     borderWidth: 1,
   });
 
-  page.drawText(badgeText, {
+  currentPage.drawText(badgeText, {
     x: PAGE_WIDTH - MARGIN - badgeWidth + 10,
     y: cursorY + 3,
     size: badgeSize,
@@ -140,7 +191,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
 
   cursorY -= 30;
 
-  page.drawText(`Receipt No: ${data.receiptReference}`, {
+  currentPage.drawText(`Receipt No: ${data.receiptReference}`, {
     x: MARGIN,
     y: cursorY,
     size: 10,
@@ -150,7 +201,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
 
   cursorY -= 15;
 
-  page.drawText(`Payment Date: ${data.paymentDate}`, {
+  currentPage.drawText(`Payment Date: ${data.paymentDate}`, {
     x: MARGIN,
     y: cursorY,
     size: 10,
@@ -159,12 +210,13 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   });
 
   cursorY -= 30;
-  drawDivider(page, cursorY);
+  drawDivider(currentPage, cursorY);
   cursorY -= 30;
 
   // --- HELPER FUNCTION FOR SECTIONS ---
   const drawSectionTitle = (title: string) => {
-    page.drawText(title, {
+    checkPageOverflow(40);
+    currentPage.drawText(title, {
       x: MARGIN,
       y: cursorY,
       size: 9,
@@ -175,8 +227,12 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   };
 
   const drawRow = (label: string, value: string, font = helvetica, size = 10) => {
-    // Label
-    page.drawText(label, {
+    const maxValWidth = CONTENT_WIDTH - 150;
+    const lines = wrapText(value, font, size, maxValWidth);
+    const needed = Math.max(1, lines.length) * 14 + 6;
+    checkPageOverflow(needed);
+
+    currentPage.drawText(label, {
       x: MARGIN,
       y: cursorY,
       size: 9,
@@ -184,12 +240,8 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
       color: rgb(0.4, 0.4, 0.4),
     });
     
-    // Value wrapping
-    const maxValWidth = CONTENT_WIDTH - 150;
-    const lines = wrapText(value, font, size, maxValWidth);
-    
     for (const line of lines) {
-      page.drawText(line, {
+      currentPage.drawText(line, {
         x: MARGIN + 150,
         y: cursorY,
         size,
@@ -212,7 +264,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   drawRow('College / Institution', data.college);
 
   cursorY -= 12;
-  drawDivider(page, cursorY);
+  drawDivider(currentPage, cursorY);
   cursorY -= 20;
 
   // --- REGISTRATION ---
@@ -239,8 +291,103 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   }
 
   cursorY -= 12;
-  drawDivider(page, cursorY);
+  drawDivider(currentPage, cursorY);
   cursorY -= 20;
+
+  // --- TEAM MEMBERS (Only if team registration with members) ---
+  if (data.teamMembers && data.teamMembers.length > 0) {
+    drawSectionTitle(`TEAM MEMBERS (${data.teamMembers.length} MEMBERS)`);
+
+    data.teamMembers.forEach((member, idx) => {
+      const memberLinesCount = 3 + (member.phone ? 1 : 0);
+      const memberHeight = memberLinesCount * 14 + 18;
+      checkPageOverflow(memberHeight);
+
+      const numStr = String(idx + 1).padStart(2, '0');
+      const roleStr = member.role || (member.isTeamLeader ? 'Team Head' : 'Team Member');
+
+      currentPage.drawText(`${numStr}  ${member.name.toUpperCase()}`, {
+        x: MARGIN,
+        y: cursorY,
+        size: 10,
+        font: helveticaBold,
+        color: rgb(0.1, 0.1, 0.1),
+      });
+
+      currentPage.drawText(roleStr, {
+        x: PAGE_WIDTH - MARGIN - 100,
+        y: cursorY,
+        size: 9,
+        font: helveticaBold,
+        color: member.isTeamLeader ? rgb(0.45, 0.1, 0.75) : rgb(0.4, 0.4, 0.4),
+      });
+
+      cursorY -= 14;
+
+      const detailX = MARGIN + 20;
+
+      // Participant ID
+      currentPage.drawText('Participant ID:', {
+        x: detailX,
+        y: cursorY,
+        size: 8.5,
+        font: helvetica,
+        color: rgb(0.45, 0.45, 0.45),
+      });
+      currentPage.drawText(member.participantId, {
+        x: detailX + 90,
+        y: cursorY,
+        size: 8.5,
+        font: helveticaBold,
+        color: rgb(0.15, 0.15, 0.15),
+      });
+      cursorY -= 12;
+
+      // Email
+      if (member.email) {
+        currentPage.drawText('Email:', {
+          x: detailX,
+          y: cursorY,
+          size: 8.5,
+          font: helvetica,
+          color: rgb(0.45, 0.45, 0.45),
+        });
+        currentPage.drawText(member.email, {
+          x: detailX + 90,
+          y: cursorY,
+          size: 8.5,
+          font: helvetica,
+          color: rgb(0.15, 0.15, 0.15),
+        });
+        cursorY -= 12;
+      }
+
+      // Contact
+      if (member.phone) {
+        currentPage.drawText('Contact:', {
+          x: detailX,
+          y: cursorY,
+          size: 8.5,
+          font: helvetica,
+          color: rgb(0.45, 0.45, 0.45),
+        });
+        currentPage.drawText(member.phone, {
+          x: detailX + 90,
+          y: cursorY,
+          size: 8.5,
+          font: helvetica,
+          color: rgb(0.15, 0.15, 0.15),
+        });
+        cursorY -= 12;
+      }
+
+      cursorY -= 6;
+    });
+
+    cursorY -= 6;
+    drawDivider(currentPage, cursorY);
+    cursorY -= 20;
+  }
 
   // --- PAYMENT DETAILS ---
   drawSectionTitle('PAYMENT DETAILS');
@@ -251,21 +398,23 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   drawRow('Payment Date', data.paymentDate);
 
   cursorY -= 12;
-  drawDivider(page, cursorY);
+  drawDivider(currentPage, cursorY);
   cursorY -= 25;
 
   // --- PAYMENT SUMMARY ---
   drawSectionTitle('PAYMENT SUMMARY');
   
+  checkPageOverflow(50);
+
   // Table header
-  page.drawText('Description', {
+  currentPage.drawText('Description', {
     x: MARGIN,
     y: cursorY,
     size: 10,
     font: helveticaBold,
     color: rgb(0, 0, 0),
   });
-  page.drawText('Amount', {
+  currentPage.drawText('Amount', {
     x: PAGE_WIDTH - MARGIN - 70,
     y: cursorY,
     size: 10,
@@ -276,17 +425,18 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
 
   // Table rows for all line items
   for (const item of lineItems) {
+    checkPageOverflow(25);
     const itemDesc = `${item.eventName} Registration`;
     const descLines = wrapText(itemDesc, helvetica, 10, CONTENT_WIDTH - 100);
 
-    page.drawText(descLines[0] || itemDesc, {
+    currentPage.drawText(descLines[0] || itemDesc, {
       x: MARGIN,
       y: cursorY,
       size: 10,
       font: helvetica,
       color: rgb(0.2, 0.2, 0.2),
     });
-    page.drawText(`INR ${item.amount}`, {
+    currentPage.drawText(`INR ${item.amount}`, {
       x: PAGE_WIDTH - MARGIN - 70,
       y: cursorY,
       size: 10,
@@ -297,18 +447,20 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   }
   
   cursorY -= 5;
-  drawDivider(page, cursorY);
+  drawDivider(currentPage, cursorY);
   cursorY -= 15;
 
+  checkPageOverflow(30);
+
   // TOTAL
-  page.drawText('TOTAL PAID', {
+  currentPage.drawText('TOTAL PAID', {
     x: MARGIN,
     y: cursorY,
     size: 12,
     font: helveticaBold,
     color: rgb(0, 0, 0),
   });
-  page.drawText(`INR ${data.amount}`, {
+  currentPage.drawText(`INR ${data.amount}`, {
     x: PAGE_WIDTH - MARGIN - 70,
     y: cursorY,
     size: 12,
@@ -318,11 +470,12 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
 
   // --- FOOTER ---
   console.log(`[PDF] TOTAL PAID rendered at ${cursorY}`);
-  const footerY = Math.min(80, cursorY - 50);
+  checkPageOverflow(70);
+  const footerY = Math.min(80, cursorY - 35);
   console.log(`[PDF] Footer starts at ${footerY}`);
-  drawDivider(page, footerY + 20);
+  drawDivider(currentPage, footerY + 20);
   
-  page.drawText('Saviskar 2026', {
+  currentPage.drawText('Saviskar 2026', {
     x: MARGIN,
     y: footerY,
     size: 9,
@@ -330,7 +483,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     color: rgb(0.3, 0.3, 0.3),
   });
   
-  page.drawText('This is an electronically generated payment receipt for Saviskar 2026 registration.', {
+  currentPage.drawText('This is an electronically generated payment receipt for Saviskar 2026 registration.', {
     x: MARGIN,
     y: footerY - 15,
     size: 8,
@@ -338,13 +491,23 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     color: rgb(0.5, 0.5, 0.5),
   });
   
-  page.drawText('No physical signature is required.', {
+  currentPage.drawText('No physical signature is required.', {
     x: MARGIN,
     y: footerY - 28,
     size: 8,
     font: helvetica,
     color: rgb(0.5, 0.5, 0.5),
   });
+
+  if (pageNumber > 1) {
+    currentPage.drawText(`Page ${pageNumber} of ${pageNumber}`, {
+      x: PAGE_WIDTH - MARGIN - 60,
+      y: footerY - 28,
+      size: 8,
+      font: helvetica,
+      color: rgb(0.5, 0.5, 0.5),
+    });
+  }
 
   // Save the PDF
   const pdfBytes = await pdfDoc.save();

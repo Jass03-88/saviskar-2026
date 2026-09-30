@@ -60,6 +60,7 @@ export default function AdminManagementPage() {
 
   const [isSuperMaster, setIsSuperMaster] = useState(false);
   const [changingRoleId, setChangingRoleId] = useState<string | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
 
   const loadAdmins = useCallback(
     async () => {
@@ -400,17 +401,46 @@ export default function AdminManagementPage() {
     }
   }
 
-  const masters =
-    admins.filter(
-      (admin) =>
-        admin.role === "master"
+  async function resetPassword(admin: AdminRecord) {
+    const confirmed = window.confirm(
+      `Send password reset email to ${admin.email ?? "this administrator"}?`
     );
+    if (!confirmed) return;
 
-  const normalAdmins =
-    admins.filter(
-      (admin) =>
-        admin.role === "admin"
-    );
+    setResettingId(admin.user_id);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/admin/admins/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: admin.user_id }),
+      });
+
+      const payload = (await response.json()) as { message?: string; error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Could not send password reset email.");
+      }
+
+      setMessage(payload.message ?? "Password reset email sent successfully.");
+    } catch (err) {
+      console.error("ADMIN RESET PASSWORD ERROR:", err);
+      setError(err instanceof Error ? err.message : "Could not send password reset email.");
+    } finally {
+      setResettingId(null);
+    }
+  }
+
+  const primaryMaster = admins.find((admin) => admin.isPrimary);
+  const masters = admins.filter(
+    (admin) => admin.role === "master" && !admin.isPrimary
+  );
+
+  const normalAdmins = admins.filter(
+    (admin) => admin.role === "admin" && !admin.isPrimary
+  );
 
   return (
     <main className="min-h-screen bg-[#f5f5f5] px-5 py-10 md:px-10 lg:px-16">
@@ -570,6 +600,29 @@ export default function AdminManagementPage() {
           </form>
         </div>
 
+        {primaryMaster && (
+          <section className="mb-8">
+            <div className="mb-4 flex items-center gap-3 text-black">
+              <Crown size={18} className="text-amber-500" />
+              <h2 className="text-xl font-semibold text-black">
+                Primary Master
+              </h2>
+            </div>
+            <div className="overflow-hidden rounded-[28px] bg-white">
+              <div className="divide-y divide-black/[0.06]">
+                <AdminRow
+                  key={primaryMaster.user_id}
+                  admin={primaryMaster}
+                  master
+                  isSuperMaster={isSuperMaster}
+                  onResetPassword={() => resetPassword(primaryMaster)}
+                  resetting={resettingId === primaryMaster.user_id}
+                />
+              </div>
+            </div>
+          </section>
+        )}
+
         <section className="mb-8">
 
           <div className="mb-4 flex items-center gap-3 text-black">
@@ -608,8 +661,10 @@ export default function AdminManagementPage() {
                       isSuperMaster={isSuperMaster}
                       onRemove={() => removeAdmin(admin)}
                       onRoleChange={(newRole) => changeRole(admin, newRole)}
+                      onResetPassword={() => resetPassword(admin)}
                       removing={removingId === admin.user_id}
                       changingRole={changingRoleId === admin.user_id}
+                      resetting={resettingId === admin.user_id}
                     />
                   )
                 )}
@@ -672,11 +727,13 @@ export default function AdminManagementPage() {
                         )
                       }
                       onRoleChange={(newRole) => changeRole(admin, newRole)}
+                      onResetPassword={() => resetPassword(admin)}
                       removing={
                         removingId ===
                         admin.user_id
                       }
                       changingRole={changingRoleId === admin.user_id}
+                      resetting={resettingId === admin.user_id}
                     />
                   )
                 )}
@@ -700,6 +757,8 @@ function AdminRow({
   removing = false,
   changingRole = false,
   isSuperMaster = false,
+  onResetPassword,
+  resetting = false,
 }: {
   admin: AdminRecord;
   master?: boolean;
@@ -708,6 +767,8 @@ function AdminRow({
   removing?: boolean;
   changingRole?: boolean;
   isSuperMaster?: boolean;
+  onResetPassword?: () => void;
+  resetting?: boolean;
 }) {
   const isPrimary = admin.isPrimary ?? false;
 
@@ -777,11 +838,31 @@ function AdminRow({
 
       <div className="flex items-center gap-2">
         {isPrimary ? (
-          <div className="text-xs font-medium text-black/40">Primary administrator</div>
+          <>
+            {isSuperMaster && (
+              <button
+                type="button"
+                onClick={onResetPassword}
+                disabled={resetting}
+                className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
+              >
+                {resetting ? "Sending..." : "Reset Password"}
+              </button>
+            )}
+            <div className="text-xs font-medium text-black/40">Primary administrator</div>
+          </>
         ) : isSuperMaster ? (
           <>
             {master ? (
               <>
+                <button
+                  type="button"
+                  onClick={onResetPassword}
+                  disabled={resetting || removing || changingRole}
+                  className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
+                >
+                  {resetting ? "Sending..." : "Reset Password"}
+                </button>
                 <button
                   type="button"
                   onClick={() => onRoleChange?.("admin")}
@@ -804,6 +885,14 @@ function AdminRow({
               <>
                 <button
                   type="button"
+                  onClick={onResetPassword}
+                  disabled={resetting || removing || changingRole}
+                  className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
+                >
+                  {resetting ? "Sending..." : "Reset Password"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => onRoleChange?.("master")}
                   disabled={changingRole || removing}
                   className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
@@ -823,13 +912,32 @@ function AdminRow({
             )}
           </>
         ) : master ? (
-          <div className="flex items-center gap-1.5 text-xs text-black/40">
-            <ShieldCheck size={14} className="text-black/30" />
-            <span>Master management restricted to Primary Master</span>
-          </div>
+          <>
+            <button
+              type="button"
+              onClick={onResetPassword}
+              disabled={resetting}
+              className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
+            >
+              {resetting ? "Sending..." : "Reset Password"}
+            </button>
+            <div className="flex items-center gap-1.5 text-xs text-black/40">
+              <ShieldCheck size={14} className="text-black/30" />
+              <span>Master management restricted to Primary Master</span>
+            </div>
+          </>
         ) : (
-          <button
-            type="button"
+          <>
+            <button
+              type="button"
+              onClick={onResetPassword}
+              disabled={resetting || removing}
+              className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
+            >
+              {resetting ? "Sending..." : "Reset Password"}
+            </button>
+            <button
+              type="button"
             onClick={onRemove}
             disabled={removing}
             className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
@@ -837,6 +945,7 @@ function AdminRow({
             <Trash2 size={14} />
             {removing ? "Removing..." : "Remove access"}
           </button>
+          </>
         )}
       </div>
 

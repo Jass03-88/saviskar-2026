@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GET, POST, DELETE, PATCH } from "@/app/api/admin/admins/route";
+import { POST as RESET_POST } from "@/app/api/admin/admins/reset-password/route";
 import { GET as getEvents } from "@/app/api/admin/events/route";
 import * as serverLib from "@/lib/supabase/server";
 
@@ -810,6 +811,67 @@ describe("Admin Management API Security & RBAC", () => {
       expect(res31.status).toBe(429);
       const data = await res31.json();
       expect(data.error).toBe("Too many admin requests. Please slow down.");
+    });
+  });
+
+  describe("8. PASSWORD RESET (POST /api/admin/admins/reset-password)", () => {
+    it("Allows Primary Master to reset a Master Admin", async () => {
+      mockAsPrimaryMaster("primary-uuid", "primarymaster@example.com");
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "master-admin-uuid", role: "master" },
+        error: null,
+      });
+      const res = await RESET_POST(
+        createMockRequest("POST", { userId: "master-admin-uuid" })
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("Allows Primary Master to reset a Normal Admin", async () => {
+      mockAsPrimaryMaster("primary-uuid", "primarymaster@example.com");
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "normal-admin-uuid", role: "admin" },
+        error: null,
+      });
+      const res = await RESET_POST(
+        createMockRequest("POST", { userId: "normal-admin-uuid" })
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("PREVENTS Master Admin from resetting Primary Master", async () => {
+      mockAsOtherMaster("master-admin-uuid", "masteradmin@example.com");
+      process.env.PRIMARY_ADMIN_USER_ID = "primary-uuid";
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "primary-uuid", role: "master" },
+        error: null,
+      });
+      const res = await RESET_POST(
+        createMockRequest("POST", { userId: "primary-uuid" })
+      );
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toContain("Only the Primary Master");
+    });
+
+    it("Allows Master Admin to reset a Normal Admin", async () => {
+      mockAsOtherMaster("master-admin-uuid", "masteradmin@example.com");
+      mockBuilder.maybeSingle.mockResolvedValueOnce({
+        data: { user_id: "normal-admin-uuid", role: "admin" },
+        error: null,
+      });
+      const res = await RESET_POST(
+        createMockRequest("POST", { userId: "normal-admin-uuid" })
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("PREVENTS Normal Admin from resetting any admin", async () => {
+      mockAsNormalAdmin();
+      const res = await RESET_POST(
+        createMockRequest("POST", { userId: "any-admin-uuid" })
+      );
+      expect(res.status).toBe(403);
     });
   });
 });

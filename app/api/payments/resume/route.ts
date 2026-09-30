@@ -191,6 +191,81 @@ export async function GET(request: NextRequest) {
     };
   });
 
+  // 8. Look up Team Members if any item is linked to participant_events
+  const participantEventIds = (orderItems || [])
+    .map((item) => item.participant_event_id)
+    .filter(Boolean) as string[];
+
+  let teamMembers: Array<{
+    participantId: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    college: string | null;
+    isTeamLeader: boolean;
+    role: string;
+  }> = [];
+
+  if (participantEventIds.length > 0) {
+    const { data: members, error: membersError } = await supabaseAdmin
+      .from("participant_event_members")
+      .select(`
+        id,
+        name,
+        email,
+        phone,
+        is_team_leader,
+        participant_event_id,
+        participants (
+          participant_id,
+          college
+        )
+      `)
+      .in("participant_event_id", participantEventIds)
+      .order("is_team_leader", { ascending: false });
+
+    if (membersError) {
+      console.error("Resume API: Team members lookup error:", membersError);
+    } else if (members && members.length > 0) {
+      const mapped = members
+        .map((row) => {
+          const pData = Array.isArray(row.participants)
+            ? row.participants[0]
+            : row.participants;
+          const memberPid = String(pData?.participant_id || "");
+          const isLeader = row.is_team_leader === true;
+
+          return {
+            participantId: memberPid || (isLeader ? payer?.participant_id || participantId : ""),
+            name: row.name || (isLeader ? payer?.name || "Team Leader" : "Team Member"),
+            college: pData?.college || payer?.college || null,
+            email: row.email || null,
+            phone: row.phone || null,
+            isTeamLeader: isLeader,
+            role: isLeader ? "Team Head" : "Team Member",
+          };
+        })
+        .filter((m) => Boolean(m.participantId));
+
+      const hasLeader = mapped.some((m) => m.isTeamLeader);
+      if (!hasLeader && payer) {
+        mapped.unshift({
+          participantId: payer.participant_id || participantId,
+          name: payer.name || "Team Head",
+          email: payer.email || null,
+          phone: payer.phone || null,
+          college: payer.college || null,
+          isTeamLeader: true,
+          role: "Team Head",
+        });
+      } else {
+        mapped.sort((a, b) => (b.isTeamLeader ? 1 : 0) - (a.isTeamLeader ? 1 : 0));
+      }
+
+      teamMembers = mapped;
+    }
+  }
+
   return NextResponse.json(
     {
       success: true,
@@ -206,6 +281,7 @@ export async function GET(request: NextRequest) {
         email: payer?.email || "",
       },
       items,
+      teamMembers: teamMembers.length > 0 ? teamMembers : undefined,
     },
     {
       headers: { "Cache-Control": "no-store" },
