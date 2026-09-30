@@ -136,7 +136,7 @@ const stats = [
     target: 50,
     suffix: "+",
     label: "Competitive Realms",
-    desc: "Across tech, culture, non-tech & sports",
+    desc: "Across tech, culture, non-tech & exhibitions",
     icon: Trophy,
   },
   {
@@ -157,7 +157,7 @@ const stats = [
   },
   {
     type: "counter",
-    target: 25000,
+    target: 35000,
     suffix: "+",
     label: "Attending Participants",
     desc: "Where creators and champions unite",
@@ -209,7 +209,7 @@ export default function About() {
             className="rounded-3xl border border-white/15 bg-black/65 backdrop-blur-2xl p-5 sm:p-6 md:p-8 shadow-[0_15px_40px_rgba(0,0,0,0.7)]"
           >
             <p className="text-sm leading-relaxed text-zinc-200 md:text-lg md:leading-8 font-normal">
-              Ignited by <span className="font-editorial text-violet-300 not-italic font-normal">Aevorian Reverie</span> — where tomorrow dreams awake. Born from the roots of Srijan (creation) and Avishkar (invention), Saviskar&apos;s landmark 3rd edition unifies 25,000+ coders, artists, athletes, and performers across 500+ colleges nationwide onto one thunderous stage at CGC University, Mohali.
+              Ignited by <span className="font-editorial text-violet-300 not-italic font-normal">Aevorian Reverie</span> — where tomorrow dreams awake. Born from the roots of Srijan (creation) and Avishkar (invention), Saviskar&apos;s landmark 3rd edition unifies 35,000+ coders, artists, athletes, and performers across 500+ colleges nationwide onto one thunderous stage at CGC University, Mohali.
             </p>
           </motion.div>
         </div>

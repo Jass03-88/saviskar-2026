@@ -310,7 +310,7 @@ export default function SacEditorialSection() {
       eyebrow: "Executive Council Apex",
       title: "Overall Heads",
       description:
-        "The supreme student executive command of Saviskar 2026. Presiding over the Student Advisory Council (SAC), anchoring festival governance, inter-wing strategic synchronization, and institutional liaison with university leadership to unite 25,000+ delegates under Aevorian Reverie.",
+        "The supreme student executive command of Saviskar 2026. Presiding over the Student Advisory Council (SAC), anchoring festival governance, inter-wing strategic synchronization, and institutional liaison with university leadership to unite 35,000+ delegates under Aevorian Reverie.",
       icon: <Crown size={14} />,
       accentClass: "text-amber-400",
       leads: OVERALL_HEADS,

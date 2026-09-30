@@ -59,7 +59,7 @@ export const PINNED_GDRIVE_ITEMS: GDriveImageItem[] = [
   //   driveUrlOrId: "1AbCdEfGhIjKlMnOpQrStUvWxYz",
   //   title: "Stadium Grand Illumination",
   //   category: "Main Stage",
-  //   description: "Concert stage lasers illuminating 25,000+ attendees at CGC University.",
+  //   description: "Concert stage lasers illuminating 35,000+ attendees at CGC University.",
   //   aspectRatio: "wide",
   //   featured: true,
   // }

@@ -311,7 +311,7 @@ export default function EventsView() {
           className="mt-8 flex flex-col justify-between gap-6 border-t border-white/12 pt-8 md:flex-row md:items-end"
         >
           <p className="max-w-2xl text-sm leading-relaxed text-zinc-300 md:text-lg font-normal">
-            Four competitive horizons uniting 25,000+ creators, builders, and performers.
+            Four competitive horizons uniting 35,000+ creators, builders, and performers.
             From battlebot cages and hackathons to electric stadium dance stages, market strategy floors, and the flagship{" "}
             <span className="text-white font-medium">AIvishkar AI Tech Expo</span>.
           </p>

@@ -29,7 +29,7 @@ export const YOUTUBE_CHANNEL_META = {
   url: "https://www.youtube.com/@SaviskarCGCU",
   channelId: "SaviskarCGCU",
   badge: "Official Festival Broadcast",
-  stats: "50+ Realms // 25,000+ Participants // Official 4K Stream",
+  stats: "50+ Realms // 35,000+ Participants // Official 4K Stream",
   description:
     "The official audiovisual chronicles, festival anthems, star night teasers, leadership podcasts, and backstage dispatches from CGC University, Mohali.",
 };
@@ -45,7 +45,7 @@ export const GALLERY_VIDEOS: GalleryVideo[] = [
     featured: true,
     dateBadge: "OFFICIAL ANTHEM",
     description:
-      "Step into the sonic universe of Saviskar. High-octane visuals and electric festival rhythm capturing the collective pulse of 25,000+ participants across India.",
+      "Step into the sonic universe of Saviskar. High-octane visuals and electric festival rhythm capturing the collective pulse of 35,000+ participants across India.",
   },
   {
     id: "hFJPQ7qG2MY",

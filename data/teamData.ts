@@ -75,7 +75,7 @@ export const EDITORIAL_DIRECTOR: EditorialSpreadData = {
   deskTitle: "DIRECTOR — STUDENT AFFAIRS",
   dropCap: "S",
   paragraphs: [
-    "Saviskar 2026 is a celebration of fearless imagination, youthful tenacity, and intellectual wonder. When 25,000+ passionate students converge at CGC University, Mohali, tomorrow begins to exist.",
+    "Saviskar 2026 is a celebration of fearless imagination, youthful tenacity, and intellectual wonder. When 35,000+ passionate students converge at CGC University, Mohali, tomorrow begins to exist.",
     "Aevorian Reverie is not merely a date on our academic calendar—it is a proving ground where bold concepts transform into living realities. Across technical arenas, research hackathons, and stadium-scale cultural showcases, our students demonstrate that youth is not just preparing for the future; they are actively architecting it.",
     "To every competitor, visionary, and guest stepping onto our campus: immerse yourselves completely. Let curiosity guide your inquiries, let passion fuel your performances, and let the camaraderie forged here endure for a lifetime.",
     "I applaud our Student Advisory Council (SAC) and fest leadership whose tireless devotion elevates Saviskar into an unforgettable national benchmark.",
@@ -128,7 +128,7 @@ export const EDITORIAL_PRESIDENCY: EditorialSpreadData = {
 export const TIER_1_BYTE: QuoteByte = {
   tierLabel: "EXECUTIVE PATRON BYTE",
   quote:
-    "Saviskar 2026 is a celebration of fearless imagination, youthful tenacity, and intellectual wonder. When 25,000+ passionate students converge at CGC University, Mohali, tomorrow begins to exist.",
+    "Saviskar 2026 is a celebration of fearless imagination, youthful tenacity, and intellectual wonder. When 35,000+ passionate students converge at CGC University, Mohali, tomorrow begins to exist.",
   attribution: "Mrs. Bismin Dhaliwal",
   designation: "Director Students Affairs // Chief Patron, Saviskar 2026",
 };

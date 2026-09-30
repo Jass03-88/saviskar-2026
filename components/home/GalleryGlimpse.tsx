@@ -62,7 +62,7 @@ export default function GalleryGlimpse() {
           >
             <p className="text-sm leading-relaxed text-zinc-200 md:text-lg font-normal">
               A pulse-racing glimpse into the ground-shaking bass, laser pyrotechnics, and high-voltage rivalries of Saviskar.
-              25,000+ creators, hackers, and performers uniting across 500+ colleges at CGC University Mohali.
+              35,000+ creators, hackers, and performers uniting across 500+ colleges at CGC University Mohali.
             </p>
 
             <div className="mt-3.5 sm:mt-4 flex items-center gap-2.5 font-mono text-[10px] sm:text-[11px] font-medium tracking-wider sm:tracking-widest text-violet-300 uppercase">

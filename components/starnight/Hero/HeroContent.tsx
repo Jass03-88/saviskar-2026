@@ -74,7 +74,7 @@ export default function HeroContent() {
         className="mt-10 max-w-xl"
       >
         <p className="text-lg leading-8 text-white/70">
-          25,000+ collegiate voices singing as one.
+          35,000+ collegiate voices singing as one.
           <br />
           Ground-shaking bass. Towering pyrotechnics.
           <br />

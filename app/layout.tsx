@@ -66,7 +66,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Saviskar 2026: Aevorian Reverie | CGC University, Mohali",
     description:
-      "Where Tomorrow Dreams Awake. North India's flagship Annual National Techno-Cultural University Festival at CGC University, Mohali. 50+ Realms, 500+ Colleges & Universities, 25,000+ Participants, 2 Action-Packed Days.",
+      "Where Tomorrow Dreams Awake. North India's flagship Annual National Techno-Cultural University Festival at CGC University, Mohali. 50+ Realms, 500+ Colleges & Universities, 35,000+ Participants, 2 Action-Packed Days.",
     url: "https://saviskar.co.in",
     siteName: "Saviskar 2026",
     locale: "en_IN",

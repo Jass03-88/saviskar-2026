@@ -35,7 +35,7 @@ const DIGNITARIES = [
     dropCap: "A",
     paragraphs: [
       "new generation of leadership defines the modern university — one that speaks fluently in both the language of industry and the language of aspiration. Mr. Arsh Dhaliwal, Worthy Managing Director, brings this duality with remarkable clarity and drive.",
-      "His conviction that student achievement is the highest institutional metric has shaped every strategic decision at CGC University. Saviskar 2026 stands as his direct mandate: an invitation to 25,000+ participants to prove that student-led excellence can rival any professional production in scale, quality, and imagination.",
+      "His conviction that student achievement is the highest institutional metric has shaped every strategic decision at CGC University. Saviskar 2026 stands as his direct mandate: an invitation to 35,000+ participants to prove that student-led excellence can rival any professional production in scale, quality, and imagination.",
       "The arena is set. The directive is clear. Aevorian Reverie is his challenge to every student who dares to be extraordinary.",
     ],
     signeeName: "Mr. Arsh Dhaliwal",
@@ -51,7 +51,7 @@ const DIGNITARIES = [
     deskTitle: "MRS. BISMIN DHALIWAL",
     dropCap: "S",
     paragraphs: [
-      "aviskar 2026 is a celebration of fearless imagination, youthful tenacity, and intellectual wonder. When 25,000+ passionate students converge at CGC University, Mohali, tomorrow begins to exist.",
+      "aviskar 2026 is a celebration of fearless imagination, youthful tenacity, and intellectual wonder. When 35,000+ passionate students converge at CGC University, Mohali, tomorrow begins to exist.",
       "Aevorian Reverie is not merely a date on our academic calendar — it is a proving ground where bold concepts transform into living realities. Across technical arenas, research hackathons, and stadium-scale cultural showcases, our students demonstrate that youth is not just preparing for the future; they are actively architecting it.",
       "To every competitor, visionary, and guest stepping onto our campus: immerse yourselves completely. Let curiosity guide your inquiries, let passion fuel your performances, and let the camaraderie forged here endure for a lifetime. I applaud our Student Advisory Council whose tireless devotion elevates Saviskar into an unforgettable national benchmark.",
     ],
@@ -137,7 +137,7 @@ const DIGNITARIES = [
 // ============================================================
 const DSA_BIO = [
   "he Department of Student Affairs at CGC University is the living engine of Saviskar 2026. Behind every event announcement, every registration window, every artist liaison, and every logistical triumph is this department — a cohesive, relentless team of faculty and professional staff who transform institutional vision into on-ground reality.",
-  "From coordinating national outreach campaigns across 11 states to managing the operational choreography of a 25,000-strong festival, Team DSA operates with a precision that is rarely visible and always essential. They are the unseen architecture of Aevorian Reverie.",
+  "From coordinating national outreach campaigns across 11 states to managing the operational choreography of a 35,000-strong festival, Team DSA operates with a precision that is rarely visible and always essential. They are the unseen architecture of Aevorian Reverie.",
   "Saviskar 2026 is a student festival, built by students. But it stands on the institutional foundation that Team DSA pours every year — with expertise, commitment, and an extraordinary belief in what young people can achieve when given the right stage.",
 ];
 
@@ -437,7 +437,7 @@ export default function LegacyView() {
             </span>
           </h3>
           <p className="mt-3 text-sm text-white/40 leading-relaxed max-w-md">
-            50+ competitive realms, stadium concerts, and 25,000+ participants. The stage is set at CGC University, Mohali.
+            50+ competitive realms, stadium concerts, and 35,000+ participants. The stage is set at CGC University, Mohali.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Link

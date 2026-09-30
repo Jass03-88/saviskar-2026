@@ -70,7 +70,7 @@ export default function Footer() {
               </div>
 
               <p className="mt-4 text-sm leading-relaxed text-zinc-300">
-                North India&apos;s flagship Annual National Techno-Cultural University Festival at CGC University, Mohali. Born from the roots of Srijan and Avishkar, uniting 25,000+ creators across 500+ colleges under Aevorian Reverie.
+                North India&apos;s flagship Annual National Techno-Cultural University Festival at CGC University, Mohali. Born from the roots of Srijan and Avishkar, uniting 35,000+ creators across 500+ colleges under Aevorian Reverie.
               </p>
 
               <div className="mt-6 flex flex-col gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] p-3.5 backdrop-blur-md">

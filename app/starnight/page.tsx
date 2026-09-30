@@ -17,7 +17,7 @@ const StarNightReveal = dynamic(
 export const metadata: Metadata = {
   title: "Star Night — Headline Concerts",
   description:
-    "Experience Star Night at Saviskar 2026: Aevorian Reverie at CGC University, Mohali. Stadium lights, chart-topping headline artists, and 25,000+ voices singing in unison under the night sky.",
+    "Experience Star Night at Saviskar 2026: Aevorian Reverie at CGC University, Mohali. Stadium lights, chart-topping headline artists, and 35,000+ voices singing in unison under the night sky.",
   openGraph: {
     title: "Star Night | Saviskar 2026: Aevorian Reverie",
     description:

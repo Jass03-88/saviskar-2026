@@ -99,7 +99,7 @@ export default function Hero() {
           transition={{ delay: 0.45, duration: 0.8 }}
           className="mt-3.5 sm:mt-4 flex flex-wrap items-center justify-center gap-2 sm:gap-2.5 text-[10px] sm:text-xs tracking-wider uppercase text-white/90 font-medium"
         >
-          {["50+ Realms", "500+ Colleges", "25,000+ Students", "2 Epic Days (Oct 28–29)"].map((item) => (
+          {["50+ Realms", "500+ Colleges", "35,000+ Students", "2 Epic Days (Oct 28–29)"].map((item) => (
             <motion.div
               key={item}
               whileHover={{ scale: 1.08, y: -3, borderColor: "rgba(168,85,247,0.5)" }}

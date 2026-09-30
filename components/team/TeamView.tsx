@@ -215,7 +215,7 @@ export default function TeamView() {
             "ops-anand-kumar": [
               "Mr. Anand Kumar commands the entire operational backbone of Saviskar 2026. As Operations Command, he is responsible for the physical transformation of CGC University's campus — converting open grounds, corridors, and auditoriums into world-class festival venues with precision staging, broadcast-grade electrical grids, and seamless crowd-management infrastructure.",
               "His team deploys and monitors over a dozen simultaneous technical setups across the festival's multi-venue footprint. From PA system calibration in open-air arenas to generator fail-safes and emergency lighting in enclosed theatres, Mr. Kumar's operational playbook leaves nothing to chance. Every contingency has a protocol; every protocol has an owner.",
-              "Security architecture is among his most critical responsibilities. Coordinating with university administration, local authorities, and event security contractors, he designs and enforces entry management systems that ensure the safety of 25,000+ delegates without sacrificing the vibrancy of the festival atmosphere. His approach — thorough, calm, and adaptive — sets the professional standard for campus-scale event operations in the region.",
+              "Security architecture is among his most critical responsibilities. Coordinating with university administration, local authorities, and event security contractors, he designs and enforces entry management systems that ensure the safety of 35,000+ delegates without sacrificing the vibrancy of the festival atmosphere. His approach — thorough, calm, and adaptive — sets the professional standard for campus-scale event operations in the region.",
               "Festival Logistics & Infrastructure Management — the infrastructure Mr. Kumar builds over months disappears into the background during the festival, which is precisely the hallmark of exceptional operations leadership.",
             ],
             "ops-aditya": [
@@ -344,7 +344,7 @@ export default function TeamView() {
         <div className="mx-auto max-w-3xl flex flex-col items-center">
           <div className="liquid-glass inline-flex items-center gap-1.5 rounded-full px-3.5 py-1 text-xs font-mono text-violet-300 mb-4 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
             <Sparkles size={12} />
-            <span>JOIN 25,000+ PARTICIPANTS NATIONWIDE</span>
+            <span>JOIN 35,000+ PARTICIPANTS NATIONWIDE</span>
           </div>
 
           <h3 className="text-2xl sm:text-4xl font-bold text-white tracking-tight">

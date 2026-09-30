@@ -2,7 +2,7 @@
 
 **System:** Saviskar 2026 (*Aevorian Reverie*)  
 **Architecture:** Next.js 16.3.4 (App Router), React 19.2.4, Supabase (PostgreSQL 15+), Resend, PayU, Tailwind CSS v4, Three.js  
-**Target Horizon:** October 27–28, 2026 (Traffic surge: 25,000+ university attendees, 100+ concurrent scanners)
+**Target Horizon:** October 27–28, 2026 (Traffic surge: 35,000+ university attendees, 100+ concurrent scanners)
 
 ---
 
