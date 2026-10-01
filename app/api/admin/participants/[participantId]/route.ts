@@ -87,14 +87,94 @@ export async function GET(
           team_name,
           checked_in,
           checked_in_at,
+          main_checked_in,
+          main_checked_in_at,
+          registration_group_id,
           events(name)
+        ),
+        participant_event_members (
+          id,
+          participant_event_id,
+          participant_events (
+            id,
+            event_id,
+            registration_status,
+            payment_status,
+            payment_amount,
+            team_name,
+            checked_in,
+            checked_in_at,
+            main_checked_in,
+            main_checked_in_at,
+            registration_group_id,
+            events(name)
+          )
         )
       `
     )
     .eq("participant_id", participantId)
     .maybeSingle();
 
-  if (error) {
+  let dataResult = data;
+  let schemaWarning: string | undefined;
+
+  if (error && error.code === "42703") {
+    console.warn("Main check-in columns missing. Falling back to legacy query for participant.");
+    schemaWarning = "Main check-in migration is not applied.";
+
+    const fallback = await supabaseAdmin
+      .from("participants")
+      .select(
+        `
+          participant_id,
+          name,
+          college,
+          email,
+          phone,
+          participant_events(
+            id,
+            event_id,
+            registration_status,
+            payment_status,
+            payment_amount,
+            team_name,
+            checked_in,
+            checked_in_at,
+            events(name)
+          ),
+          participant_event_members (
+            id,
+            participant_event_id,
+            participant_events (
+              id,
+              event_id,
+              registration_status,
+              payment_status,
+              payment_amount,
+              team_name,
+              checked_in,
+              checked_in_at,
+              events(name)
+            )
+          )
+        `
+      )
+      .eq("participant_id", participantId)
+      .maybeSingle();
+
+    if (fallback.error) {
+      console.error("Participant fallback lookup failed:", fallback.error);
+      return response(
+        {
+          success: false,
+          error: "Unable to look up this participant.",
+        },
+        500
+      );
+    }
+    
+    dataResult = fallback.data as any;
+  } else if (error) {
     console.error("Participant lookup failed:", error);
 
     return response(
@@ -106,7 +186,7 @@ export async function GET(
     );
   }
 
-  if (!data) {
+  if (!dataResult) {
     return response(
       {
         success: false,
@@ -116,34 +196,64 @@ export async function GET(
     );
   }
 
-  const participantEvents =
-    (data.participant_events as Array<{
-      id: string;
-      event_id: string;
-      registration_status: string | null;
-      payment_status: string | null;
-      payment_amount: number | null;
-      team_name: string | null;
-      checked_in: boolean | null;
-      checked_in_at: string | null;
-      events:
+  type RawEventRecord = {
+    id: string;
+    event_id: string;
+    registration_status: string | null;
+    payment_status: string | null;
+    payment_amount: number | null;
+    team_name: string | null;
+    checked_in: boolean | null;
+    checked_in_at: string | null;
+    main_checked_in?: boolean | null;
+    main_checked_in_at?: string | null;
+    registration_group_id?: string | null;
+    events:
       | { name: string | null }
       | { name: string | null }[]
       | null;
+  };
+
+  const directEvents =
+    (dataResult.participant_events as Array<RawEventRecord> | null) ?? [];
+    
+  const memberRows =
+    (dataResult.participant_event_members as Array<{
+      id: string;
+      participant_event_id: string;
+      participant_events: RawEventRecord | RawEventRecord[] | null;
     }> | null) ?? [];
+
+  const eventsByParticipantEventId = new Map<string, RawEventRecord>();
+
+  for (const event of directEvents) {
+    if (!event) continue;
+    eventsByParticipantEventId.set(event.id, event);
+  }
+
+  for (const memberRow of memberRows) {
+    const event = Array.isArray(memberRow.participant_events)
+      ? memberRow.participant_events[0]
+      : memberRow.participant_events;
+
+    if (!event) continue;
+    eventsByParticipantEventId.set(event.id, event);
+  }
+
+  const combinedEvents = Array.from(eventsByParticipantEventId.values());
 
   return response({
     success: true,
 
     participant: {
-      participantId: data.participant_id,
-      name: data.name,
-      college: data.college,
-      email: data.email,
-      phone: data.phone,
+      participantId: dataResult.participant_id,
+      name: dataResult.name,
+      college: dataResult.college,
+      email: dataResult.email,
+      phone: dataResult.phone,
     },
 
-    events: participantEvents.map((event) => ({
+    events: combinedEvents.map((event) => ({
       participantEventId: event.id,
       eventId: event.event_id,
       eventName:
@@ -155,6 +265,10 @@ export async function GET(
       teamName: event.team_name,
       checkedIn: event.checked_in ?? false,
       checkedInAt: event.checked_in_at,
+      mainCheckedIn: event.main_checked_in ?? false,
+      mainCheckedInAt: event.main_checked_in_at ?? null,
+      registrationGroupId: event.registration_group_id ?? null,
     })),
+    ...(schemaWarning ? { schemaWarning } : {}),
   });
 }

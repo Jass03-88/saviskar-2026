@@ -36,6 +36,9 @@ type ParticipantEvent = {
   teamName: string | null;
   checkedIn: boolean;
   checkedInAt: string | null;
+  mainCheckedIn: boolean;
+  mainCheckedInAt: string | null;
+  registrationGroupId?: string | null;
 };
 
 export default function ScannerPage() {
@@ -188,7 +191,7 @@ export default function ScannerPage() {
     }
   }
 
-  async function checkInParticipant(participantEventId: string, eventName: string, teamName: string | null) {
+  async function handleCheckIn(participantEventId: string, eventName: string, teamName: string | null, type: "event" | "main") {
     setLoading(true);
     setError("");
 
@@ -196,7 +199,7 @@ export default function ScannerPage() {
       const response = await fetch("/api/admin/check-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ participantEventId, action: "check_in" }),
+        body: JSON.stringify({ participantEventId, action: type === "main" ? "main_check_in" : "check_in" }),
       });
 
       const result = await response.json();
@@ -205,18 +208,35 @@ export default function ScannerPage() {
         throw new Error(result.error || "Could not check in.");
       }
 
+      // Find the target event to get its registrationGroupId
+      const targetEvent = participantEvents.find(e => e.participantEventId === participantEventId);
+      const groupId = targetEvent?.registrationGroupId;
+
       setParticipantEvents((events) =>
-        events.map((event) =>
-          event.participantEventId === participantEventId
-            ? { ...event, checkedIn: true, checkedInAt: result.checked_in_at }
-            : event
-        )
+        events.map((event) => {
+          if (type === "main") {
+            // If it's a main check-in, update ALL events that share the same registration group!
+            // If there's no group ID (migration not applied), fallback to just updating the one event.
+            if (
+              (groupId && event.registrationGroupId === groupId) || 
+              (!groupId && event.participantEventId === participantEventId)
+            ) {
+              return { ...event, mainCheckedIn: true, mainCheckedInAt: result.main_checked_in_at };
+            }
+          } else {
+            // Event check-ins strictly update only the scanned pass
+            if (event.participantEventId === participantEventId) {
+              return { ...event, checkedIn: true, checkedInAt: result.checked_in_at };
+            }
+          }
+          return event;
+        })
       );
 
       setSuccess(
         teamName
-          ? `${teamName} has been successfully checked in for ${eventName}.`
-          : `${participant?.name} has been successfully checked in for ${eventName}.`
+          ? `${teamName} has been successfully checked in for ${type === "main" ? "Main Registration" : eventName}.`
+          : `${participant?.name} has been successfully checked in for ${type === "main" ? "Main Registration" : eventName}.`
       );
     } catch (err) {
       console.error("CHECK-IN ERROR:", err);
@@ -226,7 +246,7 @@ export default function ScannerPage() {
     }
   }
 
-  async function checkOutParticipant(participantEventId: string, eventName: string, teamName: string | null) {
+  async function handleCheckOut(participantEventId: string, eventName: string, teamName: string | null, type: "event" | "main") {
     setLoading(true);
     setError("");
     setSuccess("");
@@ -235,7 +255,7 @@ export default function ScannerPage() {
       const response = await fetch("/api/admin/check-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ participantEventId, action: "check_out" }),
+        body: JSON.stringify({ participantEventId, action: type === "main" ? "main_check_out" : "check_out" }),
       });
 
       const result = await response.json();
@@ -244,18 +264,32 @@ export default function ScannerPage() {
         throw new Error(result.error || "Could not check out.");
       }
 
+      // Find the target event to get its registrationGroupId
+      const targetEvent = participantEvents.find(e => e.participantEventId === participantEventId);
+      const groupId = targetEvent?.registrationGroupId;
+
       setParticipantEvents((events) =>
-        events.map((event) =>
-          event.participantEventId === participantEventId
-            ? { ...event, checkedIn: false, checkedInAt: null }
-            : event
-        )
+        events.map((event) => {
+          if (type === "main") {
+            if (
+              (groupId && event.registrationGroupId === groupId) || 
+              (!groupId && event.participantEventId === participantEventId)
+            ) {
+              return { ...event, mainCheckedIn: false, mainCheckedInAt: null };
+            }
+          } else {
+            if (event.participantEventId === participantEventId) {
+              return { ...event, checkedIn: false, checkedInAt: null };
+            }
+          }
+          return event;
+        })
       );
 
       setSuccess(
         teamName
-          ? `${teamName} has been successfully checked out of ${eventName}.`
-          : `${participant?.name} has been successfully checked out of ${eventName}.`
+          ? `${teamName} has been successfully checked out of ${type === "main" ? "Main Registration" : eventName}.`
+          : `${participant?.name} has been successfully checked out of ${type === "main" ? "Main Registration" : eventName}.`
       );
     } catch (err) {
       console.error("CHECK-OUT ERROR:", err);
@@ -444,52 +478,83 @@ export default function ScannerPage() {
                                     UNPAID ({event.paymentStatus})
                                   </span>
                                 )}
-                                <span
-                                  className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
-                                    event.checkedIn
-                                      ? "bg-green-50 text-green-700"
-                                      : "bg-black/[0.05] text-black/50"
-                                  }`}
-                                >
-                                  {event.checkedIn ? "Checked in" : "Not checked in"}
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                              {!event.checkedIn ? (
-                                isUnpaid ? (
-                                  <div className="w-full">
-                                    <button
-                                      disabled
-                                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-black/10 py-3 text-sm font-medium text-black/40 cursor-not-allowed"
-                                    >
-                                      <XCircle size={16} />
-                                      Check in Disabled (Payment Required)
-                                    </button>
-                                    <p className="mt-2 text-center text-xs font-medium text-red-600">
-                                      Payment is incomplete ({event.paymentStatus}). Participant cannot be checked in.
-                                    </p>
-                                  </div>
-                                ) : (
-                                  <button
-                                    onClick={() => checkInParticipant(event.participantEventId, event.eventName, event.teamName)}
-                                    disabled={loading}
-                                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
+                                  <span
+                                    className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
+                                      event.mainCheckedIn
+                                        ? "bg-blue-50 text-blue-700"
+                                        : "bg-black/[0.05] text-black/50"
+                                    }`}
                                   >
-                                    <CheckCircle2 size={16} />
-                                    Check in
+                                    Main: {event.mainCheckedIn ? "Checked in" : "Pending"}
+                                  </span>
+                                  <span
+                                    className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
+                                      event.checkedIn
+                                        ? "bg-green-50 text-green-700"
+                                        : "bg-black/[0.05] text-black/50"
+                                    }`}
+                                  >
+                                    Event: {event.checkedIn ? "Checked in" : "Pending"}
+                                  </span>
+                                </div>
+                              </div>
+
+                            <div className="flex flex-col gap-3">
+                              {isUnpaid ? (
+                                <div className="w-full">
+                                  <button
+                                    disabled
+                                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-black/10 py-3 text-sm font-medium text-black/40 cursor-not-allowed"
+                                  >
+                                    <XCircle size={16} />
+                                    Check in Disabled (Payment Required)
                                   </button>
-                                )
+                                  <p className="mt-2 text-center text-xs font-medium text-red-600">
+                                    Payment is incomplete ({event.paymentStatus}). Participant cannot be checked in.
+                                  </p>
+                                </div>
                               ) : (
-                                <button
-                                  onClick={() => checkOutParticipant(event.participantEventId, event.eventName, event.teamName)}
-                                  disabled={loading}
-                                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
-                                >
-                                  <LogOut size={16} />
-                                  Check out
-                                </button>
+                                <div className="grid grid-cols-2 gap-3">
+                                  {!event.mainCheckedIn ? (
+                                    <button
+                                      onClick={() => handleCheckIn(event.participantEventId, event.eventName, event.teamName, "main")}
+                                      disabled={loading}
+                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
+                                    >
+                                      <CheckCircle2 size={16} />
+                                      Main Check-in
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleCheckOut(event.participantEventId, event.eventName, event.teamName, "main")}
+                                      disabled={loading}
+                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 py-3 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+                                    >
+                                      <LogOut size={16} />
+                                      Main Check-out
+                                    </button>
+                                  )}
+                                  
+                                  {!event.checkedIn ? (
+                                    <button
+                                      onClick={() => handleCheckIn(event.participantEventId, event.eventName, event.teamName, "event")}
+                                      disabled={loading}
+                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
+                                    >
+                                      <CheckCircle2 size={16} />
+                                      Event Check-in
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleCheckOut(event.participantEventId, event.eventName, event.teamName, "event")}
+                                      disabled={loading}
+                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                                    >
+                                      <LogOut size={16} />
+                                      Event Check-out
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </div>
                           </div>

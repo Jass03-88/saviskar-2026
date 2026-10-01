@@ -24,9 +24,11 @@ import {
   ShieldCheck,
   Search,
   CreditCard,
+  ExternalLink,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { supabase } from "@/lib/supabase";
+import TermsConditionsModal from "./TermsConditionsModal";
 
 type EventOption = {
   id: string;
@@ -177,6 +179,7 @@ export default function RegistrationForm({
   const [participantLookupEvents, setParticipantLookupEvents] = useState<
     ParticipantLookupEvent[]
   >([]);
+  const [termsModalOpen, setTermsModalOpen] = useState(false);
 
   /*
    * LOAD EVENTS
@@ -2455,19 +2458,45 @@ export default function RegistrationForm({
               </div>
             )}
 
-            {/* CODE OF CONDUCT AGREEMENT */}
-            <label className="flex cursor-pointer items-start gap-3.5 rounded-2xl border border-white/10 bg-white/[0.025] p-4 sm:p-5 transition hover:border-violet-400/30 backdrop-blur-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+            {/* CODE OF CONDUCT & TERMS AGREEMENT */}
+            <div className="flex items-start gap-3.5 rounded-2xl border border-white/10 bg-white/[0.025] p-4 sm:p-5 transition hover:border-violet-400/30 backdrop-blur-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
               <input
+                id="delegate-agreement"
                 type="checkbox"
                 name="agreement"
                 required
-                className="mt-1 h-4 w-4 cursor-pointer accent-violet-500"
+                className="mt-1 h-4 w-4 cursor-pointer accent-violet-500 rounded border-white/20 focus:ring-2 focus:ring-violet-400 focus:outline-none"
               />
 
-              <span className="max-w-2xl text-xs sm:text-sm leading-relaxed text-zinc-300">
-                I confirm that all delegate information provided above is authentic and I agree to strictly adhere to the official Saviskar 2026 code of conduct and tournament rulebooks.
-              </span>
-            </label>
+              <div className="max-w-2xl text-xs sm:text-sm leading-relaxed text-zinc-300">
+                <label
+                  htmlFor="delegate-agreement"
+                  className="cursor-pointer"
+                >
+                  I confirm that all delegate information provided above is authentic and I agree to strictly adhere to the official Saviskar 2026{" "}
+                </label>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTermsModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1 font-semibold text-violet-300 underline underline-offset-4 decoration-violet-400/50 hover:text-white hover:decoration-white transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-violet-400 focus:ring-offset-2 focus:ring-offset-black rounded-sm"
+                  aria-label="View official Saviskar 2026 Terms & Conditions (opens in document viewer)"
+                  aria-haspopup="dialog"
+                >
+                  <span>Terms &amp; Conditions</span>
+                  <ExternalLink size={12} className="inline shrink-0 opacity-70" aria-hidden="true" />
+                </button>
+                <label
+                  htmlFor="delegate-agreement"
+                  className="cursor-pointer"
+                >
+                  , Code of Conduct and applicable event rules.
+                </label>
+              </div>
+            </div>
 
             {errorMessage && (
               <div className="flex items-center gap-3 rounded-2xl border border-red-500/30 bg-red-950/40 px-5 py-4 text-sm text-red-300 shadow-[0_0_20px_rgba(239,68,68,0.15)]">
@@ -2513,6 +2542,12 @@ export default function RegistrationForm({
               </button>
             </div>
           </form>
+
+          {/* Official Terms & Conditions Controlled PDF Modal Viewer */}
+          <TermsConditionsModal
+            isOpen={termsModalOpen}
+            onClose={() => setTermsModalOpen(false)}
+          />
         </div>
       </div>
     </section>

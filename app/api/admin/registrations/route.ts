@@ -29,6 +29,8 @@ type ParticipantEvent = {
   team_name: string | null;
   checked_in: boolean | null;
   checked_in_at: string | null;
+  main_checked_in: boolean | null;
+  main_checked_in_at: string | null;
   is_archived: boolean | null;
   created_at: string;
 };
@@ -154,7 +156,7 @@ export async function GET(request: Request) {
   let peQuery = supabaseAdmin
     .from("participant_events")
     .select(
-      "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at",
+      "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, main_checked_in, main_checked_in_at, registration_group_id, is_archived, created_at",
       { count: "exact" }
     );
 
@@ -162,13 +164,39 @@ export async function GET(request: Request) {
     peQuery = peQuery.eq("event_id", eventId);
   }
 
-  const {
+  let {
     data: participantEventsData,
     count: totalCount,
     error: peError,
   } = await peQuery
     .order("created_at", { ascending: false })
     .range(from, to);
+
+  let schemaWarning: string | undefined;
+
+  if (peError && peError.code === "42703") {
+    console.warn("Main check-in columns missing. Falling back to legacy query.");
+    schemaWarning = "Main check-in migration is not applied.";
+    
+    peQuery = supabaseAdmin
+      .from("participant_events")
+      .select(
+        "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at",
+        { count: "exact" }
+      );
+      
+    if (eventId) {
+      peQuery = peQuery.eq("event_id", eventId);
+    }
+
+    const fallbackResult = await peQuery
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    participantEventsData = fallbackResult.data;
+    totalCount = fallbackResult.count;
+    peError = fallbackResult.error;
+  }
 
   if (peError) {
     console.error("Admin registrations query failed:", peError);
@@ -387,6 +415,7 @@ export async function GET(request: Request) {
       page,
       pageSize,
       totalPages: Math.ceil((totalCount ?? 0) / pageSize),
+      ...(schemaWarning ? { schemaWarning } : {}),
     },
     {
       headers: {
@@ -424,13 +453,13 @@ export async function PATCH(
       .catch(() => null)) as {
         participantEventId?: unknown;
         checkedIn?: unknown;
+        mainCheckedIn?: unknown;
       } | null;
 
   if (
     !body ||
-    typeof body.participantEventId !==
-    "string" ||
-    typeof body.checkedIn !== "boolean"
+    typeof body.participantEventId !== "string" ||
+    (typeof body.checkedIn !== "boolean" && typeof body.mainCheckedIn !== "boolean")
   ) {
     return NextResponse.json(
       {
@@ -454,25 +483,28 @@ export async function PATCH(
     );
   }
 
+  const updatePayload: any = {};
+  if (typeof body.checkedIn === "boolean") {
+    updatePayload.checked_in = body.checkedIn;
+    updatePayload.checked_in_at = body.checkedIn ? new Date().toISOString() : null;
+  }
+  if (typeof body.mainCheckedIn === "boolean") {
+    updatePayload.main_checked_in = body.mainCheckedIn;
+    updatePayload.main_checked_in_at = body.mainCheckedIn ? new Date().toISOString() : null;
+  }
+
   const {
     data,
     error,
   } = await supabaseAdmin
     .from("participant_events")
-    .update({
-      checked_in:
-        body.checkedIn,
-      checked_in_at:
-        body.checkedIn
-          ? new Date().toISOString()
-          : null,
-    })
+    .update(updatePayload)
     .eq(
       "id",
       body.participantEventId
     )
     .select(
-      "id, checked_in, checked_in_at"
+      "id, checked_in, checked_in_at, main_checked_in, main_checked_in_at"
     )
     .maybeSingle();
 

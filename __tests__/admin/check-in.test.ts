@@ -68,18 +68,25 @@ function createMockSupabaseAdmin() {
                   }
                   const rec = mockDbState.participantEvents[targetId];
                   if (requiredCheckedIn !== null && rec.checked_in !== requiredCheckedIn) {
-                    return { data: null, error: null }; // Condition failed, 0 rows updated
+                    return { data: [], error: null }; // Condition failed, 0 rows updated
                   }
                   if (requiredPaymentStatus && rec.payment_status !== requiredPaymentStatus) {
-                    return { data: null, error: null }; // Condition failed, 0 rows updated
+                    return { data: [], error: null }; // Condition failed, 0 rows updated
                   }
-                  rec.checked_in = updates.checked_in;
-                  rec.checked_in_at = updates.checked_in_at;
-                  return { data: rec, error: null };
+                  rec.checked_in = updates.checked_in ?? rec.checked_in;
+                  rec.checked_in_at = updates.checked_in_at ?? rec.checked_in_at;
+                  return { data: [rec], error: null };
                 };
                 return {
-                  single: execute,
-                  maybeSingle: execute,
+                  single: async () => {
+                    const res = await execute();
+                    return { data: res.data ? res.data[0] : null, error: res.error };
+                  },
+                  maybeSingle: async () => {
+                    const res = await execute();
+                    return { data: res.data ? res.data[0] : null, error: res.error };
+                  },
+                  then: (resolve: any) => execute().then(resolve),
                 };
               },
             };
@@ -297,7 +304,8 @@ describe("P0-02: Check-In API Payment Gate Enforcement", () => {
 
   it("K. Check-in query selects participant_events.payment_amount directly without joining events", async () => {
     await POST(makeRequest({ participantEventId: "pe-paid-ok", action: "check_in" }));
-    expect(mockDbState.lastSelectedColumns).toBe("id, payment_status, payment_amount");
+    // The main select is id, payment_status, payment_amount, team_name, event_id, participant_id, registration_group_id
+    expect(mockDbState.lastSelectedColumns).toContain("payment_amount");
     expect(mockDbState.lastSelectedColumns).not.toContain("events");
   });
 

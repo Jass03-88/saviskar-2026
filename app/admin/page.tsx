@@ -55,6 +55,9 @@ type ParticipantEvent = {
   team_name: string | null;
   checked_in: boolean | null;
   checked_in_at: string | null;
+  main_checked_in: boolean | null;
+  main_checked_in_at: string | null;
+  registration_group_id?: string | null;
   is_archived: boolean | null;
   created_at: string;
 };
@@ -201,7 +204,7 @@ export default function AdminPage() {
     useState<ArchiveFilter>("active");
 
   const [paymentOverviewState, setPaymentOverviewState] = useState<"all" | "paid" | "unpaid" | "free">("all");
-  const [paymentOverviewCategory, setPaymentOverviewCategory] = useState<"all" | "technical" | "non-technical" | "cultural" | "sports">("all");
+  const [paymentOverviewCategory, setPaymentOverviewCategory] = useState<"all" | "technical" | "non-technical" | "cultural">("all");
 
   const [selectedParticipant, setSelectedParticipant] =
     useState<Participant | null>(null);
@@ -560,21 +563,38 @@ export default function AdminPage() {
             .checked_in === true
       ).length;
 
+    const uniqueParticipantsSet = new Set<string>();
+    activeRegistrations.forEach((item) => {
+      uniqueParticipantsSet.add(item.participant.id);
+      item.members?.forEach((m) => {
+        if (m.participant_id) uniqueParticipantsSet.add(m.participant_id);
+      });
+    });
+    const uniqueParticipants = uniqueParticipantsSet.size;
+
+    const mainCheckedInSet = new Set<string>();
+    activeRegistrations
+      .filter((item) => item.registration.main_checked_in === true)
+      .forEach((item) => {
+        mainCheckedInSet.add(item.participant.id);
+        item.members?.forEach((m) => {
+          if (m.participant_id) mainCheckedInSet.add(m.participant_id);
+        });
+      });
+    const mainCheckedIn = mainCheckedInSet.size;
+
     const pending =
       total - checkedIn;
-
-    const uniqueParticipants =
-      new Set(
-        activeRegistrations.map(
-          (item) =>
-            item.participant.id
-        )
-      ).size;
+      
+    const mainPending =
+      uniqueParticipants - mainCheckedIn;
 
     return {
       total,
       checkedIn,
+      mainCheckedIn,
       pending,
+      mainPending,
       uniqueParticipants,
     };
   }, [registrations, serverTotal]);
@@ -717,10 +737,11 @@ export default function AdminPage() {
   ======================================================= */
 
   async function toggleCheckIn(
-    registration: Registration
+    registration: Registration,
+    type: "event" | "main" = "event"
   ) {
-    const next =
-      registration.registration.checked_in !== true;
+    const nextEvent = registration.registration.checked_in !== true;
+    const nextMain = registration.registration.main_checked_in !== true;
 
     setUpdatingId(
       registration.registration.id
@@ -737,7 +758,7 @@ export default function AdminPage() {
           body: JSON.stringify({
             participantEventId:
               registration.registration.id,
-            checkedIn: next,
+            ...(type === "main" ? { mainCheckedIn: nextMain } : { checkedIn: nextEvent }),
           }),
         }
       );
@@ -747,6 +768,8 @@ export default function AdminPage() {
           registration?: {
             checked_in: boolean;
             checked_in_at: string | null;
+            main_checked_in: boolean;
+            main_checked_in_at: string | null;
           };
           error?: string;
         };
@@ -1058,8 +1081,11 @@ export default function AdminPage() {
         "Payment Status",
         "Payment Amount",
         "Payment ID",
-        "Checked In",
-        "Checked In At",
+        "Main Checked In",
+        "Main Checked In At",
+        "Event Checked In",
+        "Event Checked In At",
+        "Registration Group ID",
         "Registered At",
       ],
       ...filteredRegistrations.map(
@@ -1105,6 +1131,16 @@ export default function AdminPage() {
           "",
 
           item.registration
+            .main_checked_in
+            ? "Yes"
+            : "No",
+
+          formatDate(
+            item.registration
+              .main_checked_in_at
+          ),
+
+          item.registration
             .checked_in
             ? "Yes"
             : "No",
@@ -1113,6 +1149,8 @@ export default function AdminPage() {
             item.registration
               .checked_in_at
           ),
+
+          (item.registration as any).registration_group_id ?? "",
 
           formatDate(
             item.registration
@@ -1307,7 +1345,7 @@ export default function AdminPage() {
 
         {/* STATS */}
 
-        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 
           <StatCard
             title="Total registrations"
@@ -1328,10 +1366,35 @@ export default function AdminPage() {
             icon={
               <Users size={18} />
             }
+            dark
           />
 
           <StatCard
-            title="Checked in"
+            title="MAIN CHECK-IN"
+            value={
+              stats.mainCheckedIn
+            }
+            icon={
+              <UserCheck
+                size={18}
+              />
+            }
+          />
+          
+          <StatCard
+            title="MAIN PENDING"
+            value={
+              stats.mainPending
+            }
+            icon={
+              <Clock3
+                size={18}
+              />
+            }
+          />
+
+          <StatCard
+            title="EVENT CHECK-IN"
             value={
               stats.checkedIn
             }
@@ -1343,7 +1406,7 @@ export default function AdminPage() {
           />
 
           <StatCard
-            title="Pending"
+            title="EVENT PENDING"
             value={
               stats.pending
             }
@@ -1402,7 +1465,7 @@ export default function AdminPage() {
 
           <div className="mt-6 border-t border-black/[0.05] pt-6">
             <div className="flex flex-wrap gap-2 mb-6">
-              {(["all", "technical", "non-technical", "cultural", "sports"] as const).map((cat) => (
+              {(["all", "technical", "non-technical", "cultural"] as const).map((cat) => (
                 <button
                   key={cat}
                   type="button"
@@ -2244,18 +2307,32 @@ export default function AdminPage() {
                             </p>
                           </div>
 
-                          <span
-                            className={`rounded-full border px-3 py-1.5 text-[9px] font-medium ${item.registration
-                              .checked_in
-                              ? "border-green-100 bg-green-50 text-green-700"
-                              : "border-black/10 bg-black/[0.035] text-black/45"
-                              }`}
-                          >
-                            {item.registration
-                              .checked_in
-                              ? "Checked in"
-                              : "Pending"}
-                          </span>
+                          <div className="flex flex-col items-end gap-2">
+                            <span
+                              className={`rounded-full border px-3 py-1 text-[9px] font-medium ${item.registration
+                                .main_checked_in
+                                ? "border-blue-200 bg-blue-50 text-blue-700"
+                                : "border-black/10 bg-black/[0.035] text-black/45"
+                                }`}
+                            >
+                              Main: {item.registration
+                                .main_checked_in
+                                ? "Checked in"
+                                : "Pending"}
+                            </span>
+                            <span
+                              className={`rounded-full border px-3 py-1 text-[9px] font-medium ${item.registration
+                                .checked_in
+                                ? "border-green-200 bg-green-50 text-green-700"
+                                : "border-black/10 bg-black/[0.035] text-black/45"
+                                }`}
+                            >
+                              Event: {item.registration
+                                .checked_in
+                                ? "Checked in"
+                                : "Pending"}
+                            </span>
+                          </div>
                         </div>
 
                         <div className="mt-5 grid grid-cols-2 gap-2">
@@ -2383,7 +2460,37 @@ export default function AdminPage() {
                             }
                             onClick={() =>
                               toggleCheckIn(
-                                item
+                                item,
+                                "main"
+                              )
+                            }
+                            className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-xs font-medium disabled:opacity-50 ${item.registration
+                              .main_checked_in
+                              ? "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                              : "bg-blue-600 text-white hover:bg-blue-700"
+                              }`}
+                          >
+                            <Check
+                              size={14}
+                            />
+
+                            {item.registration
+                              .main_checked_in
+                              ? "Undo Main"
+                              : "Main Check In"}
+                          </button>
+                          
+                          <button
+                            type="button"
+                            disabled={
+                              updatingId ===
+                              item.registration
+                                .id
+                            }
+                            onClick={() =>
+                              toggleCheckIn(
+                                item,
+                                "event"
                               )
                             }
                             className={`flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-xs font-medium disabled:opacity-50 ${item.registration
@@ -2398,8 +2505,8 @@ export default function AdminPage() {
 
                             {item.registration
                               .checked_in
-                              ? "Undo check-in"
-                              : "Check in"}
+                              ? "Undo Event"
+                              : "Event Check In"}
                           </button>
 
                           {role === "master" && (
@@ -2443,16 +2550,28 @@ export default function AdminPage() {
                           )}
                         </div>
 
-                        {item.registration
-                          .checked_in_at && (
-                            <p className="mt-3 text-[9px] text-black/30">
-                              Checked in{" "}
-                              {formatDate(
-                                item.registration
-                                  .checked_in_at
-                              )}
-                            </p>
-                          )}
+                        <div className="mt-3 flex flex-col gap-1">
+                          {item.registration
+                            .main_checked_in_at && (
+                              <p className="text-[9px] text-black/30">
+                                Main Checked in{" "}
+                                {formatDate(
+                                  item.registration
+                                    .main_checked_in_at
+                                )}
+                              </p>
+                            )}
+                          {item.registration
+                            .checked_in_at && (
+                              <p className="text-[9px] text-black/30">
+                                Event Checked in{" "}
+                                {formatDate(
+                                  item.registration
+                                    .checked_in_at
+                                )}
+                              </p>
+                            )}
+                        </div>
                       </div>
                     )
                   )}
