@@ -41,6 +41,7 @@ type EventRecord = {
   category: string | null;
   payment_type: string | null;
   registration_fee: number | null;
+  registration_limit?: number | null;
 };
 
 type Member = {
@@ -147,7 +148,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-  const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
+  const pageSize = Math.min(2000, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
   const eventId = searchParams.get("eventId")?.trim();
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
@@ -232,7 +233,7 @@ export async function GET(request: Request) {
 
     supabaseAdmin
       .from("events")
-      .select("id, name, category, payment_type, registration_fee")
+      .select("id, name, category, payment_type, registration_fee, registration_limit")
       .order("name", {
         ascending: true,
       }),
@@ -411,6 +412,7 @@ export async function GET(request: Request) {
       registrations,
       events,
       role: auth.role,
+      accommodation_access: auth.accommodation_access,
       total: totalCount ?? 0,
       page,
       pageSize,
@@ -516,6 +518,26 @@ export async function PATCH(
       },
       { status: 500 }
     );
+  }
+
+  // Audit log for dashboard check-in actions
+  if (auth.user) {
+    let actionType = "MANUAL_UPDATE";
+    let details: any = {};
+    if (typeof body.checkedIn === "boolean") {
+      actionType = body.checkedIn ? "MANUAL_EVENT_CHECK_IN" : "MANUAL_EVENT_CHECK_OUT";
+      details.checked_in = body.checkedIn;
+    } else if (typeof body.mainCheckedIn === "boolean") {
+      actionType = body.mainCheckedIn ? "MANUAL_MAIN_CHECK_IN" : "MANUAL_MAIN_CHECK_OUT";
+      details.main_checked_in = body.mainCheckedIn;
+    }
+    
+    await supabaseAdmin.from("admin_audit_logs").insert({
+      admin_id: auth.user.id,
+      action_type: actionType,
+      target_id: body.participantEventId,
+      details,
+    });
   }
 
   return NextResponse.json({

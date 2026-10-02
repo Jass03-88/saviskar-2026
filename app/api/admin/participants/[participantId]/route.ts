@@ -109,6 +109,20 @@ export async function GET(
             registration_group_id,
             events(name)
           )
+        ),
+        participant_accommodations (
+          id,
+          status,
+          start_date,
+          end_date,
+          duration_days,
+          checked_in,
+          checked_in_at,
+          checked_out,
+          checked_out_at,
+          accommodation_plans (name),
+          hostels (name),
+          hostel_rooms (room_number, hostel_floors (floor_number))
         )
       `
     )
@@ -156,6 +170,20 @@ export async function GET(
               checked_in_at,
               events(name)
             )
+          ),
+          participant_accommodations (
+            id,
+            status,
+            start_date,
+            end_date,
+            duration_days,
+            checked_in,
+            checked_in_at,
+            checked_out,
+            checked_out_at,
+            accommodation_plans (name),
+            hostels (name),
+            hostel_rooms (room_number, hostel_floors (floor_number))
           )
         `
       )
@@ -269,6 +297,25 @@ export async function GET(
       mainCheckedInAt: event.main_checked_in_at ?? null,
       registrationGroupId: event.registration_group_id ?? null,
     })),
+
+    accommodations: Array.isArray(dataResult.participant_accommodations)
+      ? dataResult.participant_accommodations.map((acc: any) => ({
+          id: acc.id,
+          status: acc.status,
+          start_date: acc.start_date,
+          end_date: acc.end_date,
+          duration_days: acc.duration_days,
+          checked_in: acc.checked_in,
+          checked_in_at: acc.checked_in_at,
+          checked_out: acc.checked_out,
+          checked_out_at: acc.checked_out_at,
+          planName: acc.accommodation_plans?.name || "Unknown Plan",
+          hostelName: acc.hostels?.name || null,
+          roomNumber: acc.hostel_rooms?.room_number || null,
+          floorNumber: acc.hostel_rooms?.hostel_floors?.floor_number || null,
+        }))
+      : [],
+
     ...(schemaWarning ? { schemaWarning } : {}),
   });
 }

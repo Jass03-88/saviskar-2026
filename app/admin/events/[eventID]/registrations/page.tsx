@@ -17,6 +17,8 @@ import {
   Clock3,
   ArrowLeft,
   ShieldCheck,
+  Percent,
+  Shield,
 } from "lucide-react";
 
 /* =========================================================
@@ -45,6 +47,9 @@ type ParticipantEvent = {
   team_name: string | null;
   checked_in: boolean | null;
   checked_in_at: string | null;
+  main_checked_in: boolean | null;
+  main_checked_in_at: string | null;
+  registration_group_id: string | null;
   is_archived: boolean | null;
   created_at: string;
 };
@@ -53,6 +58,7 @@ type EventRecord = {
   id: string;
   name: string;
   category: string | null;
+  registration_limit?: number | null;
 };
 
 type RegistrationMember = {
@@ -77,6 +83,8 @@ type Registration = {
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
+type PaymentFilter = "all" | "paid" | "pending" | "not_required" | "failed";
+type MainCheckInFilter = "all" | "checked-in" | "pending";
 type ArchiveFilter = "active" | "archived" | "all";
 
 type AdminRole = "master" | "admin";
@@ -159,6 +167,10 @@ export default function EventRegistrationsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<StatusFilter>("all");
+  const [paymentFilter, setPaymentFilter] =
+    useState<PaymentFilter>("all");
+  const [mainCheckInFilter, setMainCheckInFilter] =
+    useState<MainCheckInFilter>("all");
   const [archiveFilter, setArchiveFilter] =
     useState<ArchiveFilter>("active");
 
@@ -216,7 +228,7 @@ export default function EventRegistrationsPage() {
         }
 
         const response = await fetch(
-          `/api/admin/registrations?eventId=${encodeURIComponent(eventID)}&pageSize=100`,
+          `/api/admin/registrations?eventId=${encodeURIComponent(eventID)}&pageSize=2000`,
           {
             cache: "no-store",
           }
@@ -761,6 +773,20 @@ export default function EventRegistrationsPage() {
               item.registration
                 .checked_in !== true);
 
+          const matchesMainCheckIn =
+            mainCheckInFilter === "all" ||
+            (mainCheckInFilter ===
+              "checked-in" &&
+              item.registration
+                .main_checked_in === true) ||
+            (mainCheckInFilter === "pending" &&
+              item.registration
+                .main_checked_in !== true);
+
+          const matchesPayment =
+            paymentFilter === "all" ||
+            item.registration.payment_status === paymentFilter;
+
           const matchesArchive =
             archiveFilter === "all" ||
             (archiveFilter === "archived" &&
@@ -771,6 +797,8 @@ export default function EventRegistrationsPage() {
           return (
             matchesSearch &&
             matchesStatus &&
+            matchesMainCheckIn &&
+            matchesPayment &&
             matchesArchive
           );
         }
@@ -779,6 +807,8 @@ export default function EventRegistrationsPage() {
       registrations,
       search,
       statusFilter,
+      mainCheckInFilter,
+      paymentFilter,
       archiveFilter,
     ]);
 
@@ -812,12 +842,15 @@ export default function EventRegistrationsPage() {
         "Email",
         "Phone",
         "Team",
+        "Registration Group ID",
         "Registration Status",
         "Payment Status",
         "Payment Amount",
         "Payment ID",
-        "Checked In",
-        "Checked In At",
+        "Event Checked In",
+        "Event Checked In At",
+        "Main Checked In",
+        "Main Checked In At",
         "Registered At",
       ],
 
@@ -853,6 +886,11 @@ export default function EventRegistrationsPage() {
           ),
           escapeCsv(
             item.registration
+              .registration_group_id ??
+              ""
+          ),
+          escapeCsv(
+            item.registration
               .registration_status ??
               ""
           ),
@@ -881,6 +919,21 @@ export default function EventRegistrationsPage() {
               ? formatDate(
                   item.registration
                     .checked_in_at
+                )
+              : ""
+          ),
+          escapeCsv(
+            item.registration
+              .main_checked_in
+              ? "Yes"
+              : "No"
+          ),
+          escapeCsv(
+            item.registration
+              .main_checked_in_at
+              ? formatDate(
+                  item.registration
+                    .main_checked_in_at
                 )
               : ""
           ),
@@ -1037,7 +1090,7 @@ export default function EventRegistrationsPage() {
 
         {/* STATS */}
 
-        <div className="mb-8 grid gap-4 md:grid-cols-3">
+        <div className="mb-8 grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
 
           <StatCard
             title="Total registrations"
@@ -1048,6 +1101,28 @@ export default function EventRegistrationsPage() {
               <Users size={18} />
             }
             dark
+          />
+          
+          <StatCard
+            title="Reg limit"
+            value={
+              currentEvent?.registration_limit ?? "Unlimited"
+            }
+            icon={
+              <Shield size={18} />
+            }
+          />
+          
+          <StatCard
+            title="Remaining capacity"
+            value={
+              currentEvent?.registration_limit
+                ? Math.max(0, currentEvent.registration_limit - activeRegistrations.length)
+                : "Unlimited"
+            }
+            icon={
+              <ShieldCheck size={18} />
+            }
           />
 
           <StatCard
@@ -1061,10 +1136,22 @@ export default function EventRegistrationsPage() {
           />
 
           <StatCard
-            title="Pending"
+            title="Pending check-in"
             value={totalPending}
             icon={
               <Clock3 size={18} />
+            }
+          />
+          
+          <StatCard
+            title="Attendance"
+            value={
+              activeRegistrations.length > 0
+                ? `${Math.round((totalCheckedIn / activeRegistrations.length) * 100)}%`
+                : "0%"
+            }
+            icon={
+              <Percent size={18} />
             }
           />
 
@@ -1119,6 +1206,54 @@ export default function EventRegistrationsPage() {
                 Pending
               </option>
 
+            </select>
+
+            <select
+              value={mainCheckInFilter}
+              onChange={(event) =>
+                setMainCheckInFilter(
+                  event.target
+                    .value as MainCheckInFilter
+                )
+              }
+              className="rounded-full bg-black/[0.035] px-5 py-3 text-sm outline-none"
+            >
+              <option value="all">
+                Main check-in: All
+              </option>
+              <option value="checked-in">
+                Main: Checked in
+              </option>
+              <option value="pending">
+                Main: Pending
+              </option>
+            </select>
+
+            <select
+              value={paymentFilter}
+              onChange={(event) =>
+                setPaymentFilter(
+                  event.target
+                    .value as PaymentFilter
+                )
+              }
+              className="rounded-full bg-black/[0.035] px-5 py-3 text-sm outline-none"
+            >
+              <option value="all">
+                Payment: All
+              </option>
+              <option value="paid">
+                Paid
+              </option>
+              <option value="not_required">
+                Free / Not required
+              </option>
+              <option value="pending">
+                Pending
+              </option>
+              <option value="failed">
+                Failed
+              </option>
             </select>
 
             {role === "master" && (
@@ -1634,7 +1769,7 @@ export default function EventRegistrationsPage() {
                 .checked_in_at && (
 
                 <Detail
-                  title="Checked in at"
+                  title="Event checked in at"
                   value={formatDate(
                     selectedRegistration
                       .registration
@@ -1642,6 +1777,43 @@ export default function EventRegistrationsPage() {
                   )}
                 />
 
+              )}
+
+              <Detail
+                title="Main Registration Check-in"
+                value={
+                  selectedRegistration
+                    .registration
+                    .main_checked_in
+                    ? "Checked in"
+                    : "Pending"
+                }
+              />
+
+              {selectedRegistration
+                .registration
+                .main_checked_in_at && (
+
+                <Detail
+                  title="Main checked in at"
+                  value={formatDate(
+                    selectedRegistration
+                      .registration
+                      .main_checked_in_at
+                  )}
+                />
+
+              )}
+              
+              {selectedRegistration
+                .registration
+                .registration_group_id && (
+                  
+                <Detail
+                  title="Registration Group ID"
+                  value={selectedRegistration.registration.registration_group_id}
+                />
+                
               )}
 
             </div>
@@ -1970,7 +2142,7 @@ function StatCard({
   dark = false,
 }: {
   title: string;
-  value: number;
+  value: number | string;
   icon: React.ReactNode;
   dark?: boolean;
 }) {

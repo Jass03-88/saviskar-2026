@@ -94,6 +94,13 @@ function createMockSupabaseAdmin() {
           },
         };
       }
+      if (table === "admin_audit_logs") {
+        return {
+          insert: () => {
+            return { error: null };
+          },
+        };
+      }
       return {};
     },
   };

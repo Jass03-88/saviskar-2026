@@ -68,6 +68,7 @@ type EventRecord = {
   category: string | null;
   payment_type: string | null;
   registration_fee: number | null;
+  registration_limit?: number | null;
 };
 
 type RegistrationMember = {
@@ -182,6 +183,9 @@ export default function AdminPage() {
   const [role, setRole] =
     useState<AdminRole | null>(null);
 
+  const [accommodationAccess, setAccommodationAccess] =
+    useState<boolean>(false);
+
   const [error, setError] =
     useState("");
 
@@ -202,6 +206,9 @@ export default function AdminPage() {
 
   const [archiveFilter, setArchiveFilter] =
     useState<ArchiveFilter>("active");
+
+  const [exceptionFilter, setExceptionFilter] =
+    useState<"all" | "payment_failed" | "payment_pending" | "paid_not_checked_in" | "main_checked_in_only" | "registered_unpaid">("all");
 
   const [paymentOverviewState, setPaymentOverviewState] = useState<"all" | "paid" | "unpaid" | "free">("all");
   const [paymentOverviewCategory, setPaymentOverviewCategory] = useState<"all" | "technical" | "non-technical" | "cultural">("all");
@@ -233,7 +240,7 @@ export default function AdminPage() {
 
       try {
         const response = await fetch(
-          "/api/admin/registrations?pageSize=100",
+          "/api/admin/registrations?pageSize=2000",
           { cache: "no-store" }
         );
 
@@ -250,6 +257,7 @@ export default function AdminPage() {
             registrations?: Registration[];
             events?: EventRecord[];
             role?: AdminRole;
+            accommodation_access?: boolean;
             total?: number;
             error?: string;
           };
@@ -273,6 +281,9 @@ export default function AdminPage() {
         );
         if (payload.role) {
           setRole(payload.role);
+        }
+        if (typeof payload.accommodation_access === "boolean") {
+          setAccommodationAccess(payload.accommodation_access);
         }
       } catch (loadError) {
         console.error(
@@ -319,6 +330,7 @@ export default function AdminPage() {
             registrations?: Registration[];
             events?: EventRecord[];
             role?: AdminRole;
+            accommodation_access?: boolean;
             total?: number;
             error?: string;
           };
@@ -342,6 +354,9 @@ export default function AdminPage() {
           );
           if (payload.role) {
             setRole(payload.role);
+          }
+          if (typeof payload.accommodation_access === "boolean") {
+            setAccommodationAccess(payload.accommodation_access);
           }
         }
       } catch (loadError) {
@@ -524,12 +539,23 @@ export default function AdminPage() {
             (archiveFilter === "active" &&
               item.registration.is_archived !== true);
 
+          const matchesException = (() => {
+            if (exceptionFilter === "all") return true;
+            if (exceptionFilter === "payment_failed") return item.registration.payment_status === "failed";
+            if (exceptionFilter === "payment_pending") return item.registration.payment_status === "pending" && item.event?.payment_type === "paid";
+            if (exceptionFilter === "paid_not_checked_in") return item.registration.payment_status === "paid" && item.registration.checked_in !== true;
+            if (exceptionFilter === "main_checked_in_only") return item.registration.main_checked_in === true && item.registration.checked_in !== true;
+            if (exceptionFilter === "registered_unpaid") return item.registration.payment_status !== "paid" && item.event?.payment_type === "paid";
+            return true;
+          })();
+
           return (
             matchesSearch &&
             matchesEvent &&
             matchesStatus &&
             matchesPayment &&
-            matchesArchive
+            matchesArchive &&
+            matchesException
           );
         }
       );
@@ -541,6 +567,7 @@ export default function AdminPage() {
       statusFilter,
       paymentFilter,
       archiveFilter,
+      exceptionFilter,
     ]);
 
   /* =======================================================
@@ -608,6 +635,9 @@ export default function AdminPage() {
     let paidCount = 0;
     let unpaidCount = 0;
     let freeCount = 0;
+    let expectedAmount = 0;
+    let paidAmount = 0;
+    let outstandingAmount = 0;
 
     const activeRegistrations = registrations.filter(
       (item) => item.registration.is_archived !== true
@@ -616,18 +646,24 @@ export default function AdminPage() {
     activeRegistrations.forEach((item) => {
       const isPaidEvent = item.event?.payment_type === "paid";
       const isSuccess = item.registration.payment_status === "paid";
+      const amount = item.registration.payment_amount || 0;
 
       allCount++;
       if (!isPaidEvent) {
         freeCount++;
-      } else if (isSuccess) {
-        paidCount++;
       } else {
-        unpaidCount++;
+        expectedAmount += amount;
+        if (isSuccess) {
+          paidCount++;
+          paidAmount += amount;
+        } else {
+          unpaidCount++;
+          outstandingAmount += amount;
+        }
       }
     });
 
-    return { all: allCount, paid: paidCount, unpaid: unpaidCount, free: freeCount };
+    return { all: allCount, paid: paidCount, unpaid: unpaidCount, free: freeCount, expectedAmount, paidAmount, outstandingAmount };
   }, [registrations]);
 
   /* =======================================================
@@ -666,12 +702,22 @@ export default function AdminPage() {
 
           const pendingCount = event.payment_type === "paid" ? count - paidCount : 0;
 
+          const individualCount = registrations.filter(
+            (item) => item.registration.event_id === event.id && item.registration.is_archived !== true && !item.registration.team_name
+          ).length;
+
+          const teamCount = registrations.filter(
+            (item) => item.registration.event_id === event.id && item.registration.is_archived !== true && item.registration.team_name
+          ).length;
+
           return {
             ...event,
             count,
             checked,
             paidCount,
             pendingCount,
+            individualCount,
+            teamCount,
           };
         })
         .filter(
@@ -1271,6 +1317,37 @@ export default function AdminPage() {
               </>
             )}
 
+            {(role === "master" || accommodationAccess) && (
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(
+                    "/admin/accommodations"
+                  )
+                }
+                className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M2 19V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14" />
+                  <path d="M2 19h20" />
+                  <path d="M7 19v-9a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v9" />
+                  <path d="M12 15h.01" />
+                </svg>
+
+                Accommodation
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() =>
@@ -1460,6 +1537,21 @@ export default function AdminPage() {
               >
                 FREE <span className="opacity-50 font-mono">{paymentStats.free}</span>
               </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 grid-cols-2 lg:grid-cols-4 pt-4 border-t border-black/5">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Expected Revenue</p>
+              <p className="text-xl font-semibold text-black mt-1">₹{paymentStats.expectedAmount.toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-green-600/70">Paid Revenue</p>
+              <p className="text-xl font-semibold text-green-700 mt-1">₹{paymentStats.paidAmount.toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-red-600/70">Outstanding</p>
+              <p className="text-xl font-semibold text-red-700 mt-1">₹{paymentStats.outstandingAmount.toLocaleString()}</p>
             </div>
           </div>
 
@@ -1669,14 +1761,22 @@ export default function AdminPage() {
                       </div>
 
                       <div className="mt-5 flex items-end justify-between">
-                        <p
-                          className={`text-3xl font-semibold ${eventFilter === event.id
-                            ? "text-white"
-                            : "text-black"
-                            }`}
-                        >
-                          {event.count}
-                        </p>
+                        <div>
+                          <p
+                            className={`text-3xl font-semibold ${eventFilter === event.id
+                              ? "text-white"
+                              : "text-black"
+                              }`}
+                          >
+                            {event.count}
+                            {event.registration_limit ? <span className="text-xl opacity-50">/{event.registration_limit}</span> : ""}
+                          </p>
+                          {event.registration_limit && event.count >= event.registration_limit && (
+                            <span className="mt-1 inline-block rounded bg-red-600 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-white">
+                              FULL
+                            </span>
+                          )}
+                        </div>
 
                         <p
                           className={`text-xs ${eventFilter ===
@@ -1687,6 +1787,8 @@ export default function AdminPage() {
                         >
                           {event.checked}/
                           {event.count} checked
+                          <br />
+                          {event.individualCount} Ind / {event.teamCount} Team
                         </p>
                       </div>
                     </button>
@@ -1755,6 +1857,23 @@ export default function AdminPage() {
                   </option>
                 )
               )}
+            </select>
+
+            <select
+              value={exceptionFilter}
+              onChange={(e) =>
+                setExceptionFilter(
+                  e.target.value as any
+                )
+              }
+              className="rounded-[18px] border border-black/10 bg-white px-4 py-3 text-sm text-black outline-none"
+            >
+              <option value="all">No Exceptions</option>
+              <option value="payment_failed">Payment Failed</option>
+              <option value="payment_pending">Payment Pending</option>
+              <option value="registered_unpaid">Registered, Unpaid</option>
+              <option value="paid_not_checked_in">Paid, Not Checked In</option>
+              <option value="main_checked_in_only">Main Checked In, No Event Check-In</option>
             </select>
 
             <select

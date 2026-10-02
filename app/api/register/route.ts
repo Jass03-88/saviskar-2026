@@ -10,6 +10,8 @@ type MemberInput = {
   college?: unknown;
   email?: unknown;
   phone?: unknown;
+  gender?: unknown;
+  state?: unknown;
 };
 
 type EventRegistrationInput = {
@@ -19,6 +21,11 @@ type EventRegistrationInput = {
   members?: unknown;
 };
 
+type AccommodationRegistrationInput = {
+  email?: unknown;
+  planSlug?: unknown;
+};
+
 type RegistrationInput = {
   participantId?: unknown;
 
@@ -26,8 +33,11 @@ type RegistrationInput = {
   college?: unknown;
   email?: unknown;
   phone?: unknown;
+  gender?: unknown;
+  state?: unknown;
 
   events?: unknown;
+  accommodations?: unknown;
 
   // Legacy single-event compatibility
   eventId?: unknown;
@@ -132,6 +142,8 @@ function normalizeMembers(
         college: cleanString(member.college, 180),
         email: cleanEmail(member.email),
         phone: cleanPhone(member.phone),
+        gender: cleanString(member.gender, 20).toLowerCase(),
+        state: cleanString(member.state, 100),
         index,
       };
     }
@@ -319,6 +331,18 @@ export async function POST(
   const phone =
     cleanPhone(
       body.phone
+    );
+
+  const gender =
+    cleanString(
+      body.gender,
+      20
+    ).toLowerCase();
+
+  const state =
+    cleanString(
+      body.state,
+      100
     );
 
   if (!email || email !== session.email.toLowerCase()) {
@@ -551,6 +575,36 @@ export async function POST(
     );
 
   // =====================================================
+  // 10A. NORMALIZE ACCOMMODATIONS FOR DATABASE RPC
+  // =====================================================
+
+  const rpcAccommodations: Array<{ email: string; plan_slug: string }> = [];
+
+  if (Array.isArray(body.accommodations) && body.accommodations.length > 0) {
+    if (body.accommodations.length > 50) {
+      return errorResponse("Too many accommodation selections.", 400);
+    }
+
+    for (const rawAcc of body.accommodations) {
+      const acc = (rawAcc ?? {}) as AccommodationRegistrationInput;
+      const accEmail = cleanEmail(acc.email);
+      const accPlanSlug = cleanString(acc.planSlug, 50);
+
+      if (!accEmail || !EMAIL_PATTERN.test(accEmail)) {
+        return errorResponse("Invalid accommodation delegate email address.", 400);
+      }
+      if (!accPlanSlug) {
+        return errorResponse("Accommodation plan is required.", 400);
+      }
+
+      rpcAccommodations.push({
+        email: accEmail,
+        plan_slug: accPlanSlug,
+      });
+    }
+  }
+
+  // =====================================================
   // 11. ATOMIC MULTI-EVENT REGISTRATION
   // =====================================================
 
@@ -578,6 +632,9 @@ export async function POST(
 
         p_events:
           rpcEvents,
+
+        p_accommodations:
+          rpcAccommodations,
       }
     );
 
@@ -816,6 +873,50 @@ export async function POST(
   }
 
   // =====================================================
+  // 12A. UPDATE PARTICIPANT GENDER AND STATE
+  // =====================================================
+
+  const participantUpdates: { email: string; gender: string; state: string }[] = [];
+
+  if (email && (gender || state)) {
+    participantUpdates.push({ email, gender, state });
+  }
+
+  for (const event of events) {
+    for (const member of event.members) {
+      if (member.email && (member.gender || member.state)) {
+        participantUpdates.push({
+          email: member.email,
+          gender: member.gender,
+          state: member.state,
+        });
+      }
+    }
+  }
+
+  if (participantUpdates.length > 0) {
+    // We update in series; there are usually very few members (1-10)
+    for (const update of participantUpdates) {
+      const updatePayload: Record<string, string> = {};
+      
+      // Strict validation for allowed gender values
+      if (update.gender && ["male", "female", "other"].includes(update.gender)) {
+        updatePayload.gender = update.gender;
+      }
+      if (update.state) {
+        updatePayload.state = update.state;
+      }
+
+      if (Object.keys(updatePayload).length > 0) {
+        await supabaseAdmin
+          .from("participants")
+          .update(updatePayload)
+          .eq("email", update.email);
+      }
+    }
+  }
+
+  // =====================================================
   // 13. GET CREATED EVENT RECORDS
   // =====================================================
 
@@ -989,11 +1090,7 @@ export async function POST(
 
   let paymentOrder: PaymentOrderInfo | null = null;
 
-  if (
-    totalAmount > 0 &&
-    participant?.id &&
-    addedEventIds.size > 0
-  ) {
+  if (participant?.id) {
     const newPaidEvents = paymentEvents.filter(
       (row) =>
         addedEventIds.has(
@@ -1029,8 +1126,49 @@ export async function POST(
       const orderData = Array.isArray(rawOrder) ? rawOrder[0] : rawOrder;
       if (orderData) {
         paymentOrder = orderData as unknown as PaymentOrderInfo;
+        totalAmount = Number(orderData.amount) || totalAmount;
         console.log(
           "Atomic payment order retrieved:",
+          {
+            orderReference: orderData.order_reference,
+            amount: orderData.amount,
+          }
+        );
+      }
+    } else if (rpcAccommodations.length > 0) {
+      // Free event + paid accommodation (Case 3)
+      const { data: itemRow, error: itemLookupError } = await supabaseAdmin
+        .from("payment_order_items")
+        .select(`
+          payment_order_id,
+          payment_orders!inner (
+            id,
+            order_reference,
+            amount,
+            currency,
+            status,
+            payer_participant_id,
+            created_at
+          )
+        `)
+        .eq("item_type", "accommodation")
+        .eq("participant_id", participant.id)
+        .eq("payment_orders.status", "pending")
+        .order("created_at", { referencedTable: "payment_orders", ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (itemLookupError) {
+        console.error("Accommodation payment order lookup error:", itemLookupError);
+      }
+
+      const rawOrder = itemRow?.payment_orders;
+      const orderData = Array.isArray(rawOrder) ? rawOrder[0] : rawOrder;
+      if (orderData) {
+        paymentOrder = orderData as unknown as PaymentOrderInfo;
+        totalAmount = Number(orderData.amount) || totalAmount;
+        console.log(
+          "Atomic accommodation payment order retrieved:",
           {
             orderReference: orderData.order_reference,
             amount: orderData.amount,

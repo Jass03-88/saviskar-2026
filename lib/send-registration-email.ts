@@ -10,6 +10,13 @@ export type TeamMember = {
   isTeamLeader?: boolean;
 };
 
+export type AccommodationEmailDetails = {
+  planName: string;
+  participantName: string;
+  dates: string;
+  amount: number;
+};
+
 export type RegistrationEmailData = {
   registrationId?: string;
   participantId: string;
@@ -33,6 +40,8 @@ export type RegistrationEmailData = {
     buffer: Buffer;
     filename: string;
   } | null;
+
+  accommodationDetails?: AccommodationEmailDetails[] | null;
 };
 
 export type SendResult = {
@@ -114,6 +123,7 @@ export async function sendRegistrationEmail(
     requiresPayment = false,
     paymentResumeUrl,
     receiptPdf,
+    accommodationDetails = [],
   } = data;
 
   if (
@@ -373,6 +383,83 @@ export async function sendRegistrationEmail(
                       </div>
                     `;
                 })
+                .join("")}
+            </div>
+          `
+        : "";
+
+    const accommodationHtml =
+      accommodationDetails && accommodationDetails.length > 0
+        ? `
+            <div
+              style="
+                margin-top: 32px;
+                border-top: 1px solid #eaeaea;
+                padding-top: 28px;
+              "
+            >
+              <div
+                style="
+                  font-size: 10px;
+                  letter-spacing: 2px;
+                  text-transform: uppercase;
+                  color: #999999;
+                  margin-bottom: 16px;
+                "
+              >
+                Accommodation Details
+              </div>
+
+              ${accommodationDetails
+                .map((acc) => `
+                  <div
+                    style="
+                      border: 1px solid #eeeeee;
+                      border-radius: 14px;
+                      padding: 15px 17px;
+                      margin-bottom: 10px;
+                      background: #fafafa;
+                    "
+                  >
+                    <div
+                      style="
+                        font-size: 15px;
+                        font-weight: 600;
+                        color: #111111;
+                      "
+                    >
+                      ${escapeHtml(acc.planName)}
+                    </div>
+                    <div
+                      style="
+                        font-size: 12px;
+                        color: #555555;
+                        margin-top: 4px;
+                      "
+                    >
+                      <strong>Participant:</strong> ${escapeHtml(acc.participantName)}
+                    </div>
+                    <div
+                      style="
+                        font-size: 12px;
+                        color: #555555;
+                        margin-top: 2px;
+                      "
+                    >
+                      <strong>Dates:</strong> ${escapeHtml(acc.dates)}
+                    </div>
+                    <div
+                      style="
+                        font-size: 12px;
+                        color: #111111;
+                        font-weight: 600;
+                        margin-top: 4px;
+                      "
+                    >
+                      <strong>Amount:</strong> ₹${acc.amount}
+                    </div>
+                  </div>
+                `)
                 .join("")}
             </div>
           `
@@ -703,6 +790,8 @@ export async function sendRegistrationEmail(
               </div>
 
               ${teamMembersHtml}
+
+              ${accommodationHtml}
 
               ${requiresPayment && paymentResumeUrl && !receiptPdf ? `
               <div

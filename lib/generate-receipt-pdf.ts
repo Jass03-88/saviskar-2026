@@ -87,7 +87,6 @@ function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: numbe
 export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
   let currentPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  let pageNumber = 1;
 
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -98,7 +97,6 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   const checkPageOverflow = (neededHeight: number) => {
     if (cursorY - neededHeight < 80) {
       currentPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      pageNumber++;
       cursorY = PAGE_HEIGHT - 50;
 
       currentPage.drawText('SAVISKAR 2026 — PAYMENT RECEIPT (Contd.)', {
@@ -262,23 +260,30 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   // --- REGISTRATION ---
   if (lineItems.length === 1) {
     const single = lineItems[0];
-    drawSectionTitle('REGISTRATION');
-    drawRow('Event Name', single.eventName, helveticaBold, 11);
+    const isAcc = single.category === 'Accommodation';
+    drawSectionTitle(isAcc ? 'ACCOMMODATION BOOKING' : 'REGISTRATION');
+    drawRow(isAcc ? 'Booking' : 'Event Name', single.eventName, helveticaBold, 11);
     if (single.category) {
       drawRow('Category', single.category);
     }
-    drawRow('Registration Type', single.registrationType === 'team' ? 'Team' : 'Individual');
-    if (single.registrationType === 'team' && single.teamName) {
-      drawRow('Team', single.teamName);
+    if (!isAcc) {
+      drawRow('Registration Type', single.registrationType === 'team' ? 'Team' : 'Individual');
+      if (single.registrationType === 'team' && single.teamName) {
+        drawRow('Team', single.teamName);
+      }
     }
   } else {
-    drawSectionTitle(`REGISTRATION (${lineItems.length} EVENTS)`);
+    const hasAcc = lineItems.some(i => i.category === 'Accommodation');
+    drawSectionTitle(hasAcc ? `REGISTRATION & ITEMS (${lineItems.length} ITEMS)` : `REGISTRATION (${lineItems.length} EVENTS)`);
     lineItems.forEach((item, index) => {
-      const typeInfo = item.registrationType === 'team' && item.teamName
+      const isAcc = item.category === 'Accommodation';
+      const typeInfo = isAcc
+        ? 'Booking'
+        : item.registrationType === 'team' && item.teamName
         ? `Team: ${item.teamName}`
         : item.registrationType === 'team' ? 'Team' : 'Individual';
       const categoryInfo = item.category ? ` (${item.category})` : '';
-      drawRow(`Event ${index + 1}`, `${item.eventName}${categoryInfo} — ${typeInfo}`);
+      drawRow(isAcc ? `Item ${index + 1}` : `Event ${index + 1}`, `${item.eventName}${categoryInfo} — ${typeInfo}`);
     });
   }
 

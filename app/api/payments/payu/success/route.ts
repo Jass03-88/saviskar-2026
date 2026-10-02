@@ -205,6 +205,15 @@ export async function POST(request: NextRequest) {
       .in("id", participantEventIds);
   }
 
+  // ─── Update Linked participant_accommodations ───────────
+  await supabaseAdmin
+    .from("participant_accommodations")
+    .update({
+      status: "paid",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("payment_order_id", paymentOrderId);
+
   // ─── Create Payment Record ─────────────────────────────
   if (payerParticipantUuid) {
     await supabaseAdmin

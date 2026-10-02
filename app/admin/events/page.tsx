@@ -38,6 +38,7 @@ type EventRecord = {
   payment_type: string | null;
   payment_unit: string | null;
   registration_count: number;
+  registration_limit?: number | null;
 };
 
 type EventForm = {
@@ -56,6 +57,7 @@ type EventForm = {
   max_team_size: string;
   registration_fee: string;
   payment_unit: "free" | "per_student" | "per_team" | "tbd";
+  registration_limit: string;
 };
 
 const emptyForm: EventForm = {
@@ -73,6 +75,7 @@ const emptyForm: EventForm = {
   max_team_size: "",
   registration_fee: "0",
   payment_unit: "free",
+  registration_limit: "",
 };
 
 function slugify(value: string) {
@@ -476,6 +479,8 @@ export default function EventsAdminPage() {
         event.payment_unit === "tbd"
           ? event.payment_unit
           : "free",
+      registration_limit:
+        event.registration_limit?.toString() ?? "",
     });
   }
 
@@ -509,6 +514,10 @@ export default function EventsAdminPage() {
           max_team_size:
             editing.registration_type === "team"
               ? Number(editing.max_team_size || 0) || null
+              : null,
+          registration_limit:
+            editing.registration_limit
+              ? Number(editing.registration_limit) || null
               : null,
         }),
       });
@@ -928,9 +937,14 @@ export default function EventsAdminPage() {
                       {formatFee(event)}
                     </span>
                     <span className="ml-auto text-[10px] uppercase tracking-[0.08em] text-black/35 font-medium">
-                      {event.registration_count} registration
+                      {event.registration_count}{event.registration_limit ? `/${event.registration_limit}` : ""} registration
                       {event.registration_count === 1 ? "" : "s"}
                     </span>
+                    {event.registration_limit && event.registration_count >= event.registration_limit && (
+                      <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white uppercase tracking-wider">
+                        Full
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -1253,6 +1267,26 @@ export default function EventsAdminPage() {
                     </Field>
                   </>
                 )}
+
+                <Field label="Registration limit (capacity)">
+                  <input
+                    type="number"
+                    min="0"
+                    value={editing.registration_limit}
+                    onChange={(event) =>
+                      setEditing((current) =>
+                        current
+                          ? {
+                              ...current,
+                              registration_limit: event.target.value,
+                            }
+                          : current
+                      )
+                    }
+                    className="input"
+                    placeholder="Empty = unlimited"
+                  />
+                </Field>
               </div>
 
               <Field label="Description">

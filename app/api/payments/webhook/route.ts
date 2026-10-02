@@ -304,6 +304,16 @@ export async function POST(
         .in("id", participantEventIds);
     }
 
+    // Update linked participant_accommodations
+    await supabaseAdmin
+      .from("participant_accommodations")
+      .update({
+        status: "paid",
+        updated_at:
+          new Date().toISOString(),
+      })
+      .eq("payment_order_id", paymentOrder.id);
+
     // Create payment record (idempotent check)
     if (
       paymentOrder.payer_participant_id

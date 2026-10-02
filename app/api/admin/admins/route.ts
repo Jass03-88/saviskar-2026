@@ -106,7 +106,7 @@ export async function GET() {
 
   const { data: admins, error } = await adminClient
     .from("admins")
-    .select("user_id, role, created_at")
+    .select("user_id, role, accommodation_access, created_at")
     .order("created_at", {
       ascending: true,
     });
@@ -166,6 +166,7 @@ export async function GET() {
     return {
       user_id: admin.user_id,
       role: (admin.role ?? "admin") as AdminRole,
+      accommodation_access: admin.accommodation_access ?? false,
       created_at: admin.created_at,
       email,
       auth_created_at: users.get(admin.user_id)?.created_at ?? null,
@@ -427,6 +428,7 @@ export async function POST(request: Request) {
         .insert({
           user_id: existingUser.id,
           role,
+          accommodation_access: role === "master",
         });
 
     if (insertError) {
@@ -578,6 +580,7 @@ export async function POST(request: Request) {
       .insert({
         user_id: inviteData.user.id,
         role,
+        accommodation_access: role === "master",
       });
 
   if (insertError) {

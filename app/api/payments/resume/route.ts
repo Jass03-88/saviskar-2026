@@ -160,7 +160,9 @@ export async function GET(request: NextRequest) {
       `
       id,
       amount,
+      item_type,
       participant_event_id,
+      participant_accommodation_id,
       event_id,
       events (
         id,
@@ -170,6 +172,15 @@ export async function GET(request: NextRequest) {
         registration_fee,
         payment_type,
         payment_unit
+      ),
+      participant_accommodations (
+        id,
+        start_date,
+        end_date,
+        accommodation_plans (
+          name,
+          slug
+        )
       )
     `
     )
@@ -180,12 +191,29 @@ export async function GET(request: NextRequest) {
   }
 
   const items = (orderItems || []).map((item) => {
+    if (item.item_type === "accommodation") {
+      const rawAcc = item.participant_accommodations;
+      const acc = Array.isArray(rawAcc) ? rawAcc[0] : rawAcc;
+      const rawPlan = acc?.accommodation_plans;
+      const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
+
+      return {
+        itemId: item.id,
+        eventId: null,
+        itemType: "accommodation",
+        eventName: plan?.name ? `Accommodation: ${plan.name}` : "Accommodation",
+        category: "Accommodation",
+        amount: Number(item.amount) || 0,
+      };
+    }
+
     const rawEvent = item.events;
     const event = Array.isArray(rawEvent) ? rawEvent[0] : rawEvent;
 
     return {
       itemId: item.id,
       eventId: item.event_id,
+      itemType: "event",
       eventName: event?.name || "Event Registration",
       category: event?.category || null,
       amount: Number(item.amount) || 0,

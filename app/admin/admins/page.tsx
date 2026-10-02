@@ -14,11 +14,13 @@ import {
   Trash2,
   RefreshCw,
   Crown,
+  Building,
 } from "lucide-react";
 
 type AdminRecord = {
   user_id: string;
   role: "master" | "admin";
+  accommodation_access?: boolean;
   created_at: string;
   email: string | null;
   auth_created_at: string | null;
@@ -61,6 +63,7 @@ export default function AdminManagementPage() {
   const [isSuperMaster, setIsSuperMaster] = useState(false);
   const [changingRoleId, setChangingRoleId] = useState<string | null>(null);
   const [resettingId, setResettingId] = useState<string | null>(null);
+  const [togglingAccId, setTogglingAccId] = useState<string | null>(null);
 
   const loadAdmins = useCallback(
     async () => {
@@ -433,6 +436,73 @@ export default function AdminManagementPage() {
     }
   }
 
+  async function toggleAccommodationAccess(admin: AdminRecord) {
+    if (admin.isPrimary) return;
+    if (admin.role === "master" && !isSuperMaster) return;
+
+    const currentAccess = admin.accommodation_access ?? false;
+    const newAccess = !currentAccess;
+    const actionVerb = newAccess ? "Grant" : "Revoke";
+
+    const confirmed = window.confirm(
+      `${actionVerb} accommodation access ${newAccess ? "to" : "from"} ${admin.email ?? "this administrator"}?`
+    );
+
+    if (!confirmed) return;
+
+    setTogglingAccId(admin.user_id);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/admin/admins/${encodeURIComponent(admin.user_id)}/accommodation-access`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accommodationAccess: newAccess }),
+        }
+      );
+
+      const payload = (await response.json()) as {
+        success?: boolean;
+        accommodationAccess?: boolean;
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Could not update accommodation access.");
+      }
+
+      setMessage(
+        newAccess
+          ? `Accommodation access enabled for ${admin.email ?? "administrator"}`
+          : `Accommodation access disabled for ${admin.email ?? "administrator"}`
+      );
+
+      // Optimistically update local state
+      setAdmins((currentAdmins) =>
+        currentAdmins.map((item) =>
+          item.user_id === admin.user_id
+            ? { ...item, accommodation_access: newAccess }
+            : item
+        )
+      );
+
+      await refreshAdmins();
+    } catch (toggleError) {
+      console.error("ADMIN ACCOMMODATION TOGGLE ERROR:", toggleError);
+      setError(
+        toggleError instanceof Error
+          ? toggleError.message
+          : "Could not update accommodation access."
+      );
+    } finally {
+      setTogglingAccId(null);
+    }
+  }
+
   const primaryMaster = admins.find((admin) => admin.isPrimary);
   const masters = admins.filter(
     (admin) => admin.role === "master" && !admin.isPrimary
@@ -662,9 +732,11 @@ export default function AdminManagementPage() {
                       onRemove={() => removeAdmin(admin)}
                       onRoleChange={(newRole) => changeRole(admin, newRole)}
                       onResetPassword={() => resetPassword(admin)}
+                      onToggleAccommodation={() => toggleAccommodationAccess(admin)}
                       removing={removingId === admin.user_id}
                       changingRole={changingRoleId === admin.user_id}
                       resetting={resettingId === admin.user_id}
+                      togglingAcc={togglingAccId === admin.user_id}
                     />
                   )
                 )}
@@ -728,12 +800,14 @@ export default function AdminManagementPage() {
                       }
                       onRoleChange={(newRole) => changeRole(admin, newRole)}
                       onResetPassword={() => resetPassword(admin)}
+                      onToggleAccommodation={() => toggleAccommodationAccess(admin)}
                       removing={
                         removingId ===
                         admin.user_id
                       }
                       changingRole={changingRoleId === admin.user_id}
                       resetting={resettingId === admin.user_id}
+                      togglingAcc={togglingAccId === admin.user_id}
                     />
                   )
                 )}
@@ -754,8 +828,10 @@ function AdminRow({
   master = false,
   onRemove,
   onRoleChange,
+  onToggleAccommodation,
   removing = false,
   changingRole = false,
+  togglingAcc = false,
   isSuperMaster = false,
   onResetPassword,
   resetting = false,
@@ -764,8 +840,10 @@ function AdminRow({
   master?: boolean;
   onRemove?: () => void;
   onRoleChange?: (newRole: "master" | "admin") => void;
+  onToggleAccommodation?: () => void;
   removing?: boolean;
   changingRole?: boolean;
+  togglingAcc?: boolean;
   isSuperMaster?: boolean;
   onResetPassword?: () => void;
   resetting?: boolean;
@@ -800,6 +878,17 @@ function AdminRow({
               {isPrimary ? "Primary Master Admin" : master ? "Master" : "Normal"}
             </span>
 
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.15em] ${
+                admin.accommodation_access
+                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  : "bg-black/[0.05] text-black/40 border border-black/[0.05]"
+              }`}
+            >
+              <Building size={10} className={admin.accommodation_access ? "text-emerald-600" : "text-black/30"} />
+              Acc: {admin.accommodation_access ? "ON" : "OFF"}
+            </span>
+
           </div>
 
           <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-black/35">
@@ -830,13 +919,20 @@ function AdminRow({
               </span>
             )}
 
+            <span>
+              Accommodation Access:{" "}
+              <strong className={admin.accommodation_access ? "font-semibold text-emerald-700" : "font-normal text-black/50"}>
+                {admin.accommodation_access ? "Enabled (ON)" : "Disabled (OFF)"}
+              </strong>
+            </span>
+
           </div>
 
         </div>
 
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {isPrimary ? (
           <>
             {isSuperMaster && (
@@ -849,7 +945,9 @@ function AdminRow({
                 {resetting ? "Sending..." : "Reset Password"}
               </button>
             )}
-            <div className="text-xs font-medium text-black/40">Primary administrator</div>
+            <div className="rounded-full border border-black/10 bg-black/[0.03] px-3 py-1.5 text-xs font-medium text-black/40">
+              Primary Master (Protected)
+            </div>
           </>
         ) : isSuperMaster ? (
           <>
@@ -858,15 +956,31 @@ function AdminRow({
                 <button
                   type="button"
                   onClick={onResetPassword}
-                  disabled={resetting || removing || changingRole}
+                  disabled={resetting || removing || changingRole || togglingAcc}
                   className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
                 >
                   {resetting ? "Sending..." : "Reset Password"}
                 </button>
                 <button
                   type="button"
+                  onClick={onToggleAccommodation}
+                  disabled={togglingAcc || resetting || removing || changingRole}
+                  className={`rounded-full border px-4 py-2.5 text-xs font-medium transition disabled:opacity-50 ${
+                    admin.accommodation_access
+                      ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                  }`}
+                >
+                  {togglingAcc
+                    ? "Updating..."
+                    : admin.accommodation_access
+                    ? "Disable Acc"
+                    : "Enable Acc"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => onRoleChange?.("admin")}
-                  disabled={changingRole || removing}
+                  disabled={changingRole || removing || togglingAcc}
                   className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
                 >
                   {changingRole ? "Changing..." : "Change to Normal"}
@@ -874,7 +988,7 @@ function AdminRow({
                 <button
                   type="button"
                   onClick={onRemove}
-                  disabled={removing || changingRole}
+                  disabled={removing || changingRole || togglingAcc}
                   className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
                 >
                   <Trash2 size={14} />
@@ -886,15 +1000,31 @@ function AdminRow({
                 <button
                   type="button"
                   onClick={onResetPassword}
-                  disabled={resetting || removing || changingRole}
+                  disabled={resetting || removing || changingRole || togglingAcc}
                   className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
                 >
                   {resetting ? "Sending..." : "Reset Password"}
                 </button>
                 <button
                   type="button"
+                  onClick={onToggleAccommodation}
+                  disabled={togglingAcc || resetting || removing || changingRole}
+                  className={`rounded-full border px-4 py-2.5 text-xs font-medium transition disabled:opacity-50 ${
+                    admin.accommodation_access
+                      ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                  }`}
+                >
+                  {togglingAcc
+                    ? "Updating..."
+                    : admin.accommodation_access
+                    ? "Disable Acc"
+                    : "Enable Acc"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => onRoleChange?.("master")}
-                  disabled={changingRole || removing}
+                  disabled={changingRole || removing || togglingAcc}
                   className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
                 >
                   {changingRole ? "Changing..." : "Make Master"}
@@ -902,7 +1032,7 @@ function AdminRow({
                 <button
                   type="button"
                   onClick={onRemove}
-                  disabled={removing || changingRole}
+                  disabled={removing || changingRole || togglingAcc}
                   className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
                 >
                   <Trash2 size={14} />
@@ -931,20 +1061,36 @@ function AdminRow({
             <button
               type="button"
               onClick={onResetPassword}
-              disabled={resetting || removing}
+              disabled={resetting || removing || togglingAcc}
               className="rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50"
             >
               {resetting ? "Sending..." : "Reset Password"}
             </button>
             <button
               type="button"
-            onClick={onRemove}
-            disabled={removing}
-            className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-          >
-            <Trash2 size={14} />
-            {removing ? "Removing..." : "Remove access"}
-          </button>
+              onClick={onToggleAccommodation}
+              disabled={togglingAcc || resetting || removing}
+              className={`rounded-full border px-4 py-2.5 text-xs font-medium transition disabled:opacity-50 ${
+                admin.accommodation_access
+                  ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+              }`}
+            >
+              {togglingAcc
+                ? "Updating..."
+                : admin.accommodation_access
+                ? "Disable Acc"
+                : "Enable Acc"}
+            </button>
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={removing || togglingAcc}
+              className="flex items-center justify-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+            >
+              <Trash2 size={14} />
+              {removing ? "Removing..." : "Remove access"}
+            </button>
           </>
         )}
       </div>

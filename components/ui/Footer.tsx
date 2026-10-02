@@ -240,7 +240,7 @@ export default function Footer() {
               <p className="font-mono text-[11px] tracking-wider text-zinc-400">
                 © 2026 SAVISKAR • CGC UNIVERSITY MOHALI • ALL RIGHTS RESERVED
               </p>
-              <p className="text-[11px] text-zinc-300 flex items-center gap-1">
+              <p className="text-[11px] text-zinc-300 flex flex-wrap items-center gap-1">
                 <span>Made by</span>
                 <a
                   href="https://www.amadhav.com"
@@ -251,6 +251,9 @@ export default function Footer() {
                   <span>Madhav Vashisht</span>
                   <ArrowUpRight size={11} className="inline opacity-70" />
                 </a>
+                <span className="text-zinc-500">·</span>
+                <span className="font-medium text-violet-300">Jashan Jot</span>
+                <span className="text-zinc-400">(Student Advisory Council)</span>
               </p>
             </div>
           </div>

@@ -41,14 +41,35 @@ type ParticipantEvent = {
   registrationGroupId?: string | null;
 };
 
+type ParticipantAccommodation = {
+  id: string;
+  status: string;
+  start_date: string;
+  end_date: string;
+  duration_days: number;
+  checked_in: boolean;
+  checked_in_at: string | null;
+  checked_out: boolean;
+  checked_out_at: string | null;
+  planName: string;
+  hostelName: string | null;
+  roomNumber: string | null;
+  floorNumber: string | null;
+};
+
+type ScannerMode = "main" | "event" | "accommodation";
+
 export default function ScannerPage() {
   const router = useRouter();
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const processingRef = useRef(false);
 
+  const [scannerMode, setScannerMode] = useState<ScannerMode>("main");
+
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [participantEvents, setParticipantEvents] = useState<ParticipantEvent[]>([]);
+  const [accommodations, setAccommodations] = useState<ParticipantAccommodation[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [scannerStarted, setScannerStarted] = useState(false);
@@ -70,6 +91,7 @@ export default function ScannerPage() {
     setSuccess("");
     setParticipant(null);
     setParticipantEvents([]);
+    setAccommodations([]);
 
     try {
       const scanner = new Html5Qrcode("qr-reader");
@@ -142,6 +164,7 @@ export default function ScannerPage() {
     setError("");
     setSuccess("");
     setParticipantEvents([]);
+    setAccommodations([]);
 
     try {
       let registrationId = scannedValue.trim();
@@ -160,6 +183,7 @@ export default function ScannerPage() {
           error?: string;
           participant?: Participant;
           events?: ParticipantEvent[];
+          accommodations?: ParticipantAccommodation[];
         };
 
         if (!lookupResponse.ok || !lookup.success || !lookup.participant) {
@@ -169,12 +193,14 @@ export default function ScannerPage() {
         }
 
         const foundEvents = lookup.events ?? [];
+        const foundAccommodations = lookup.accommodations ?? [];
 
         setParticipant(lookup.participant);
         setParticipantEvents(foundEvents);
+        setAccommodations(foundAccommodations);
         
-        if (foundEvents.length === 0) {
-          setError("Participant found, but they are not registered for any events.");
+        if (foundEvents.length === 0 && foundAccommodations.length === 0) {
+          setError("Participant found, but they are not registered for any events and have no accommodation.");
         }
         
         return;
@@ -299,9 +325,82 @@ export default function ScannerPage() {
     }
   }
 
+  async function handleAccommodationCheckIn(participantAccommodationId: string, planName: string) {
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await fetch("/api/admin/accommodations/check-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participantAccommodationId }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error?.message || result.error || "Could not check in to accommodation.");
+      }
+
+      setAccommodations((accs) =>
+        accs.map((acc) => {
+          if (acc.id === participantAccommodationId) {
+            return { ...acc, checked_in: true, checked_in_at: result.data.checked_in_at };
+          }
+          return acc;
+        })
+      );
+
+      setSuccess(`${participant?.name} has been successfully checked in for ${planName} Accommodation.`);
+    } catch (err) {
+      console.error("ACCOMMODATION CHECK-IN ERROR:", err);
+      setError(err instanceof Error ? err.message : "Could not check in to accommodation.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAccommodationCheckOut(participantAccommodationId: string, planName: string) {
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await fetch("/api/admin/accommodations/check-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participantAccommodationId }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error?.message || result.error || "Could not check out of accommodation.");
+      }
+
+      setAccommodations((accs) =>
+        accs.map((acc) => {
+          if (acc.id === participantAccommodationId) {
+            return { ...acc, checked_out: true, checked_out_at: result.data.checked_out_at };
+          }
+          return acc;
+        })
+      );
+
+      setSuccess(`${participant?.name} has been successfully checked out of ${planName} Accommodation.`);
+    } catch (err) {
+      console.error("ACCOMMODATION CHECK-OUT ERROR:", err);
+      setError(err instanceof Error ? err.message : "Could not check out of accommodation.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function scanAnother() {
     setParticipant(null);
     setParticipantEvents([]);
+    setAccommodations([]);
     setError("");
     setSuccess("");
 
@@ -335,6 +434,55 @@ export default function ScannerPage() {
           >
             <ArrowLeft size={15} />
             Dashboard
+          </button>
+        </div>
+
+        {/* SCANNER MODE SELECTOR */}
+        <div className="mb-8 flex overflow-x-auto rounded-full bg-black/5 p-1">
+          <button
+            onClick={() => {
+              setScannerMode("main");
+              setParticipant(null);
+              setParticipantEvents([]);
+              setAccommodations([]);
+              setError("");
+              setSuccess("");
+            }}
+            className={`flex-1 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-medium transition ${
+              scannerMode === "main" ? "bg-white text-black shadow-sm" : "text-black/60 hover:text-black"
+            }`}
+          >
+            Main Registration
+          </button>
+          <button
+            onClick={() => {
+              setScannerMode("event");
+              setParticipant(null);
+              setParticipantEvents([]);
+              setAccommodations([]);
+              setError("");
+              setSuccess("");
+            }}
+            className={`flex-1 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-medium transition ${
+              scannerMode === "event" ? "bg-white text-black shadow-sm" : "text-black/60 hover:text-black"
+            }`}
+          >
+            Event Check-in
+          </button>
+          <button
+            onClick={() => {
+              setScannerMode("accommodation");
+              setParticipant(null);
+              setParticipantEvents([]);
+              setAccommodations([]);
+              setError("");
+              setSuccess("");
+            }}
+            className={`flex-1 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-medium transition ${
+              scannerMode === "accommodation" ? "bg-white text-black shadow-sm" : "text-black/60 hover:text-black"
+            }`}
+          >
+            Accommodation
           </button>
         </div>
 
@@ -441,7 +589,7 @@ export default function ScannerPage() {
                   <Detail label="Participant ID" value={participant.participantId} mono />
                 </div>
 
-                {participantEvents.length > 0 && (
+                {scannerMode !== "accommodation" && participantEvents.length > 0 && (
                   <div className="mt-7 border-t border-black/10 pt-6 !text-black">
                     <p className="mb-4 text-[9px] font-semibold uppercase tracking-[0.18em] !text-black/60">
                       Registered events
@@ -514,44 +662,173 @@ export default function ScannerPage() {
                                   </p>
                                 </div>
                               ) : (
-                                <div className="grid grid-cols-2 gap-3">
-                                  {!event.mainCheckedIn ? (
-                                    <button
-                                      onClick={() => handleCheckIn(event.participantEventId, event.eventName, event.teamName, "main")}
-                                      disabled={loading}
-                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
-                                    >
-                                      <CheckCircle2 size={16} />
-                                      Main Check-in
-                                    </button>
-                                  ) : (
-                                    <button
-                                      onClick={() => handleCheckOut(event.participantEventId, event.eventName, event.teamName, "main")}
-                                      disabled={loading}
-                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 py-3 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
-                                    >
-                                      <LogOut size={16} />
-                                      Main Check-out
-                                    </button>
+                                <div className="grid grid-cols-1 gap-3">
+                                  {scannerMode === "main" && (
+                                    <>
+                                      {!event.mainCheckedIn ? (
+                                        <button
+                                          onClick={() => handleCheckIn(event.participantEventId, event.eventName, event.teamName, "main")}
+                                          disabled={loading}
+                                          className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
+                                        >
+                                          <CheckCircle2 size={16} />
+                                          Main Check-in
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={() => handleCheckOut(event.participantEventId, event.eventName, event.teamName, "main")}
+                                          disabled={loading}
+                                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 py-3 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+                                        >
+                                          <LogOut size={16} />
+                                          Main Check-out
+                                        </button>
+                                      )}
+                                    </>
                                   )}
                                   
-                                  {!event.checkedIn ? (
+                                  {scannerMode === "event" && (
+                                    <>
+                                      {!event.checkedIn ? (
+                                        <button
+                                          onClick={() => handleCheckIn(event.participantEventId, event.eventName, event.teamName, "event")}
+                                          disabled={loading}
+                                          className="flex w-full items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
+                                        >
+                                          <CheckCircle2 size={16} />
+                                          Event Check-in
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={() => handleCheckOut(event.participantEventId, event.eventName, event.teamName, "event")}
+                                          disabled={loading}
+                                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                                        >
+                                          <LogOut size={16} />
+                                          Event Check-out
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {scannerMode === "accommodation" && accommodations.length > 0 && (
+                  <div className="mt-7 border-t border-black/10 pt-6 !text-black">
+                    <p className="mb-4 text-[9px] font-semibold uppercase tracking-[0.18em] !text-black/60">
+                      Accommodation
+                    </p>
+                    <div className="space-y-4">
+                      {accommodations.map((acc) => {
+                        const isUnpaid = acc.status !== "paid";
+                        const isAllocated = acc.hostelName && acc.roomNumber;
+
+                        return (
+                          <div
+                            key={acc.id}
+                            className={`rounded-[20px] border p-5 ${
+                              isUnpaid
+                                ? "border-red-200 bg-red-50/40"
+                                : "border-black/[0.08] bg-black/[0.01]"
+                            }`}
+                          >
+                            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
+                              <div>
+                                <p className="!text-black text-base font-semibold">{acc.planName}</p>
+                                {isAllocated ? (
+                                  <p className="mt-1 !text-black/60 text-sm font-medium">
+                                    {acc.hostelName} - Floor {acc.floorNumber}, Room {acc.roomNumber}
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 !text-black/60 text-sm">Not allocated yet</p>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {isUnpaid && (
+                                  <span className="rounded-full border border-red-200 bg-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-700 whitespace-nowrap">
+                                    UNPAID ({acc.status})
+                                  </span>
+                                )}
+                                {!isAllocated && !isUnpaid && (
+                                  <span className="rounded-full border border-orange-200 bg-orange-100 px-2.5 py-1 text-[10px] font-semibold text-orange-700 whitespace-nowrap">
+                                    PENDING ALLOCATION
+                                  </span>
+                                )}
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
+                                    acc.checked_in && !acc.checked_out
+                                      ? "bg-green-50 text-green-700"
+                                      : acc.checked_out
+                                      ? "bg-purple-50 text-purple-700"
+                                      : "bg-black/[0.05] text-black/50"
+                                  }`}
+                                >
+                                  Status: {acc.checked_out ? "Checked out" : acc.checked_in ? "Checked in" : "Pending"}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-3">
+                              {isUnpaid ? (
+                                <div className="w-full">
+                                  <button
+                                    disabled
+                                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-black/10 py-3 text-sm font-medium text-black/40 cursor-not-allowed"
+                                  >
+                                    <XCircle size={16} />
+                                    Check in Disabled (Payment Required)
+                                  </button>
+                                  <p className="mt-2 text-center text-xs font-medium text-red-600">
+                                    Payment is incomplete ({acc.status}). Participant cannot be checked in.
+                                  </p>
+                                </div>
+                              ) : !isAllocated ? (
+                                <div className="w-full">
+                                  <button
+                                    disabled
+                                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-black/10 py-3 text-sm font-medium text-black/40 cursor-not-allowed"
+                                  >
+                                    <XCircle size={16} />
+                                    Check in Disabled (Allocation Required)
+                                  </button>
+                                  <p className="mt-2 text-center text-xs font-medium text-orange-600">
+                                    Room is not allocated yet. Assign a room from the admin dashboard first.
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-2 gap-3">
+                                  {!acc.checked_in ? (
                                     <button
-                                      onClick={() => handleCheckIn(event.participantEventId, event.eventName, event.teamName, "event")}
+                                      onClick={() => handleAccommodationCheckIn(acc.id, acc.planName)}
                                       disabled={loading}
-                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-black py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
+                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-sm font-medium !text-white transition hover:scale-[1.01] disabled:opacity-50"
                                     >
                                       <CheckCircle2 size={16} />
-                                      Event Check-in
+                                      Check In
+                                    </button>
+                                  ) : !acc.checked_out ? (
+                                    <button
+                                      onClick={() => handleAccommodationCheckOut(acc.id, acc.planName)}
+                                      disabled={loading}
+                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-purple-200 bg-purple-50 py-3 text-sm font-medium text-purple-700 transition hover:bg-purple-100 disabled:opacity-50"
+                                    >
+                                      <LogOut size={16} />
+                                      Check Out
                                     </button>
                                   ) : (
                                     <button
-                                      onClick={() => handleCheckOut(event.participantEventId, event.eventName, event.teamName, "event")}
-                                      disabled={loading}
-                                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+                                      disabled
+                                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-black/10 py-3 text-sm font-medium text-black/40 cursor-not-allowed col-span-2"
                                     >
-                                      <LogOut size={16} />
-                                      Event Check-out
+                                      <CheckCircle2 size={16} />
+                                      Accommodation Completed
                                     </button>
                                   )}
                                 </div>
@@ -561,6 +838,13 @@ export default function ScannerPage() {
                         );
                       })}
                     </div>
+                  </div>
+                )}
+
+                {scannerMode === "accommodation" && accommodations.length === 0 && (
+                  <div className="mt-7 rounded-[20px] border border-black/[0.08] bg-black/[0.01] p-6 text-center !text-black">
+                    <p className="text-sm font-medium">No accommodation found</p>
+                    <p className="mt-1 text-xs text-black/50">This participant did not register for any accommodation plan.</p>
                   </div>
                 )}
 

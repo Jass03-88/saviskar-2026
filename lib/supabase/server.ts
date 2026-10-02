@@ -62,6 +62,7 @@ export async function requireAdmin() {
       supabase,
       user: null,
       role: null,
+      accommodation_access: false,
       error: "Unauthorized" as const,
       status: 401,
     };
@@ -79,6 +80,7 @@ export async function requireAdmin() {
       supabase,
       user: null,
       role: null,
+      accommodation_access: false,
       error: "Session expired" as const,
       status: 401,
     };
@@ -86,7 +88,7 @@ export async function requireAdmin() {
 
   const { data: admin, error: adminError } = await supabase
     .from("admins")
-    .select("user_id, role")
+    .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -95,6 +97,7 @@ export async function requireAdmin() {
       supabase,
       user,
       role: null,
+      accommodation_access: false,
       error: "Forbidden" as const,
       status: 403,
     };
@@ -117,6 +120,7 @@ export async function requireAdmin() {
         supabase,
         user,
         role,
+        accommodation_access: admin.accommodation_access ?? false,
         error: "MFA_REQUIRED" as const,
         status: 403,
       };
@@ -127,6 +131,7 @@ export async function requireAdmin() {
     supabase,
     user,
     role,
+    accommodation_access: admin.accommodation_access ?? false,
     error: null,
     status: 200,
   };
@@ -200,3 +205,25 @@ export async function requireSuperMasterAdmin() {
 }
 
 export const requirePrimaryMasterAdmin = requireSuperMasterAdmin;
+
+/**
+ * Require an admin with Accommodation Access.
+ * Both Master and Normal admins must have accommodation_access = true.
+ */
+export async function requireAccommodationAdmin() {
+  const auth = await requireAdmin();
+
+  if (auth.error) {
+    return auth;
+  }
+
+  if (!auth.accommodation_access) {
+    return {
+      ...auth,
+      error: "Accommodation access required" as const,
+      status: 403,
+    };
+  }
+
+  return auth;
+}

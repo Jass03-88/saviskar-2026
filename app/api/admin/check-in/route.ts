@@ -257,6 +257,22 @@ export async function POST(request: NextRequest) {
     return response({ success: false, error: "Participant event could not be checked in." }, 400);
   }
 
+  // Audit log for scanner check-in actions
+  if (auth.user) {
+    let actionType = "SCANNER_UPDATE";
+    if (action === "check_in") actionType = "SCANNER_EVENT_CHECK_IN";
+    else if (action === "check_out") actionType = "SCANNER_EVENT_CHECK_OUT";
+    else if (action === "main_check_in") actionType = "SCANNER_MAIN_CHECK_IN";
+    else if (action === "main_check_out") actionType = "SCANNER_MAIN_CHECK_OUT";
+    
+    await supabaseAdmin.from("admin_audit_logs").insert({
+      admin_id: auth.user.id,
+      action_type: actionType,
+      target_id: participantEventId,
+      details: { action },
+    });
+  }
+
   if (isMainCheckIn || action === "main_check_out") {
     return response({
       success: true,

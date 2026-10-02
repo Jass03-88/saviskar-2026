@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { generateReceiptPdf, ReceiptData, ReceiptTeamMember } from "../generate-receipt-pdf";
+import { generateReceiptPdf, ReceiptData } from "../generate-receipt-pdf";
 import { sendRegistrationEmail } from "../send-registration-email";
 import { resolveReceiptTeamMembers } from "./team-members";
 import crypto from "crypto";
@@ -103,14 +103,16 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     }
     console.log(`[RECEIPT] recipient email resolved: ${participant.email}`);
 
-    // Fetch linked events and members from payment_order_items
+    // Fetch linked events, accommodations, and members from payment_order_items
     const { data: orderItems, error: itemsError } = await supabaseAdmin
       .from("payment_order_items")
       .select(`
         id,
         amount,
+        item_type,
         event_id,
         participant_event_id,
+        participant_accommodation_id,
         events (
           name,
           category,
@@ -119,6 +121,20 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
         participant_events (
           id,
           team_name
+        ),
+        participant_accommodations (
+          id,
+          start_date,
+          end_date,
+          duration_days,
+          accommodation_plans (
+            name,
+            slug
+          ),
+          participants (
+            name,
+            participant_id
+          )
         )
       `)
       .eq("payment_order_id", paymentOrderId);
@@ -128,8 +144,11 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     }
 
     type OrderItemRow = {
+      id?: string;
       amount: number | string;
+      item_type?: string | null;
       participant_event_id?: string;
+      participant_accommodation_id?: string;
       events:
         | { name?: string; category?: string | null; registration_type?: string }
         | { name?: string; category?: string | null; registration_type?: string }[]
@@ -138,11 +157,48 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
         | { id?: string; team_name?: string | null }
         | { id?: string; team_name?: string | null }[]
         | null;
+      participant_accommodations:
+        | {
+            id?: string;
+            start_date?: string;
+            end_date?: string;
+            duration_days?: number;
+            accommodation_plans?: { name?: string; slug?: string } | { name?: string; slug?: string }[] | null;
+            participants?: { name?: string; participant_id?: string } | { name?: string; participant_id?: string }[] | null;
+          }
+        | {
+            id?: string;
+            start_date?: string;
+            end_date?: string;
+            duration_days?: number;
+            accommodation_plans?: { name?: string; slug?: string } | { name?: string; slug?: string }[] | null;
+            participants?: { name?: string; participant_id?: string } | { name?: string; participant_id?: string }[] | null;
+          }[]
+        | null;
     };
 
     const typedItems = orderItems as unknown as OrderItemRow[];
 
     const receiptItems = typedItems.map((item) => {
+      if (item.item_type === "accommodation") {
+        const rawAcc = item.participant_accommodations;
+        const acc = Array.isArray(rawAcc) ? rawAcc[0] : rawAcc;
+        const rawPlan = acc?.accommodation_plans;
+        const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
+        const rawDelegate = acc?.participants;
+        const delegate = Array.isArray(rawDelegate) ? rawDelegate[0] : rawDelegate;
+
+        const planName = plan?.name || "Accommodation Booking";
+        const delegateLabel = delegate?.name ? ` (${delegate.name})` : "";
+        return {
+          eventName: `${planName}${delegateLabel}`,
+          category: "Accommodation",
+          registrationType: "individual" as const,
+          teamName: null,
+          amount: Number(item.amount) || 0,
+        };
+      }
+
       const eventData = Array.isArray(item.events) ? item.events[0] : item.events;
       const peData = Array.isArray(item.participant_events) ? item.participant_events[0] : item.participant_events;
       return {
@@ -154,7 +210,7 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       };
     });
 
-    const primaryItem = typedItems[0];
+    const primaryItem = typedItems.find((it) => it.item_type !== "accommodation") || typedItems[0];
     const primaryEvent = Array.isArray(primaryItem.events) ? primaryItem.events[0] : primaryItem.events;
     const primaryPe = Array.isArray(primaryItem.participant_events) ? primaryItem.participant_events[0] : primaryItem.participant_events;
 
@@ -262,12 +318,29 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       ? receiptItems[0].eventName
       : `${receiptItems[0].eventName} (+${receiptItems.length - 1} more)`;
 
+    const accommodationDetails = typedItems
+      .filter((it) => it.item_type === "accommodation")
+      .map((it) => {
+        const rawAcc = it.participant_accommodations;
+        const acc = Array.isArray(rawAcc) ? rawAcc[0] : rawAcc;
+        const rawPlan = acc?.accommodation_plans;
+        const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
+        const rawDelegate = acc?.participants;
+        const delegate = Array.isArray(rawDelegate) ? rawDelegate[0] : rawDelegate;
+        return {
+          planName: plan?.name || "Accommodation",
+          participantName: delegate?.name || participant.name,
+          dates: acc?.start_date && acc?.end_date ? `${acc.start_date} to ${acc.end_date}` : "Festival Dates",
+          amount: Number(it.amount) || 0,
+        };
+      });
+
     // 4. SEND EMAIL
     const emailResult = await sendRegistrationEmail({
       registrationId: primaryPe?.id || primaryItem.participant_event_id,
       participantId: participant.participant_id,
       eventName: eventNameLabel,
-      eventCategory: primaryEvent?.category ?? null,
+      eventCategory: primaryEvent?.category ?? (primaryItem.item_type === "accommodation" ? "Accommodation" : null),
       name: participant.name,
       college: participant.college,
       email: participant.email,
@@ -276,6 +349,7 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       isTeamEvent: isAnyTeamEvent,
       isTeamHead: isPayerTeamHead,
       members: isAnyTeamEvent ? emailMembers : [],
+      accommodationDetails,
       receiptPdf: {
         buffer: pdfBuffer,
         filename: `Saviskar-2026-Payment-Receipt-${participant.participant_id}.pdf`,

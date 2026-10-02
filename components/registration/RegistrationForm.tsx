@@ -6,6 +6,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useCallback,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
@@ -29,6 +30,14 @@ import {
 import QRCode from "qrcode";
 import { supabase } from "@/lib/supabase";
 import TermsConditionsModal from "./TermsConditionsModal";
+import { INDIAN_STATES_AND_UT } from "@/lib/states";
+
+export function formatAccommodationDate(duration: number) {
+  if (duration === 1) return "28 Oct";
+  if (duration === 2) return "28–29 Oct";
+  if (duration === 3) return "28–30 Oct";
+  return "28 Oct onwards";
+}
 
 type EventOption = {
   id: string;
@@ -49,6 +58,18 @@ type TeamMember = {
   college: string;
   email: string;
   phone: string;
+  gender: string;
+  state: string;
+  accommodationPlanSlug: string;
+};
+
+type AccommodationPlan = {
+  id: string;
+  slug: string;
+  name: string;
+  price: number;
+  duration: number;
+  currency: string;
 };
 
 type EventRegistrationState = {
@@ -131,6 +152,7 @@ export default function RegistrationForm({
   const fromAdmin = searchParams.get("from") === "admin";
 
   const [eventOptions, setEventOptions] = useState<EventOption[]>([]);
+  const [accommodationPlans, setAccommodationPlans] = useState<AccommodationPlan[]>([]);
   const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventSearch, setEventSearch] = useState("");
@@ -138,6 +160,7 @@ export default function RegistrationForm({
   const [eventState, setEventState] = useState<
     Record<string, EventRegistrationState>
   >({});
+  const [mainAccommodationSlug, setMainAccommodationSlug] = useState("");
 
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -205,6 +228,16 @@ export default function RegistrationForm({
         `)
         .eq("active", true)
         .order("name", { ascending: true });
+
+      const { data: accData } = await supabase
+        .from("accommodation_plans")
+        .select("*")
+        .eq("is_active", true)
+        .order("price", { ascending: true });
+
+      if (accData) {
+        setAccommodationPlans(accData as AccommodationPlan[]);
+      }
 
       if (error) {
         console.error("EVENT LIST ERROR:", error);
@@ -446,7 +479,7 @@ export default function RegistrationForm({
     return event.registration_type === "team";
   }
 
-  function getTeamState(eventId: string): EventRegistrationState {
+  const getTeamState = useCallback((eventId: string): EventRegistrationState => {
     return (
       eventState[eventId] ?? {
         teamName: "",
@@ -454,7 +487,7 @@ export default function RegistrationForm({
         members: [],
       }
     );
-  }
+  }, [eventState]);
 
   function updateTeamName(eventId: string, value: string) {
     setEventState((current) => ({
@@ -500,6 +533,9 @@ export default function RegistrationForm({
             college: "",
             email: "",
             phone: "",
+            gender: "",
+            state: "",
+            accommodationPlanSlug: "",
           },
         ],
       },
@@ -599,6 +635,9 @@ export default function RegistrationForm({
               college: "",
               email: "",
               phone: "",
+              gender: "",
+              state: "",
+              accommodationPlanSlug: "",
             })
           );
 
@@ -645,7 +684,28 @@ export default function RegistrationForm({
    * TOTAL PRICE
    */
   const totalPrice = useMemo(() => {
-    return selectedEvents.reduce((total, event) => {
+    let accCost = 0;
+
+    // Main participant accommodation
+    if (mainAccommodationSlug) {
+      const plan = accommodationPlans.find((p) => p.slug === mainAccommodationSlug);
+      if (plan) accCost += plan.price;
+    }
+
+    // Team members accommodations
+    selectedEvents.forEach((event) => {
+      if (isTeamEvent(event)) {
+        const state = getTeamState(event.id);
+        state.members.forEach((m) => {
+          if (m.accommodationPlanSlug) {
+            const plan = accommodationPlans.find((p) => p.slug === m.accommodationPlanSlug);
+            if (plan) accCost += plan.price;
+          }
+        });
+      }
+    });
+
+    const eventsCost = selectedEvents.reduce((total, event) => {
       if (event.payment_type !== "paid") {
         return total;
       }
@@ -673,7 +733,9 @@ export default function RegistrationForm({
 
       return total + fee;
     }, 0);
-  }, [selectedEvents, eventState]);
+    
+    return eventsCost + accCost;
+  }, [selectedEvents, eventState, accommodationPlans, mainAccommodationSlug, getTeamState]);
 
   /*
    * SUBMIT
@@ -715,6 +777,27 @@ export default function RegistrationForm({
       const phone = String(
         formData.get("phone") ?? ""
       ).trim();
+
+      const gender = String(
+        formData.get("gender") ?? ""
+      ).trim();
+
+      const stateLocation = String(
+        formData.get("state") ?? ""
+      ).trim();
+
+      const mainAccSlug = String(
+        formData.get("accommodationPlanSlug") ?? ""
+      ).trim();
+
+      const accommodationsPayload: Array<{ email: string; planSlug: string }> = [];
+
+      if (mainAccSlug) {
+        accommodationsPayload.push({
+          email,
+          planSlug: mainAccSlug,
+        });
+      }
 
       /*
        * Validate each selected event.
@@ -759,11 +842,20 @@ export default function RegistrationForm({
             if (
               !member.name.trim() ||
               !member.email.trim() ||
-              !member.phone.trim()
+              !member.phone.trim() ||
+              !member.gender.trim() ||
+              !member.state.trim()
             ) {
               throw new ValidationError(
-                `Please complete all member details for ${selectedEvent.name}.`
+                `Please complete all member details (including gender and state) for ${selectedEvent.name}.`
               );
+            }
+
+            if (member.accommodationPlanSlug) {
+              accommodationsPayload.push({
+                email: member.email.trim().toLowerCase(),
+                planSlug: member.accommodationPlanSlug,
+              });
             }
           }
 
@@ -800,6 +892,8 @@ export default function RegistrationForm({
               college: college || participantLookup?.college || "",
               email: member.email.trim().toLowerCase(),
               phone: member.phone.trim(),
+              gender: member.gender.trim(),
+              state: member.state.trim(),
             }))
             : [],
         };
@@ -824,8 +918,11 @@ export default function RegistrationForm({
           college,
           email,
           phone,
+          gender,
+          state: stateLocation,
 
           events: eventPayload,
+          accommodations: accommodationsPayload,
         }),
       });
 
@@ -1467,6 +1564,11 @@ export default function RegistrationForm({
           </div>
 
           <form onSubmit={handleSubmit} className="relative z-10 space-y-12">
+            <datalist id="indian-states">
+              {INDIAN_STATES_AND_UT.map((state) => (
+                <option key={state} value={state} />
+              ))}
+            </datalist>
             {/* VERIFIED SESSION BANNER */}
             {normalizedSessionEmail && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-500/30 bg-violet-950/30 px-5 py-3.5 backdrop-blur-xl">
@@ -2172,6 +2274,70 @@ export default function RegistrationForm({
                                 </Field>
                               </div>
 
+                              <div className="mt-6 grid gap-6 md:grid-cols-2">
+                                <Field label="Gender">
+                                  <div className="flex gap-5 px-1 py-3.5 text-sm text-white">
+                                    <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                                      <input type="radio" name="gender" value="Male" className="accent-violet-500 scale-110 cursor-pointer" required /> Male
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                                      <input type="radio" name="gender" value="Female" className="accent-violet-500 scale-110 cursor-pointer" required /> Female
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                                      <input type="radio" name="gender" value="Other" className="accent-violet-500 scale-110 cursor-pointer" required /> Other
+                                    </label>
+                                  </div>
+                                </Field>
+
+                                <Field label="State / UT">
+                                  <input
+                                    type="text"
+                                    name="state"
+                                    list="indian-states"
+                                    placeholder="Select State"
+                                    required
+                                    autoComplete="off"
+                                    className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
+                                  />
+                                </Field>
+                              </div>
+
+                              {accommodationPlans.length > 0 && (
+                                <div className="mt-6">
+                                  <Field label="Accommodation (Optional)">
+                                    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+                                      <label className="relative flex cursor-pointer flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-all hover:border-violet-400/40 has-[:checked]:border-violet-500 has-[:checked]:bg-violet-500/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]">
+                                        <input
+                                          type="radio"
+                                          name="accommodationPlanSlug"
+                                          value=""
+                                          checked={!mainAccommodationSlug}
+                                          onChange={(e) => setMainAccommodationSlug(e.target.value)}
+                                          className="peer sr-only"
+                                        />
+                                        <span className="font-medium text-white text-sm">No Accommodation</span>
+                                        <span className="font-mono text-xs text-white/50">₹0</span>
+                                      </label>
+                                      {accommodationPlans.map((plan) => (
+                                        <label key={plan.id} className="relative flex cursor-pointer flex-col gap-1 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-all hover:border-violet-400/40 has-[:checked]:border-violet-500 has-[:checked]:bg-violet-500/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]">
+                                          <input
+                                            type="radio"
+                                            name="accommodationPlanSlug"
+                                            value={plan.slug}
+                                            checked={mainAccommodationSlug === plan.slug}
+                                            onChange={(e) => setMainAccommodationSlug(e.target.value)}
+                                            className="peer sr-only"
+                                          />
+                                          <span className="font-medium text-white text-sm leading-tight">{plan.name}</span>
+                                          <span className="font-mono text-xs font-semibold text-emerald-400">₹{plan.price}</span>
+                                          <span className="text-[10px] font-mono text-white/40 mt-1">{formatAccommodationDate(plan.duration)}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </Field>
+                                </div>
+                              )}
+
                               <div className="mt-6 border-t border-white/10 pt-5">
                                 <label
                                   htmlFor={`team-head-${event.id}`}
@@ -2286,6 +2452,95 @@ export default function RegistrationForm({
                                       />
                                     </Field>
                                   </div>
+
+                                  <div className="mt-5 grid gap-5 md:grid-cols-2">
+                                    <Field label="Member Gender">
+                                      <div className="flex gap-5 px-1 py-3 text-sm text-white">
+                                        <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                                          <input 
+                                            type="radio" 
+                                            name={`gender-${event.id}-${index}`} 
+                                            value="Male" 
+                                            checked={member.gender === "Male"}
+                                            onChange={(e) => updateTeamMember(event.id, index, "gender", e.target.value)}
+                                            className="accent-violet-500 scale-110 cursor-pointer" 
+                                            required 
+                                          /> Male
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                                          <input 
+                                            type="radio" 
+                                            name={`gender-${event.id}-${index}`} 
+                                            value="Female" 
+                                            checked={member.gender === "Female"}
+                                            onChange={(e) => updateTeamMember(event.id, index, "gender", e.target.value)}
+                                            className="accent-violet-500 scale-110 cursor-pointer" 
+                                            required 
+                                          /> Female
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                                          <input 
+                                            type="radio" 
+                                            name={`gender-${event.id}-${index}`} 
+                                            value="Other" 
+                                            checked={member.gender === "Other"}
+                                            onChange={(e) => updateTeamMember(event.id, index, "gender", e.target.value)}
+                                            className="accent-violet-500 scale-110 cursor-pointer" 
+                                            required 
+                                          /> Other
+                                        </label>
+                                      </div>
+                                    </Field>
+
+                                    <Field label="Member State / UT">
+                                      <input
+                                        type="text"
+                                        value={member.state}
+                                        onChange={(e) => updateTeamMember(event.id, index, "state", e.target.value)}
+                                        list="indian-states"
+                                        placeholder="Select State"
+                                        required
+                                        autoComplete="off"
+                                        className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
+                                      />
+                                    </Field>
+                                  </div>
+
+                                  {accommodationPlans.length > 0 && (
+                                    <div className="mt-5">
+                                      <Field label="Member Accommodation (Optional)">
+                                        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+                                          <label className="relative flex cursor-pointer flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-all hover:border-violet-400/40 has-[:checked]:border-violet-500 has-[:checked]:bg-violet-500/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]">
+                                            <input
+                                              type="radio"
+                                              name={`accommodationPlanSlug-${event.id}-${index}`}
+                                              value=""
+                                              checked={!member.accommodationPlanSlug}
+                                              onChange={(e) => updateTeamMember(event.id, index, "accommodationPlanSlug", e.target.value)}
+                                              className="peer sr-only"
+                                            />
+                                            <span className="font-medium text-white text-sm">No Accommodation</span>
+                                            <span className="font-mono text-xs text-white/50">₹0</span>
+                                          </label>
+                                          {accommodationPlans.map((plan) => (
+                                            <label key={plan.id} className="relative flex cursor-pointer flex-col gap-1 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-all hover:border-violet-400/40 has-[:checked]:border-violet-500 has-[:checked]:bg-violet-500/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]">
+                                              <input
+                                                type="radio"
+                                                name={`accommodationPlanSlug-${event.id}-${index}`}
+                                                value={plan.slug}
+                                                checked={member.accommodationPlanSlug === plan.slug}
+                                                onChange={(e) => updateTeamMember(event.id, index, "accommodationPlanSlug", e.target.value)}
+                                                className="peer sr-only"
+                                              />
+                                              <span className="font-medium text-white text-sm leading-tight">{plan.name}</span>
+                                              <span className="font-mono text-xs font-semibold text-emerald-400">₹{plan.price}</span>
+                                              <span className="text-[10px] font-mono text-white/40 mt-1">{formatAccommodationDate(plan.duration)}</span>
+                                            </label>
+                                          ))}
+                                        </div>
+                                      </Field>
+                                    </div>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -2381,6 +2636,70 @@ export default function RegistrationForm({
                     />
                   </Field>
                 </div>
+
+                <div className="grid gap-6 md:grid-cols-2">
+                  <Field label="Gender">
+                    <div className="flex gap-5 px-1 py-3.5 text-sm text-white">
+                      <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                        <input type="radio" name="gender" value="Male" className="accent-violet-500 scale-110 cursor-pointer" required /> Male
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                        <input type="radio" name="gender" value="Female" className="accent-violet-500 scale-110 cursor-pointer" required /> Female
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                        <input type="radio" name="gender" value="Other" className="accent-violet-500 scale-110 cursor-pointer" required /> Other
+                      </label>
+                    </div>
+                  </Field>
+
+                  <Field label="State / UT">
+                    <input
+                      type="text"
+                      name="state"
+                      list="indian-states"
+                      placeholder="Select State"
+                      required
+                      autoComplete="off"
+                      className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
+                    />
+                  </Field>
+                </div>
+
+                {accommodationPlans.length > 0 && (
+                  <div>
+                    <Field label="Accommodation (Optional)">
+                      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+                        <label className="relative flex cursor-pointer flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-all hover:border-violet-400/40 has-[:checked]:border-violet-500 has-[:checked]:bg-violet-500/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]">
+                          <input
+                            type="radio"
+                            name="accommodationPlanSlug"
+                            value=""
+                            checked={!mainAccommodationSlug}
+                            onChange={(e) => setMainAccommodationSlug(e.target.value)}
+                            className="peer sr-only"
+                          />
+                          <span className="font-medium text-white text-sm">No Accommodation</span>
+                          <span className="font-mono text-xs text-white/50">₹0</span>
+                        </label>
+                        {accommodationPlans.map((plan) => (
+                          <label key={plan.id} className="relative flex cursor-pointer flex-col gap-1 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-all hover:border-violet-400/40 has-[:checked]:border-violet-500 has-[:checked]:bg-violet-500/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]">
+                            <input
+                              type="radio"
+                              name="accommodationPlanSlug"
+                              value={plan.slug}
+                              checked={mainAccommodationSlug === plan.slug}
+                              onChange={(e) => setMainAccommodationSlug(e.target.value)}
+                              className="peer sr-only"
+                            />
+                            <span className="font-medium text-white text-sm leading-tight">{plan.name}</span>
+                            <span className="font-mono text-xs font-semibold text-emerald-400">₹{plan.price}</span>
+                            <span className="text-[10px] font-mono text-white/40 mt-1">{formatAccommodationDate(plan.duration)}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </Field>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2457,6 +2776,17 @@ export default function RegistrationForm({
                 </div>
               </div>
             )}
+
+            {/* REGISTRATION IDENTITY ADVISORY */}
+            <div className="flex items-start gap-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-4 text-xs sm:text-sm leading-relaxed text-zinc-300 backdrop-blur-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+              <ShieldCheck size={18} className="mt-0.5 shrink-0 text-violet-400" />
+              <div>
+                <span className="font-semibold text-white">Important Advisory: </span>
+                <span>
+                  All participants must carry their valid college/university ID card and a valid identity proof with them at the event venue. Participants may be required to present these documents for verification.
+                </span>
+              </div>
+            </div>
 
             {/* CODE OF CONDUCT & TERMS AGREEMENT */}
             <div className="flex items-start gap-3.5 rounded-2xl border border-white/10 bg-white/[0.025] p-4 sm:p-5 transition hover:border-violet-400/30 backdrop-blur-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
