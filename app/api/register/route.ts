@@ -12,6 +12,7 @@ type MemberInput = {
   phone?: unknown;
   gender?: unknown;
   state?: unknown;
+  idCardStoragePath?: unknown;
 };
 
 type EventRegistrationInput = {
@@ -35,9 +36,11 @@ type RegistrationInput = {
   phone?: unknown;
   gender?: unknown;
   state?: unknown;
+  idCardStoragePath?: unknown;
 
   events?: unknown;
   accommodations?: unknown;
+  faculty?: unknown;
 
   // Legacy single-event compatibility
   eventId?: unknown;
@@ -144,6 +147,7 @@ function normalizeMembers(
         phone: cleanPhone(member.phone),
         gender: cleanString(member.gender, 20).toLowerCase(),
         state: cleanString(member.state, 100),
+        idCardStoragePath: cleanString(member.idCardStoragePath, 255),
         index,
       };
     }
@@ -343,6 +347,12 @@ export async function POST(
     cleanString(
       body.state,
       100
+    );
+
+  const idCardStoragePath =
+    cleanString(
+      body.idCardStoragePath,
+      255
     );
 
   if (!email || email !== session.email.toLowerCase()) {
@@ -569,10 +579,37 @@ export async function POST(
 
               phone:
                 member.phone,
+              gender:
+                member.gender,
+              state:
+                member.state,
+              id_card_storage_path:
+                member.idCardStoragePath,
             })
           ),
       })
     );
+
+  // =====================================================
+  // 10B. NORMALIZE FACULTY FOR DATABASE RPC
+  // =====================================================
+  let rpcFaculty = null;
+  if (body.faculty) {
+    const rawFac = body.faculty as MemberInput;
+    const facEmail = cleanEmail(rawFac.email);
+    if (!facEmail || !EMAIL_PATTERN.test(facEmail)) {
+      return errorResponse("Invalid faculty email address.", 400);
+    }
+    rpcFaculty = {
+      name: cleanString(rawFac.name, 120),
+      college: cleanString(rawFac.college, 180),
+      email: facEmail,
+      phone: cleanPhone(rawFac.phone),
+      gender: cleanString(rawFac.gender, 20).toLowerCase(),
+      state: cleanString(rawFac.state, 100),
+      id_card_storage_path: cleanString(rawFac.idCardStoragePath, 255),
+    };
+  }
 
   // =====================================================
   // 10A. NORMALIZE ACCOMMODATIONS FOR DATABASE RPC
@@ -635,6 +672,18 @@ export async function POST(
 
         p_accommodations:
           rpcAccommodations,
+
+        p_faculty:
+          rpcFaculty,
+
+        p_gender:
+          gender || null,
+
+        p_state:
+          state || null,
+
+        p_id_card_storage_path:
+          idCardStoragePath || null,
       }
     );
 

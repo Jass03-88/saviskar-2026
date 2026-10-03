@@ -78,6 +78,9 @@ export async function GET(
         college,
         email,
         phone,
+        gender,
+        state,
+        id_card_storage_path,
         participant_events(
           id,
           event_id,
@@ -145,6 +148,9 @@ export async function GET(
           college,
           email,
           phone,
+          gender,
+          state,
+          id_card_storage_path,
           participant_events(
             id,
             event_id,
@@ -270,6 +276,59 @@ export async function GET(
 
   const combinedEvents = Array.from(eventsByParticipantEventId.values());
 
+    const groupIds = Array.from(
+      new Set(
+        combinedEvents
+          .map((e) => e.registration_group_id)
+          .filter(Boolean)
+      )
+    ) as string[];
+
+    let facultyIncharges: any[] = [];
+    if (groupIds.length > 0) {
+      const { data: facultyData } = await supabaseAdmin
+        .from("faculty_incharges")
+        .select("*")
+        .in("registration_group_id", groupIds);
+      if (facultyData) {
+        facultyIncharges = facultyData;
+      }
+    }
+
+    // Generate signed URLs
+    let participantIdCardUrl = null;
+    if (dataResult.id_card_storage_path) {
+      const { data: signedData } = await supabaseAdmin.storage
+        .from("id_cards")
+        .createSignedUrl(dataResult.id_card_storage_path, 60 * 60); // 1 hour
+      if (signedData) {
+        participantIdCardUrl = signedData.signedUrl;
+      }
+    }
+
+    const facultyWithSignedUrls = await Promise.all(
+      facultyIncharges.map(async (faculty) => {
+        let signedUrl = null;
+        if (faculty.id_card_storage_path) {
+          const { data } = await supabaseAdmin.storage
+            .from("id_cards")
+            .createSignedUrl(faculty.id_card_storage_path, 60 * 60);
+          if (data) signedUrl = data.signedUrl;
+        }
+        return {
+          id: faculty.id,
+          registrationGroupId: faculty.registration_group_id,
+          name: faculty.name,
+          college: faculty.college,
+          email: faculty.email,
+          phone: faculty.phone,
+          gender: faculty.gender,
+          state: faculty.state,
+          idCardUrl: signedUrl,
+        };
+      })
+    );
+
   return response({
     success: true,
 
@@ -279,7 +338,12 @@ export async function GET(
       college: dataResult.college,
       email: dataResult.email,
       phone: dataResult.phone,
+      gender: dataResult.gender,
+      state: dataResult.state,
+      idCardUrl: participantIdCardUrl,
     },
+
+    faculty: facultyWithSignedUrls,
 
     events: combinedEvents.map((event) => ({
       participantEventId: event.id,

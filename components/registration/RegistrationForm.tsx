@@ -31,6 +31,7 @@ import QRCode from "qrcode";
 import { supabase } from "@/lib/supabase";
 import TermsConditionsModal from "./TermsConditionsModal";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
+import { ImageUploader } from "@/components/ui/image-uploader";
 
 export function formatAccommodationDate(duration: number) {
   if (duration === 1) return "28 Oct";
@@ -60,6 +61,7 @@ type TeamMember = {
   phone: string;
   gender: string;
   state: string;
+  idCardStoragePath: string;
   accommodationPlanSlug: string;
 };
 
@@ -161,6 +163,19 @@ export default function RegistrationForm({
     Record<string, EventRegistrationState>
   >({});
   const [mainAccommodationSlug, setMainAccommodationSlug] = useState("");
+  const [mainIdCardStoragePath, setMainIdCardStoragePath] = useState("");
+
+  const [facultyEnabled, setFacultyEnabled] = useState(false);
+  const [facultyState, setFacultyState] = useState({
+    name: "",
+    college: "",
+    email: "",
+    phone: "",
+    gender: "",
+    state: "",
+    idCardStoragePath: "",
+    accommodationPlanSlug: ""
+  });
 
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -535,6 +550,7 @@ export default function RegistrationForm({
             phone: "",
             gender: "",
             state: "",
+            idCardStoragePath: "",
             accommodationPlanSlug: "",
           },
         ],
@@ -637,6 +653,7 @@ export default function RegistrationForm({
               phone: "",
               gender: "",
               state: "",
+              idCardStoragePath: "",
               accommodationPlanSlug: "",
             })
           );
@@ -689,6 +706,12 @@ export default function RegistrationForm({
     // Main participant accommodation
     if (mainAccommodationSlug) {
       const plan = accommodationPlans.find((p) => p.slug === mainAccommodationSlug);
+      if (plan) accCost += plan.price;
+    }
+
+    // Faculty accommodation
+    if (facultyEnabled && facultyState.accommodationPlanSlug) {
+      const plan = accommodationPlans.find((p) => p.slug === facultyState.accommodationPlanSlug);
       if (plan) accCost += plan.price;
     }
 
@@ -799,6 +822,16 @@ export default function RegistrationForm({
         });
       }
 
+      if (!mainIdCardStoragePath) {
+        throw new ValidationError("Please upload your ID Card.");
+      }
+
+      if (facultyEnabled) {
+        if (!facultyState.name.trim() || !facultyState.email.trim() || !facultyState.phone.trim() || !facultyState.gender || !facultyState.state.trim() || !facultyState.idCardStoragePath) {
+          throw new ValidationError("Please complete all Faculty Incharge details (including ID card).");
+        }
+      }
+
       /*
        * Validate each selected event.
        */
@@ -844,10 +877,11 @@ export default function RegistrationForm({
               !member.email.trim() ||
               !member.phone.trim() ||
               !member.gender.trim() ||
-              !member.state.trim()
+              !member.state.trim() ||
+              !member.idCardStoragePath.trim()
             ) {
               throw new ValidationError(
-                `Please complete all member details (including gender and state) for ${selectedEvent.name}.`
+                `Please complete all member details (including ID Card) for ${selectedEvent.name}.`
               );
             }
 
@@ -894,6 +928,7 @@ export default function RegistrationForm({
               phone: member.phone.trim(),
               gender: member.gender.trim(),
               state: member.state.trim(),
+              idCardStoragePath: member.idCardStoragePath.trim(),
             }))
             : [],
         };
@@ -920,9 +955,19 @@ export default function RegistrationForm({
           phone,
           gender,
           state: stateLocation,
+          idCardStoragePath: mainIdCardStoragePath,
 
           events: eventPayload,
           accommodations: accommodationsPayload,
+          faculty: facultyEnabled ? {
+            name: facultyState.name.trim(),
+            college: facultyState.college.trim() || college,
+            email: facultyState.email.trim(),
+            phone: facultyState.phone.trim(),
+            gender: facultyState.gender.trim(),
+            state: facultyState.state.trim(),
+            idCardStoragePath: facultyState.idCardStoragePath.trim(),
+          } : undefined,
         }),
       });
 
@@ -2302,6 +2347,15 @@ export default function RegistrationForm({
                                 </Field>
                               </div>
 
+                              <div className="mt-6">
+                                <ImageUploader
+                                  label="Your Official ID Card (College/University)"
+                                  existingPath={mainIdCardStoragePath}
+                                  onUploadSuccess={setMainIdCardStoragePath}
+                                  onRemove={() => setMainIdCardStoragePath("")}
+                                />
+                              </div>
+
                               {accommodationPlans.length > 0 && (
                                 <div className="mt-6">
                                   <Field label="Accommodation (Optional)">
@@ -2506,6 +2560,15 @@ export default function RegistrationForm({
                                     </Field>
                                   </div>
 
+                                  <div className="mt-5">
+                                    <ImageUploader
+                                      label={`Member 0${index + 2} Official ID Card`}
+                                      existingPath={member.idCardStoragePath}
+                                      onUploadSuccess={(path) => updateTeamMember(event.id, index, "idCardStoragePath", path)}
+                                      onRemove={() => updateTeamMember(event.id, index, "idCardStoragePath", "")}
+                                    />
+                                  </div>
+
                                   {accommodationPlans.length > 0 && (
                                     <div className="mt-5">
                                       <Field label="Member Accommodation (Optional)">
@@ -2665,6 +2728,15 @@ export default function RegistrationForm({
                   </Field>
                 </div>
 
+                <div className="mt-6">
+                  <ImageUploader
+                    label="Your Official ID Card (College/University)"
+                    existingPath={mainIdCardStoragePath}
+                    onUploadSuccess={setMainIdCardStoragePath}
+                    onRemove={() => setMainIdCardStoragePath("")}
+                  />
+                </div>
+
                 {accommodationPlans.length > 0 && (
                   <div>
                     <Field label="Accommodation (Optional)">
@@ -2700,6 +2772,202 @@ export default function RegistrationForm({
                     </Field>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* FACULTY INCHARGE (OPTIONAL) */}
+            {selectedEvents.length > 0 && (
+              <div className="space-y-6 border-t border-white/10 pt-10">
+                <div>
+                  <div className="flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.22em] text-violet-300">
+                    <Sparkles size={11} />
+                    <span>FACULTY ACCREDITATION</span>
+                  </div>
+
+                  <h3 className="mt-2 text-2xl sm:text-3xl font-light tracking-tight text-white">
+                    Faculty <span className="font-editorial text-violet-300 font-normal italic">Incharge.</span>
+                  </h3>
+                  <p className="mt-1 text-xs sm:text-sm text-white/60">
+                    A single faculty member can accompany your team.
+                  </p>
+                </div>
+
+                <div className="rounded-[28px] border border-white/12 bg-gradient-to-b from-white/[0.04] to-white/[0.015] p-6 md:p-8 backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.08)]">
+                  <label
+                    htmlFor="faculty-enabled"
+                    className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition hover:border-violet-400/40"
+                  >
+                    <input
+                      id="faculty-enabled"
+                      type="checkbox"
+                      checked={facultyEnabled}
+                      onChange={(e) => setFacultyEnabled(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 cursor-pointer accent-violet-500"
+                    />
+                    <div>
+                      <span className="block text-sm font-medium text-white">
+                        Add a Faculty Incharge (Optional)
+                      </span>
+                      <span className="mt-0.5 block text-xs text-white/50">
+                        Select this if a faculty member is accompanying your contingent to the event.
+                      </span>
+                    </div>
+                  </label>
+
+                  {facultyEnabled && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10, height: 0 }}
+                      animate={{ opacity: 1, y: 0, height: "auto" }}
+                      className="mt-8 space-y-6 overflow-hidden"
+                    >
+                      <div className="grid gap-6 md:grid-cols-2">
+                        <Field label="Faculty Full Name">
+                          <input
+                            type="text"
+                            value={facultyState.name}
+                            onChange={(e) => setFacultyState({ ...facultyState, name: e.target.value })}
+                            placeholder="Faculty Name"
+                            required={facultyEnabled}
+                            className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
+                          />
+                        </Field>
+
+                        <Field label="College / University">
+                          <input
+                            type="text"
+                            value={facultyState.college}
+                            onChange={(e) => setFacultyState({ ...facultyState, college: e.target.value })}
+                            placeholder="College Name"
+                            className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
+                          />
+                        </Field>
+                      </div>
+
+                      <div className="grid gap-6 md:grid-cols-2">
+                        <Field label="Email Address">
+                          <input
+                            type="email"
+                            value={facultyState.email}
+                            onChange={(e) => setFacultyState({ ...facultyState, email: e.target.value })}
+                            placeholder="faculty@example.com"
+                            required={facultyEnabled}
+                            className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
+                          />
+                        </Field>
+
+                        <Field label="Phone Number">
+                          <input
+                            type="tel"
+                            value={facultyState.phone}
+                            onChange={(e) => setFacultyState({ ...facultyState, phone: e.target.value })}
+                            placeholder="+91 98765 43210"
+                            required={facultyEnabled}
+                            className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
+                          />
+                        </Field>
+                      </div>
+
+                      <div className="grid gap-6 md:grid-cols-2">
+                        <Field label="Gender">
+                          <div className="flex gap-5 px-1 py-3 text-sm text-white">
+                            <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                              <input 
+                                type="radio" 
+                                name="faculty-gender" 
+                                value="Male" 
+                                checked={facultyState.gender === "Male"}
+                                onChange={(e) => setFacultyState({ ...facultyState, gender: e.target.value })}
+                                className="accent-violet-500 scale-110 cursor-pointer" 
+                                required={facultyEnabled} 
+                              /> Male
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                              <input 
+                                type="radio" 
+                                name="faculty-gender" 
+                                value="Female" 
+                                checked={facultyState.gender === "Female"}
+                                onChange={(e) => setFacultyState({ ...facultyState, gender: e.target.value })}
+                                className="accent-violet-500 scale-110 cursor-pointer" 
+                                required={facultyEnabled} 
+                              /> Female
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer transition hover:text-violet-300">
+                              <input 
+                                type="radio" 
+                                name="faculty-gender" 
+                                value="Other" 
+                                checked={facultyState.gender === "Other"}
+                                onChange={(e) => setFacultyState({ ...facultyState, gender: e.target.value })}
+                                className="accent-violet-500 scale-110 cursor-pointer" 
+                                required={facultyEnabled} 
+                              /> Other
+                            </label>
+                          </div>
+                        </Field>
+
+                        <Field label="State / UT">
+                          <input
+                            type="text"
+                            value={facultyState.state}
+                            onChange={(e) => setFacultyState({ ...facultyState, state: e.target.value })}
+                            list="indian-states"
+                            placeholder="Select State"
+                            required={facultyEnabled}
+                            autoComplete="off"
+                            className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
+                          />
+                        </Field>
+                      </div>
+
+                      <div className="mt-6">
+                        <ImageUploader
+                          label="Faculty Official ID Card"
+                          existingPath={facultyState.idCardStoragePath}
+                          onUploadSuccess={(path) => setFacultyState({ ...facultyState, idCardStoragePath: path })}
+                          onRemove={() => setFacultyState({ ...facultyState, idCardStoragePath: "" })}
+                          required={facultyEnabled}
+                        />
+                      </div>
+
+                      {accommodationPlans.length > 0 && (
+                        <div className="mt-6">
+                          <Field label="Accommodation (Optional)">
+                            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+                              <label className="relative flex cursor-pointer flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-all hover:border-violet-400/40 has-[:checked]:border-violet-500 has-[:checked]:bg-violet-500/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]">
+                                <input
+                                  type="radio"
+                                  name="facultyAccommodationPlanSlug"
+                                  value=""
+                                  checked={!facultyState.accommodationPlanSlug}
+                                  onChange={(e) => setFacultyState({ ...facultyState, accommodationPlanSlug: e.target.value })}
+                                  className="peer sr-only"
+                                />
+                                <span className="font-medium text-white text-sm">No Accommodation</span>
+                                <span className="font-mono text-xs text-white/50">₹0</span>
+                              </label>
+                              {accommodationPlans.map((plan) => (
+                                <label key={plan.id} className="relative flex cursor-pointer flex-col gap-1 rounded-xl border border-white/10 bg-white/[0.02] p-4 transition-all hover:border-violet-400/40 has-[:checked]:border-violet-500 has-[:checked]:bg-violet-500/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]">
+                                  <input
+                                    type="radio"
+                                    name="facultyAccommodationPlanSlug"
+                                    value={plan.slug}
+                                    checked={facultyState.accommodationPlanSlug === plan.slug}
+                                    onChange={(e) => setFacultyState({ ...facultyState, accommodationPlanSlug: e.target.value })}
+                                    className="peer sr-only"
+                                  />
+                                  <span className="font-medium text-white text-sm leading-tight">{plan.name}</span>
+                                  <span className="font-mono text-xs font-semibold text-emerald-400">₹{plan.price}</span>
+                                  <span className="text-[10px] font-mono text-white/40 mt-1">{formatAccommodationDate(plan.duration)}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </Field>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </div>
               </div>
             )}
 

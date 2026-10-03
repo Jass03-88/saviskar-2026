@@ -24,6 +24,21 @@ type Participant = {
   college: string;
   email: string;
   phone: string;
+  gender: string;
+  state: string;
+  idCardUrl: string | null;
+};
+
+type FacultyIncharge = {
+  id: string;
+  registrationGroupId: string;
+  name: string;
+  college: string;
+  email: string;
+  phone: string;
+  gender: string;
+  state: string;
+  idCardUrl: string | null;
 };
 
 type ParticipantEvent = {
@@ -70,6 +85,7 @@ export default function ScannerPage() {
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [participantEvents, setParticipantEvents] = useState<ParticipantEvent[]>([]);
   const [accommodations, setAccommodations] = useState<ParticipantAccommodation[]>([]);
+  const [faculty, setFaculty] = useState<FacultyIncharge[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [scannerStarted, setScannerStarted] = useState(false);
@@ -92,6 +108,7 @@ export default function ScannerPage() {
     setParticipant(null);
     setParticipantEvents([]);
     setAccommodations([]);
+    setFaculty([]);
 
     try {
       const scanner = new Html5Qrcode("qr-reader");
@@ -165,6 +182,7 @@ export default function ScannerPage() {
     setSuccess("");
     setParticipantEvents([]);
     setAccommodations([]);
+    setFaculty([]);
 
     try {
       let registrationId = scannedValue.trim();
@@ -182,6 +200,7 @@ export default function ScannerPage() {
           success?: boolean;
           error?: string;
           participant?: Participant;
+          faculty?: FacultyIncharge[];
           events?: ParticipantEvent[];
           accommodations?: ParticipantAccommodation[];
         };
@@ -194,10 +213,12 @@ export default function ScannerPage() {
 
         const foundEvents = lookup.events ?? [];
         const foundAccommodations = lookup.accommodations ?? [];
+        const foundFaculty = lookup.faculty ?? [];
 
         setParticipant(lookup.participant);
         setParticipantEvents(foundEvents);
         setAccommodations(foundAccommodations);
+        setFaculty(foundFaculty);
         
         if (foundEvents.length === 0 && foundAccommodations.length === 0) {
           setError("Participant found, but they are not registered for any events and have no accommodation.");
@@ -401,6 +422,7 @@ export default function ScannerPage() {
     setParticipant(null);
     setParticipantEvents([]);
     setAccommodations([]);
+    setFaculty([]);
     setError("");
     setSuccess("");
 
@@ -445,6 +467,7 @@ export default function ScannerPage() {
               setParticipant(null);
               setParticipantEvents([]);
               setAccommodations([]);
+              setFaculty([]);
               setError("");
               setSuccess("");
             }}
@@ -460,6 +483,7 @@ export default function ScannerPage() {
               setParticipant(null);
               setParticipantEvents([]);
               setAccommodations([]);
+              setFaculty([]);
               setError("");
               setSuccess("");
             }}
@@ -475,6 +499,7 @@ export default function ScannerPage() {
               setParticipant(null);
               setParticipantEvents([]);
               setAccommodations([]);
+              setFaculty([]);
               setError("");
               setSuccess("");
             }}
@@ -586,8 +611,50 @@ export default function ScannerPage() {
                 <div className="grid grid-cols-2 gap-5 border-t border-black/10 pt-6 !text-black">
                   <Detail label="Email" value={participant.email} />
                   <Detail label="Phone" value={participant.phone} />
+                  <Detail label="Gender" value={participant.gender} />
+                  <Detail label="State" value={participant.state} />
                   <Detail label="Participant ID" value={participant.participantId} mono />
                 </div>
+
+                {participant.idCardUrl && (
+                  <div className="mt-6 border-t border-black/10 pt-6">
+                    <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] !text-black/60">
+                      Participant ID Card
+                    </p>
+                    <a href={participant.idCardUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-700 hover:bg-violet-100 transition">
+                      View ID Card Document
+                    </a>
+                  </div>
+                )}
+
+                {faculty.length > 0 && (
+                  <div className="mt-7 border-t border-black/10 pt-6 !text-black">
+                    <p className="mb-4 text-[9px] font-semibold uppercase tracking-[0.18em] !text-black/60">
+                      Faculty Incharge
+                    </p>
+                    <div className="space-y-4">
+                      {faculty.map((f) => (
+                        <div key={f.id} className="rounded-[20px] border border-black/[0.08] bg-black/[0.01] p-5">
+                          <p className="text-base font-semibold">{f.name}</p>
+                          <p className="mt-1 text-sm text-black/60">{f.college}</p>
+                          <div className="mt-4 grid grid-cols-2 gap-4">
+                            <Detail label="Email" value={f.email} />
+                            <Detail label="Phone" value={f.phone} />
+                            <Detail label="Gender" value={f.gender} />
+                            <Detail label="State" value={f.state} />
+                          </div>
+                          {f.idCardUrl && (
+                            <div className="mt-4">
+                              <a href={f.idCardUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-violet-50 px-4 py-2.5 text-xs font-medium text-violet-700 hover:bg-violet-100 transition">
+                                View Faculty ID Card
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {scannerMode !== "accommodation" && participantEvents.length > 0 && (
                   <div className="mt-7 border-t border-black/10 pt-6 !text-black">
