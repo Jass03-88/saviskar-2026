@@ -336,7 +336,7 @@ export default function EventRegistrationsPage() {
         if (!authenticated || ignore) return;
 
         const response = await fetch(
-          `/api/admin/registrations?eventId=${encodeURIComponent(eventID)}&pageSize=100`,
+          `/api/admin/registrations?eventId=${encodeURIComponent(eventID)}&pageSize=2000`,
           { cache: "no-store" }
         );
 
@@ -891,12 +891,12 @@ export default function EventRegistrationsPage() {
               ""
           ),
           escapeCsv(
-            role === "master_admin"
+            role === "master"
               ? item.participant.email
               : maskEmail(item.participant.email)
           ),
           escapeCsv(
-            role === "master_admin"
+            role === "master"
               ? (item.participant.phone ?? "")
               : maskPhone(item.participant.phone)
           ),
@@ -970,7 +970,7 @@ export default function EventRegistrationsPage() {
 
     const csv = rows
       .map((row) => row.join(","))
-      .join("\n");
+      .join("\r\n");
 
     const blob = new Blob(
       [csv],
@@ -1182,9 +1182,9 @@ export default function EventRegistrationsPage() {
 
         <div className="mb-5 rounded-[24px] bg-white p-3 shadow-[0_15px_50px_rgba(0,0,0,0.035)] text-sm text-black/70">
 
-          <div className="flex flex-col gap-3 lg:flex-row">
+          <div className="flex flex-col gap-3 md:flex-row md:flex-wrap">
 
-            <div className="flex flex-1 items-center gap-3 rounded-full bg-black/[0.035] px-4">
+            <div className="flex flex-1 min-w-[250px] items-center gap-3 rounded-full bg-black/[0.035] px-4 py-3">
 
               <Search
                 size={15}

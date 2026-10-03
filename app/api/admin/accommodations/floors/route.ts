@@ -205,6 +205,13 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "Could not delete floor." }, { status: 500 });
     }
 
+    await supabaseAdmin.from("admin_audit_logs").insert({
+      admin_id: auth.user.id,
+      action_type: "DELETE_ACCOMMODATION_FLOOR",
+      target_id: id,
+      details: { deleted_at: new Date().toISOString() },
+    });
+
     return NextResponse.json({ success: true }, { status: 200 });
   } catch {
     return NextResponse.json({ error: "Internal Error" }, { status: 500 });

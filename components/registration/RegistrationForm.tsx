@@ -701,18 +701,23 @@ export default function RegistrationForm({
    * TOTAL PRICE
    */
   const totalPrice = useMemo(() => {
-    let accCost = 0;
+    let accommodationCostTotal = 0;
+    const accEmailsCharged = new Set<string>();
 
     // Main participant accommodation
     if (mainAccommodationSlug) {
       const plan = accommodationPlans.find((p) => p.slug === mainAccommodationSlug);
-      if (plan) accCost += plan.price;
+      if (plan) accommodationCostTotal += plan.price;
     }
 
     // Faculty accommodation
     if (facultyEnabled && facultyState.accommodationPlanSlug) {
       const plan = accommodationPlans.find((p) => p.slug === facultyState.accommodationPlanSlug);
-      if (plan) accCost += plan.price;
+      if (plan) {
+        accommodationCostTotal += plan.price;
+        const facEmail = facultyState.email.trim().toLowerCase();
+        if (facEmail) accEmailsCharged.add(facEmail);
+      }
     }
 
     // Team members accommodations
@@ -721,8 +726,15 @@ export default function RegistrationForm({
         const state = getTeamState(event.id);
         state.members.forEach((m) => {
           if (m.accommodationPlanSlug) {
-            const plan = accommodationPlans.find((p) => p.slug === m.accommodationPlanSlug);
-            if (plan) accCost += plan.price;
+            const memberEmail = m.email.trim().toLowerCase();
+            // Deduplicate accommodation charges for the same team member across multiple events
+            if (!memberEmail || !accEmailsCharged.has(memberEmail)) {
+              const plan = accommodationPlans.find((p) => p.slug === m.accommodationPlanSlug);
+              if (plan) {
+                accommodationCostTotal += plan.price;
+                if (memberEmail) accEmailsCharged.add(memberEmail);
+              }
+            }
           }
         });
       }
@@ -757,7 +769,7 @@ export default function RegistrationForm({
       return total + fee;
     }, 0);
     
-    return eventsCost + accCost;
+    return eventsCost + accommodationCostTotal;
   }, [selectedEvents, eventState, accommodationPlans, mainAccommodationSlug, getTeamState, facultyEnabled, facultyState]);
 
   /*

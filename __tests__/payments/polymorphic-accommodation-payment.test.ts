@@ -254,8 +254,8 @@ describe("Phase 1A: Accommodation Payment Architecture Foundation Invariants", (
     });
 
     it("C. Retrieves payment order for Free Event + Paid Accommodation (Case 3)", () => {
-      expect(registerRouteContent).toContain("rpcAccommodations.length > 0");
-      expect(registerRouteContent).toContain('.eq("item_type", "accommodation")');
+      expect(registerRouteContent).toContain("const returnedPaymentOrderId = results[0]?.payment_order_id;");
+      expect(registerRouteContent).toContain('.eq("id", returnedPaymentOrderId)');
       expect(registerRouteContent).toContain("totalAmount = Number(orderData.amount) || totalAmount");
     });
 

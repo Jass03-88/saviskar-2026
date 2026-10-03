@@ -588,7 +588,7 @@ export async function POST(
               state:
                 member.state,
               id_card_storage_path:
-                (member.idCardStoragePath && !member.idCardStoragePath.startsWith(`${session.email.toLowerCase()}/`)) 
+                (member.idCardStoragePath && (!session?.email || !member.idCardStoragePath.startsWith(`${session.email.toLowerCase()}/`)))
                   ? null 
                   : member.idCardStoragePath,
             })

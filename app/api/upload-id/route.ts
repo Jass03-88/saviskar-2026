@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     // Using standard Node crypto or Math.random as fallback if edge runtime doesn't have crypto.randomUUID
     const uniqueId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
     
-    const filename = `${session.email}/${uniqueId}.${ext}`;
+    const filename = `${session.email.toLowerCase()}/${uniqueId}.${ext}`;
 
     const { data, error } = await supabaseAdmin.storage
       .from("id_cards")

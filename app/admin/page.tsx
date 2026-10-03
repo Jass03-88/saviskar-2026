@@ -331,7 +331,7 @@ export default function AdminPage() {
     async function init() {
       try {
         const response = await fetch(
-          "/api/admin/registrations?pageSize=100",
+          "/api/admin/registrations?pageSize=2000",
           { cache: "no-store" }
         );
 
@@ -1162,9 +1162,9 @@ export default function AdminPage() {
           item.participant.college ??
           "",
 
-          role === "master_admin" ? item.participant.email : maskEmail(item.participant.email),
+          role === "master" ? item.participant.email : maskEmail(item.participant.email),
 
-          role === "master_admin" ? (item.participant.phone ?? "") : maskPhone(item.participant.phone),
+          role === "master" ? (item.participant.phone ?? "") : maskPhone(item.participant.phone),
 
           item.event?.name ??
           item.registration
@@ -1230,7 +1230,7 @@ export default function AdminPage() {
             .map(escapeCsv)
             .join(",")
         )
-        .join("\n");
+        .join("\r\n");
 
     const blob =
       new Blob([csv], {
@@ -1818,9 +1818,9 @@ export default function AdminPage() {
         {/* FILTERS */}
 
         <div className="mb-5 rounded-[24px] bg-white p-3 shadow-[0_15px_50px_rgba(0,0,0,0.035)]">
-          <div className="flex flex-col gap-3 lg:flex-row">
+          <div className="flex flex-col gap-3 md:flex-row md:flex-wrap">
 
-            <div className="flex flex-1 items-center gap-3 rounded-[18px] bg-black/[0.035] px-4 py-3">
+            <div className="flex flex-1 min-w-[250px] items-center gap-3 rounded-[18px] bg-black/[0.035] px-4 py-3">
               <Search
                 size={17}
                 className="text-black/30"

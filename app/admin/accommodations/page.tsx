@@ -15,6 +15,24 @@ import {
 } from "lucide-react";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 
+function maskEmail(email: string): string {
+  if (!email) return "";
+  const atIndex = email.indexOf("@");
+  if (atIndex <= 1) return `***${email.slice(atIndex)}`;
+  const local = email.slice(0, atIndex);
+  const domain = email.slice(atIndex);
+  return `${local[0]}***${local[local.length - 1]}${domain}`;
+}
+
+function maskPhone(phone: string | null | undefined): string {
+  if (!phone) return "";
+  const cleaned = phone.replace(/\s+/g, "");
+  if (cleaned.length >= 6) {
+    return `${cleaned.slice(0, 2)}*****${cleaned.slice(-2)}`;
+  }
+  return "***";
+}
+
 type HostelRecord = { id: string; name: string; gender_eligibility: string; is_active: boolean };
 type FloorRecord = { id: string; hostel_id: string; floor_number: number; name: string | null; is_active: boolean };
 type RoomRecord = { id: string; hostel_id: string; floor_id: string; room_number: string; capacity: number; is_active: boolean };
@@ -59,6 +77,7 @@ type DashboardData = {
   floorOccupancy: Record<string, number>;
   hostelOccupancy: Record<string, number>;
   stats: { total: number; paid: number; pending: number; cancelled: number; checkedIn?: number; checkedOut?: number; allocated?: number; awaitingAllocation?: number; totalCapacity?: number; occupiedCapacity?: number };
+  role?: string;
 };
 
 export default function AccommodationsAdmin() {
@@ -1193,7 +1212,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       return [
         acc.participants?.participant_id || "",
         `"${(acc.participants?.name || "").replace(/"/g, '""')}"`,
-        `"${(acc.participants?.email || "").replace(/"/g, '""')}"`,
+        `"${(data.role === "master_admin" || data.role === "master" ? acc.participants?.email || "" : maskEmail(acc.participants?.email || "")).replace(/"/g, '""')}"`,
         acc.participants?.gender || "",
         `"${(acc.participants?.state || "").replace(/"/g, '""')}"`,
         `"${(plan?.name || "").replace(/"/g, '""')}"`,
@@ -1382,7 +1401,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
                   <td className="py-4 pr-4 font-mono text-xs text-black/60">{acc.participants?.participant_id}</td>
                   <td className="py-4 px-4 font-medium text-black">
                     {acc.participants?.name}
-                    <div className="text-xs text-black/50 font-normal">{acc.participants?.email}</div>
+                    <div className="text-xs text-black/50 font-normal">{data?.role === "master_admin" ? acc.participants?.email : maskEmail(acc.participants?.email || "")}</div>
                   </td>
                   <td className="py-4 px-4 uppercase text-xs">
                     {acc.participants?.gender || "—"}<br/>
@@ -1797,7 +1816,7 @@ function StatCard({ title, value, icon, dark }: { title: string; value: string |
 // --- PHASE 3C REPORTING COMPONENTS --- //
 
 function exportCSV(filename: string, headers: string[], rows: (string|number)[][]) {
-  const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+  const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\r\n");
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1932,7 +1951,7 @@ function AllocationsReport({ data }: { data: DashboardData }) {
       const pl = data.plans.find(x => x.id === a.accommodation_plan_id);
       const status = a.room_id ? "ALLOCATED" : "AWAITING ALLOCATION";
       const occ = r ? data.roomOccupancy[r.id] || 0 : 0;
-      return [`"${(a.participants?.name||"").replace(/"/g, '""')}"`, a.participants?.gender||"", `"${(pl?.name||"").replace(/"/g, '""')}"`, `"${(h?.name||"").replace(/"/g, '""')}"`, f?.floor_number||"", `"${(r?.room_number||"").replace(/"/g, '""')}"`, r?.capacity||"", occ, status];
+      return [`"${(a.participants?.name||"").replace(/"/g, '""')}"`, a.participants?.gender||"", `"${(pl?.name||"").replace(/"/g, '""')}"`, `"${(h?.name||"").replace(/"/g, '""')}"`, f?.floor_number ?? "", `"${(r?.room_number||"").replace(/"/g, '""')}"`, r?.capacity||"", occ, status];
     });
     exportCSV("saviskar-accommodation-allocation.csv", headers, rows);
   };
@@ -2190,7 +2209,7 @@ function HistoryReport() {
       a.participant_id,
       `"${(a.participant_name || "").replace(/"/g, '""')}"`,
       `"${(a.hostel_name || "").replace(/"/g, '""')}"`,
-      a.floor_number || "",
+      a.floor_number ?? "",
       `"${(a.room_number || "").replace(/"/g, '""')}"`,
       a.previous_state || "",
       a.new_state || "",

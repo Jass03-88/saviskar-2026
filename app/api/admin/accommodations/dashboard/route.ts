@@ -198,6 +198,7 @@ export async function GET(request: Request) {
         page,
         pageSize,
         totalCount: count ?? 0,
+        role: auth.role,
       },
       {
         headers: { "Cache-Control": "no-store" },
