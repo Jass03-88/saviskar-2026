@@ -758,7 +758,7 @@ export default function RegistrationForm({
     }, 0);
     
     return eventsCost + accCost;
-  }, [selectedEvents, eventState, accommodationPlans, mainAccommodationSlug, getTeamState]);
+  }, [selectedEvents, eventState, accommodationPlans, mainAccommodationSlug, getTeamState, facultyEnabled, facultyState]);
 
   /*
    * SUBMIT
@@ -829,6 +829,12 @@ export default function RegistrationForm({
       if (facultyEnabled) {
         if (!facultyState.name.trim() || !facultyState.email.trim() || !facultyState.phone.trim() || !facultyState.gender || !facultyState.state.trim() || !facultyState.idCardStoragePath) {
           throw new ValidationError("Please complete all Faculty Incharge details (including ID card).");
+        }
+        if (facultyState.accommodationPlanSlug) {
+          accommodationsPayload.push({
+            email: facultyState.email.trim().toLowerCase(),
+            planSlug: facultyState.accommodationPlanSlug,
+          });
         }
       }
 

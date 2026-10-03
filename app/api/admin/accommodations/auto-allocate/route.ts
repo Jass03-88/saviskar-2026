@@ -214,6 +214,26 @@ export async function POST(request: Request) {
       pushResult("ALLOCATED", "ALLOCATED");
     }
 
+    if (auth.user?.id) {
+      const successfulAllocations = results.filter(r => r.status === "ALLOCATED");
+      if (successfulAllocations.length > 0) {
+        const auditLogs = successfulAllocations.map(r => ({
+          admin_id: auth.user!.id,
+          action_type: "ACCOMMODATION_AUTO_ALLOCATE",
+          target_id: r.participantAccommodationId,
+          details: {
+            reason: "Auto-allocated",
+          },
+        }));
+        
+        try {
+          await supabaseAdmin.from("admin_audit_logs").insert(auditLogs);
+        } catch (auditErr) {
+          console.error("Failed to write audit logs for auto-allocate:", auditErr);
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: { allocated, skipped, failed, results }

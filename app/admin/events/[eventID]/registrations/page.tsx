@@ -139,6 +139,24 @@ function paymentClass(value: string | null) {
   return "bg-black/[0.04] text-black/45 border-black/10";
 }
 
+function maskEmail(email: string): string {
+  if (!email) return "";
+  const atIndex = email.indexOf("@");
+  if (atIndex <= 1) return `***${email.slice(atIndex)}`;
+  const local = email.slice(0, atIndex);
+  const domain = email.slice(atIndex);
+  return `${local[0]}***${domain}`;
+}
+
+function maskPhone(phone: string | null | undefined): string {
+  if (!phone) return "";
+  const cleaned = phone.replace(/\s+/g, "");
+  if (cleaned.length >= 6) {
+    return `${cleaned.slice(0, 2)}*****${cleaned.slice(-2)}`;
+  }
+  return "******";
+}
+
 function escapeCsv(value: unknown) {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
@@ -873,11 +891,14 @@ export default function EventRegistrationsPage() {
               ""
           ),
           escapeCsv(
-            item.participant.email
+            role === "master_admin"
+              ? item.participant.email
+              : maskEmail(item.participant.email)
           ),
           escapeCsv(
-            item.participant.phone ??
-              ""
+            role === "master_admin"
+              ? (item.participant.phone ?? "")
+              : maskPhone(item.participant.phone)
           ),
           escapeCsv(
             item.registration
