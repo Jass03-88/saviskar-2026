@@ -1,0 +1,1 @@
+SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'auth' AND (column_name LIKE '%token%' OR column_name LIKE '%otp%' OR column_name LIKE '%code%');
