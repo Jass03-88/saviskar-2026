@@ -75,8 +75,8 @@ describe('Accommodation Dashboard API (Phase 2F)', () => {
     // 1 paid without room
     expect(json.stats.awaitingAllocation).toBe(1);
     
-    // Total 4 records
-    expect(json.stats.total).toBe(4);
+    // Total active records: 2 paid + 1 pending. Cancelled records are tracked separately.
+    expect(json.stats.total).toBe(3);
     
     expect(json.stats.paid).toBe(2);
     expect(json.stats.pending).toBe(1);
