@@ -196,13 +196,18 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("hostel_floors")
       .delete()
-      .eq("id", id);
+      .eq("id", id)
+      .select("id");
 
     if (error) {
       return NextResponse.json({ error: "Could not delete floor." }, { status: 500 });
+    }
+
+    if (!data || data.length === 0) {
+      return NextResponse.json({ error: "Floor not found or already deleted." }, { status: 404 });
     }
 
     await supabaseAdmin.from("admin_audit_logs").insert({

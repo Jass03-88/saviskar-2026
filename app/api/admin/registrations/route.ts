@@ -729,10 +729,17 @@ export async function DELETE(
 
       // 3. Prevent Orphaned Accommodation Bookings
       // Check if participant has any other remaining events
-      const { count: remainingCount } = await supabaseAdmin
+      const { count: remainingCount, error: countError } = await supabaseAdmin
         .from("participant_events")
         .select("*", { count: "exact", head: true })
         .eq("participant_id", participantId);
+
+      if (countError || remainingCount === null) {
+        return NextResponse.json(
+          { error: "Failed to verify remaining events. Aborting accommodation cleanup for safety." },
+          { status: 500 }
+        );
+      }
 
       // ONLY affect accommodation when the participant is completely dropping out (0 remaining events).
       // This protects multi-event participants: deleting Event A while Event B exists won't touch accommodation.

@@ -52,24 +52,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: { code, message: error.message } }, { status });
     }
 
+    let auditSuccess = true;
     if (auth.user?.id) {
-      try {
-        await supabaseAdmin.from("admin_audit_logs").insert({
-          admin_id: auth.user.id,
-          action_type: "ACCOMMODATION_ALLOCATE",
-          target_id: participantAccommodationId,
-          details: {
-            hostel_id: hostelId,
-            room_id: roomId,
-            reason: reason || null,
-          },
-        });
-      } catch (auditErr) {
+      const { error: auditErr } = await supabaseAdmin.from("admin_audit_logs").insert({
+        admin_id: auth.user.id,
+        action_type: "ACCOMMODATION_ALLOCATE",
+        target_id: participantAccommodationId,
+        details: {
+          hostel_id: hostelId,
+          room_id: roomId,
+          reason: reason || null,
+        },
+      });
+      
+      if (auditErr) {
         console.error("Failed to write audit log for allocate:", auditErr);
+        auditSuccess = false;
       }
     }
 
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({ success: true, data, auditSuccess });
 
   } catch (err: any) {
     console.error("ALLOCATE ERROR:", err);

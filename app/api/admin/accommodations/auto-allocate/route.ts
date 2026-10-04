@@ -214,6 +214,7 @@ export async function POST(request: Request) {
       pushResult("ALLOCATED", "ALLOCATED");
     }
 
+    let auditSuccess = true;
     if (auth.user?.id) {
       const successfulAllocations = results.filter(r => r.status === "ALLOCATED");
       if (successfulAllocations.length > 0) {
@@ -226,16 +227,17 @@ export async function POST(request: Request) {
           },
         }));
         
-        try {
-          await supabaseAdmin.from("admin_audit_logs").insert(auditLogs);
-        } catch (auditErr) {
+        const { error: auditErr } = await supabaseAdmin.from("admin_audit_logs").insert(auditLogs);
+        if (auditErr) {
           console.error("Failed to write audit logs for auto-allocate:", auditErr);
+          auditSuccess = false;
         }
       }
     }
 
     return NextResponse.json({
       success: true,
+      auditSuccess,
       data: { allocated, skipped, failed, results }
     });
 
