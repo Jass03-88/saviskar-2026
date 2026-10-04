@@ -171,7 +171,7 @@ describe("Canonical Payment Callback URL & Resume Destination Hardening", () => 
       const resBad = getCanonicalPaymentBaseUrl();
       expect(resBad.success).toBe(true);
       if (resBad.success) {
-        expect(resBad.origin).toBe("https://saviskar-26.vercel.app");
+        expect(resBad.origin).toBe("https://saviskar.co.in");
       }
     });
 
@@ -336,7 +336,7 @@ describe("Canonical Payment Callback URL & Resume Destination Hardening", () => 
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.success).toBe(true);
-      expect(data.checkoutConfig.options.surl).toBe("https://saviskar-26.vercel.app/api/payments/payu/success");
+      expect(data.checkoutConfig.options.surl).toBe("https://saviskar.co.in/api/payments/payu/success");
     });
   });
 
@@ -404,7 +404,7 @@ describe("Canonical Payment Callback URL & Resume Destination Hardening", () => 
       const redirectUrl = new URL(res.headers.get("location")!);
 
       // Must never send attendee to dead tunnel:
-      expect(redirectUrl.origin).toBe("https://saviskar-26.vercel.app");
+      expect(redirectUrl.origin).toBe("https://saviskar.co.in");
       expect(redirectUrl.origin).not.toContain("trycloudflare.com");
     });
   });
