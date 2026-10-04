@@ -45,6 +45,7 @@ type ParticipantDetails = {
   phone: string;
   gender: string;
   state: string;
+  is_faculty?: boolean;
 };
 
 type AccommodationRecord = {
@@ -76,7 +77,7 @@ type DashboardData = {
   roomOccupancy: Record<string, number>;
   floorOccupancy: Record<string, number>;
   hostelOccupancy: Record<string, number>;
-  stats: { total: number; paid: number; pending: number; cancelled: number; checkedIn?: number; checkedOut?: number; allocated?: number; awaitingAllocation?: number; totalCapacity?: number; occupiedCapacity?: number };
+  stats: { total: number; paid: number; pending: number; cancelled: number; checkedIn?: number; checkedOut?: number; allocated?: number; awaitingAllocation?: number; totalCapacity?: number; occupiedCapacity?: number; participants?: number; faculty?: number };
   role?: string;
 };
 
@@ -283,7 +284,19 @@ export default function AccommodationsAdmin() {
         {tab === "overview" && data && (
           <div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 mb-8">
-              <StatCard title="Total Bookings" value={data.stats.total.toString()} icon={<Users size={18} />} dark />
+              <StatCard 
+                title="Total Bookings" 
+                value={
+                  <div className="flex flex-col">
+                    <span>{data.stats.total}</span>
+                    <span className="text-[10px] uppercase tracking-wider text-white/50 font-medium mt-1">
+                      Participants: {data.stats.participants ?? data.accommodations.filter((a: any) => a.status !== "cancelled" && a.status !== "failed" && !a.participants?.is_faculty).length} &nbsp;|&nbsp; Faculty: {data.stats.faculty ?? data.accommodations.filter((a: any) => a.status !== "cancelled" && a.status !== "failed" && a.participants?.is_faculty).length}
+                    </span>
+                  </div>
+                }
+                icon={<Users size={18} />} 
+                dark 
+              />
               <StatCard title="Paid" value={data.stats.paid.toString()} icon={<CheckCircle2 size={18} />} />
               <StatCard title="Pending" value={data.stats.pending.toString()} icon={<RefreshCw size={18} />} />
               <StatCard title="Cancelled" value={data.stats.cancelled.toString()} icon={<XCircle size={18} />} />
@@ -1023,6 +1036,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState(initialFilters.status || "all");
   const [filterGender, setFilterGender] = useState("all");
+  const [filterType, setFilterType] = useState("all");
   const [filterState, setFilterState] = useState("all");
   const [filterCheckIn, setFilterCheckIn] = useState(initialFilters.checkIn || "all");
   useEffect(() => {
@@ -1063,8 +1077,9 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
         p.participant_id?.toLowerCase().includes(q) ||
         room?.room_number?.toLowerCase().includes(q) ||
         hostel?.name?.toLowerCase().includes(q);
-      
-      const matchesStatus = filterStatus === "all" || acc.status === filterStatus;
+      const matchesStatus = filterStatus === "all" 
+        ? (acc.status !== "cancelled" && acc.status !== "failed")
+        : acc.status === filterStatus;
       const matchesGender = filterGender === "all" || p.gender === filterGender;
       const matchesState = filterState === "all" || p.state === filterState;
       
@@ -1083,10 +1098,11 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
 
       const matchesHostel = filterHostel === "all" || acc.hostel_id === filterHostel;
       const matchesRoom = filterRoom === "all" || acc.room_id === filterRoom;
+      const matchesType = filterType === "all" || (filterType === "faculty" ? !!p.is_faculty : !p.is_faculty);
 
-      return matchesSearch && matchesStatus && matchesGender && matchesState && matchesCheckIn && matchesHostel && matchesRoom;
+      return matchesSearch && matchesStatus && matchesGender && matchesState && matchesCheckIn && matchesHostel && matchesRoom && matchesType;
     });
-  }, [data, search, filterStatus, filterGender, filterState, filterCheckIn, filterHostel, filterRoom]);
+  }, [data, search, filterStatus, filterGender, filterType, filterState, filterCheckIn, filterHostel, filterRoom]);
 
   const toggleSelection = (id: string) => {
     const next = new Set(selectedIds);
@@ -1196,7 +1212,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       return;
     }
     const headers = [
-      "Participant ID", "Participant Name", "Email", "Gender", "State", 
+      "Participant ID", "Participant Name", "Type", "Email", "Gender", "State", 
       "Accommodation Plan", "Duration (Days)", "Amount", "Currency", 
       "Payment Status", "Accommodation Status", "Hostel", "Floor", "Room",
       "Allocation Status", "Checked In", "Checked In At", "Checked Out", "Checked Out At"
@@ -1212,6 +1228,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       return [
         acc.participants?.participant_id || "",
         `"${(acc.participants?.name || "").replace(/"/g, '""')}"`,
+        acc.participants?.is_faculty ? "Faculty" : "Participant",
         `"${(data.role === "master" ? acc.participants?.email || "" : maskEmail(acc.participants?.email || "")).replace(/"/g, '""')}"`,
         acc.participants?.gender || "",
         `"${(acc.participants?.state || "").replace(/"/g, '""')}"`,
@@ -1253,11 +1270,12 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
           value={search} onChange={e => setSearch(e.target.value)}
         />
         <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-          <option value="all">All Payment Status</option>
+          <option value="all">Active Only</option>
           <option value="paid">Paid</option>
           <option value="pending">Pending</option>
           <option value="unpaid">Unpaid</option>
           <option value="cancelled">Cancelled</option>
+          <option value="failed">Failed</option>
         </select>
         <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterCheckIn} onChange={e => setFilterCheckIn(e.target.value)}>
           <option value="all">All Lifecycle</option>
@@ -1266,6 +1284,11 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
           <option value="not_checked_in">Not Checked In</option>
           <option value="checked_in">Checked In</option>
           <option value="checked_out">Checked Out</option>
+        </select>
+        <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterType} onChange={e => setFilterType(e.target.value)}>
+          <option value="all">All Types</option>
+          <option value="participant">Participant</option>
+          <option value="faculty">Faculty</option>
         </select>
         <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterGender} onChange={e => setFilterGender(e.target.value)}>
           <option value="all">All Genders</option>
@@ -1371,6 +1394,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
               </th>
               <th className="pb-3 pr-4 font-semibold">ID</th>
               <th className="pb-3 px-4 font-semibold">Participant</th>
+              <th className="pb-3 px-4 font-semibold">Type</th>
               <th className="pb-3 px-4 font-semibold">Gender/State</th>
               <th className="pb-3 px-4 font-semibold">Plan</th>
               <th className="pb-3 px-4 font-semibold">Payment</th>
@@ -1402,6 +1426,17 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
                   <td className="py-4 px-4 font-medium text-black">
                     {acc.participants?.name}
                     <div className="text-xs text-black/50 font-normal">{data?.role === "master" ? acc.participants?.email : maskEmail(acc.participants?.email || "")}</div>
+                  </td>
+                  <td className="py-4 px-4 font-medium text-black">
+                    {acc.participants?.is_faculty ? (
+                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-orange-50 text-orange-700 border border-orange-200">
+                        Faculty
+                      </span>
+                    ) : (
+                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                        Participant
+                      </span>
+                    )}
                   </td>
                   <td className="py-4 px-4 uppercase text-xs">
                     {acc.participants?.gender || "—"}<br/>
@@ -1796,7 +1831,7 @@ function HistoryModal({ acc, onClose }: { acc: AccommodationRecord; onClose: () 
   );
 }
 
-function StatCard({ title, value, icon, dark }: { title: string; value: string | number; icon: React.ReactNode; dark?: boolean }) {
+function StatCard({ title, value, icon, dark }: { title: string; value: React.ReactNode; icon: React.ReactNode; dark?: boolean }) {
   return (
     <div className={`rounded-[28px] p-7 ${dark ? "bg-black text-white" : "bg-white border border-black/5 shadow-sm"}`}>
       <div className={`flex h-10 w-10 items-center justify-center rounded-full ${dark ? "bg-white/10" : "bg-black/[0.04]"}`}>
@@ -1805,9 +1840,9 @@ function StatCard({ title, value, icon, dark }: { title: string; value: string |
       <p className={`mt-7 text-[9px] font-semibold uppercase tracking-[0.2em] ${dark ? "text-white/40" : "text-black/35"}`}>
         {title}
       </p>
-      <p className={`mt-2 text-4xl font-semibold tracking-[-0.05em] ${dark ? "text-white" : "text-black"}`}>
+      <div className={`mt-2 text-4xl font-semibold tracking-[-0.05em] ${dark ? "text-white" : "text-black"}`}>
         {value}
-      </p>
+      </div>
     </div>
   );
 }

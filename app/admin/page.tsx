@@ -28,6 +28,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { INDIAN_STATES_AND_UT } from "@/lib/states";
 
 /* =========================================================
    TYPES
@@ -41,6 +42,9 @@ type Participant = {
   email: string;
   phone: string | null;
   photo_url: string | null;
+  gender?: string | null;
+  state?: string | null;
+  id_card_storage_path?: string | null;
   created_at: string;
 };
 
@@ -90,6 +94,16 @@ type Registration = {
   event: EventRecord | null;
   registration: ParticipantEvent;
   members?: RegistrationMember[];
+  faculty?: {
+    id: string;
+    name: string;
+    email: string;
+    phone: string | null;
+    college: string | null;
+    gender?: string | null;
+    state?: string | null;
+    id_card_storage_path?: string | null;
+  } | null;
   payment_order?: {
     id: string;
     order_reference: string;
@@ -201,6 +215,8 @@ export default function AdminPage() {
   const [role, setRole] =
     useState<AdminRole | null>(null);
 
+  const [adminIdentity, setAdminIdentity] = useState<{name: string | null, email: string | null, isPrimary: boolean} | null>(null);
+
   const [accommodationAccess, setAccommodationAccess] =
     useState<boolean>(false);
 
@@ -225,6 +241,8 @@ export default function AdminPage() {
   const [archiveFilter, setArchiveFilter] =
     useState<ArchiveFilter>("active");
 
+  const [filterState, setFilterState] = useState<string>("all");
+
   const [exceptionFilter, setExceptionFilter] =
     useState<"all" | "payment_failed" | "payment_pending" | "paid_not_checked_in" | "main_checked_in_only" | "registered_unpaid">("all");
 
@@ -242,6 +260,31 @@ export default function AdminPage() {
 
   const [deletingId, setDeletingId] =
     useState<string | null>(null);
+
+  const [viewDocumentUrl, setViewDocumentUrl] = useState<string | null>(null);
+  const [documentLoading, setDocumentLoading] = useState(false);
+  const [documentError, setDocumentError] = useState<string | null>(null);
+
+  async function handleViewDocument(path: string | null | undefined) {
+    if (!path) return;
+    setDocumentLoading(true);
+    setDocumentError(null);
+    setViewDocumentUrl(null);
+    try {
+      const res = await fetch("/api/admin/documents/signed-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to load document");
+      setViewDocumentUrl(json.signedUrl);
+    } catch (e: any) {
+      setDocumentError(e.message || "Document not available");
+    } finally {
+      setDocumentLoading(false);
+    }
+  }
 
   const [serverTotal, setServerTotal] = useState<number | null>(null);
 
@@ -275,6 +318,9 @@ export default function AdminPage() {
             registrations?: Registration[];
             events?: EventRecord[];
             role?: AdminRole;
+            adminEmail?: string | null;
+            adminName?: string | null;
+            isPrimary?: boolean;
             accommodation_access?: boolean;
             total?: number;
             error?: string;
@@ -299,6 +345,7 @@ export default function AdminPage() {
         );
         if (payload.role) {
           setRole(payload.role);
+          setAdminIdentity({ name: payload.adminName || null, email: payload.adminEmail || null, isPrimary: !!payload.isPrimary });
         }
         if (typeof payload.accommodation_access === "boolean") {
           setAccommodationAccess(payload.accommodation_access);
@@ -348,6 +395,9 @@ export default function AdminPage() {
             registrations?: Registration[];
             events?: EventRecord[];
             role?: AdminRole;
+            adminEmail?: string | null;
+            adminName?: string | null;
+            isPrimary?: boolean;
             accommodation_access?: boolean;
             total?: number;
             error?: string;
@@ -372,6 +422,7 @@ export default function AdminPage() {
           );
           if (payload.role) {
             setRole(payload.role);
+            setAdminIdentity({ name: payload.adminName || null, email: payload.adminEmail || null, isPrimary: !!payload.isPrimary });
           }
           if (typeof payload.accommodation_access === "boolean") {
             setAccommodationAccess(payload.accommodation_access);
@@ -532,6 +583,8 @@ export default function AdminPage() {
             matchesEvent = matchesEvent && item.registration.event_id === eventFilter;
           }
 
+          const matchesState = filterState === "all" || participant.state === filterState;
+
           const matchesStatus =
             statusFilter === "all" ||
             (statusFilter ===
@@ -570,6 +623,7 @@ export default function AdminPage() {
           return (
             matchesSearch &&
             matchesEvent &&
+            matchesState &&
             matchesStatus &&
             matchesPayment &&
             matchesArchive &&
@@ -586,6 +640,7 @@ export default function AdminPage() {
       paymentFilter,
       archiveFilter,
       exceptionFilter,
+      filterState,
     ]);
 
   /* =======================================================
@@ -1269,7 +1324,7 @@ export default function AdminPage() {
 
         {/* HEADER */}
 
-        <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
               Saviskar 2026
@@ -1283,6 +1338,20 @@ export default function AdminPage() {
               Manage registrations and participant entry.
             </p>
           </div>
+
+          {adminIdentity && (
+            <div className="flex flex-col items-end mb-4 md:mb-0 bg-white p-4 rounded-[20px] border border-black/10 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wider text-black/40">
+                Logged in as
+              </div>
+              <div className="text-lg font-bold text-black mt-1">
+                {adminIdentity.name || adminIdentity.email}
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 bg-black/5 border border-black/10 rounded-full text-black/60 mt-2">
+                {adminIdentity.isPrimary ? "Primary Master Admin" : role === "master" ? "Master Admin" : "Admin"}
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-3">
 
@@ -1939,6 +2008,17 @@ export default function AdminPage() {
             </select>
 
             <select
+              value={filterState}
+              onChange={(e) => setFilterState(e.target.value)}
+              className="rounded-[18px] border border-black/10 bg-black px-4 py-3 text-sm outline-none"
+            >
+              <option value="all">All States</option>
+              {INDIAN_STATES_AND_UT.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+
+            <select
               value={paymentFilter}
               onChange={(e) =>
                 setPaymentFilter(
@@ -2392,6 +2472,73 @@ export default function AdminPage() {
                 </div>
               </div>
 
+              {/* PERSONAL DETAILS */}
+              <div className="mt-7">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30 mb-2">Personal Details</p>
+                <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black grid grid-cols-2 gap-3">
+                  <SmallDetail label="Gender" value={selectedParticipant.gender ?? "No gender specified"} />
+                  <SmallDetail label="State" value={selectedParticipant.state ?? "No state specified"} />
+                </div>
+              </div>
+
+              {/* DOCUMENTS */}
+              {(selectedParticipant.photo_url || selectedParticipant.id_card_storage_path) && (
+                <div className="mt-7">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30 mb-2">Documents</p>
+                  <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black">
+                      {selectedParticipant.photo_url && (
+                        <div>
+                          <p className="text-xs font-medium mb-1">Participant Photograph</p>
+                          <a href={selectedParticipant.photo_url} target="_blank" rel="noreferrer" className="inline-block text-xs bg-black text-white rounded-full px-4 py-2 hover:bg-black/80 font-semibold transition">
+                            View Participant Photograph
+                          </a>
+                        </div>
+                      )}
+                      {selectedParticipant.id_card_storage_path && (
+                        <div>
+                          <p className="text-xs font-medium mb-1 mt-3">Participant ID Card</p>
+                          <button onClick={() => handleViewDocument(selectedParticipant.id_card_storage_path)} className="text-xs border border-black/10 bg-white text-black hover:bg-black/5 rounded-full px-4 py-2 font-semibold transition" disabled={documentLoading}>
+                            {documentLoading ? "Loading..." : "View Participant ID Card"}
+                          </button>
+                        </div>
+                      )}
+                    {documentError && <p className="text-red-500 mt-2 text-xs font-medium">{documentError}</p>}
+                    {viewDocumentUrl && (
+                      <div className="mt-4 border border-black/10 rounded-2xl overflow-hidden relative bg-black/5" style={{ height: "200px" }}>
+                        <Image src={viewDocumentUrl} alt="Document preview" fill className="object-contain" unoptimized />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* FACULTY */}
+              <div className="mt-7">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30 mb-2">Faculty In-Charge</p>
+                {selectedParticipantEvents[0]?.faculty ? (
+                  <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <SmallDetail label="Name" value={selectedParticipantEvents[0].faculty.name} />
+                      <SmallDetail label="Email" value={selectedParticipantEvents[0].faculty.email} className="truncate" />
+                      <SmallDetail label="Phone" value={selectedParticipantEvents[0].faculty.phone ?? "No phone"} />
+                      <SmallDetail label="College / Institution" value={selectedParticipantEvents[0].faculty.college ?? "No college"} />
+                    </div>
+                    {selectedParticipantEvents[0].faculty.id_card_storage_path && (
+                      <div className="pt-3 border-t border-black/10 mt-2">
+                        <p className="text-xs font-medium mb-2">Faculty ID Card</p>
+                        <button onClick={() => handleViewDocument(selectedParticipantEvents[0].faculty!.id_card_storage_path)} className="text-xs border border-black/10 bg-white text-black hover:bg-black/5 rounded-full px-4 py-2 font-semibold transition w-full" disabled={documentLoading}>
+                          {documentLoading ? "Loading..." : "View Faculty ID Card"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-[24px] border border-black/10 bg-black/5 p-5 text-black/50 text-sm font-medium text-center">
+                    No Faculty Information
+                  </div>
+                )}
+              </div>
+
               {/* EVENT REGISTRATIONS */}
 
               <div className="mt-7">
@@ -2761,12 +2908,12 @@ function StatCard({
         {title}
       </p>
 
-      <p
+      <div
         className={`mt-2 text-4xl font-semibold tracking-[-0.05em] ${dark ? "text-white" : "text-black"
           }`}
       >
         {value}
-      </p>
+      </div>
     </div>
   );
 }

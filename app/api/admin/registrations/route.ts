@@ -32,6 +32,7 @@ type ParticipantEvent = {
   main_checked_in: boolean | null;
   main_checked_in_at: string | null;
   is_archived: boolean | null;
+  registration_group_id: string | null;
   created_at: string;
 };
 
@@ -182,7 +183,7 @@ export async function GET(request: Request) {
     peQuery = supabaseAdmin
       .from("participant_events")
       .select(
-        "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at",
+        "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, registration_group_id, is_archived, created_at",
         { count: "exact" }
       );
       
@@ -226,7 +227,7 @@ export async function GET(request: Request) {
       ? supabaseAdmin
           .from("participants")
           .select(
-            "id, participant_id, name, college, email, phone, photo_url, created_at"
+            "id, participant_id, name, college, email, phone, photo_url, gender, state, id_card_storage_path, created_at"
           )
           .in("id", participantIds)
       : Promise.resolve({ data: [], error: null }),
@@ -257,11 +258,25 @@ export async function GET(request: Request) {
       : Promise.resolve({ data: [], error: null }),
   ]);
 
+  const registrationGroupIds = Array.from(
+    new Set(participantEvents.map((pe) => pe.registration_group_id).filter(Boolean))
+  );
+
+  const [facultyResult] = await Promise.all([
+    registrationGroupIds.length > 0
+      ? supabaseAdmin
+          .from("faculty_incharges")
+          .select("registration_group_id, participants(id, name, email, phone, college, gender, state, id_card_storage_path)")
+          .in("registration_group_id", registrationGroupIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
   const queryError =
     participantsResult.error ??
     eventsResult.error ??
     membersResult.error ??
-    paymentOrdersResult.error;
+    paymentOrdersResult.error ??
+    facultyResult.error;
 
   if (queryError) {
     console.error(
@@ -376,6 +391,15 @@ export async function GET(request: Request) {
     );
   });
 
+  const facultyByGroupId = new Map<string, any>();
+  if (facultyResult.data) {
+    for (const f of facultyResult.data) {
+      if (f.registration_group_id && f.participants) {
+        facultyByGroupId.set(f.registration_group_id, f.participants);
+      }
+    }
+  }
+
   const registrations =
     participantEvents.flatMap(
       (registration) => {
@@ -401,6 +425,8 @@ export async function GET(request: Request) {
                 paymentOrdersByRegistration.get(
                   registration.id
                 ) ?? null,
+              faculty:
+                (registration.registration_group_id && facultyByGroupId.get(registration.registration_group_id)) || null,
             },
           ]
           : [];
@@ -412,6 +438,9 @@ export async function GET(request: Request) {
       registrations,
       events,
       role: auth.role,
+      adminEmail: auth.user?.email || null,
+      adminName: auth.user?.user_metadata?.full_name || null,
+      isPrimary: auth.user?.id === process.env.PRIMARY_ADMIN_USER_ID,
       accommodation_access: auth.accommodation_access,
       total: totalCount ?? 0,
       page,
@@ -600,6 +629,73 @@ export async function DELETE(
     );
   }
 
+  // Pre-fetch participant and payment info before deletion to handle accommodation lifecycles safely
+  let participantId: string | null = null;
+  let registrationGroupId: string | null = null;
+  let allPaymentOrderIds: string[] = [];
+  let pendingPaymentOrderIds: string[] = [];
+  // Pre-fetch the participant's active accommodations directly (covers free-event + accommodation checkout)
+  let preDeleteAccommodations: { id: string; status: string; payment_order_id: string | null }[] = [];
+
+  if (permanent) {
+    const { data: eventData } = await supabaseAdmin
+      .from("participant_events")
+      .select("participant_id, registration_group_id")
+      .eq("id", participantEventId)
+      .single();
+    
+    if (eventData) {
+      participantId = eventData.participant_id;
+      registrationGroupId = eventData.registration_group_id;
+
+      // Strategy A: Find payment orders via event-type payment_order_items (works for paid events)
+      const { data: eventItems } = await supabaseAdmin
+        .from("payment_order_items")
+        .select("payment_order_id, payment_orders!inner(status)")
+        .eq("participant_event_id", participantEventId);
+
+      const eventPaymentOrderIds = eventItems?.map((i: any) => i.payment_order_id).filter(Boolean) || [];
+
+      // Strategy B: Also fetch the participant's non-cancelled accommodations directly.
+      // This covers the free-event case where the accommodation payment_order_item
+      // has participant_event_id=NULL (only participant_accommodation_id is set).
+      const { data: accRows } = await supabaseAdmin
+        .from("participant_accommodations")
+        .select("id, status, payment_order_id")
+        .eq("participant_id", participantId)
+        .not("status", "in", "(cancelled,failed)");
+
+      preDeleteAccommodations = (accRows || []) as typeof preDeleteAccommodations;
+
+      // Collect ALL payment_order_ids from both event items and accommodation rows
+      const accPaymentOrderIds = preDeleteAccommodations
+        .map((a) => a.payment_order_id)
+        .filter(Boolean) as string[];
+
+      allPaymentOrderIds = Array.from(new Set([...eventPaymentOrderIds, ...accPaymentOrderIds]));
+
+      // For pending PO cleanup: merge payment order statuses from both sources
+      const paidEventPOIds = new Set(
+        eventItems?.filter((i: any) => i.payment_orders.status === "paid")
+          .map((i: any) => i.payment_order_id) || []
+      );
+
+      // Check accommodation payment orders' statuses
+      const accPOsToCheck = accPaymentOrderIds.filter((id) => !paidEventPOIds.has(id));
+      if (accPOsToCheck.length > 0) {
+        const { data: accPOs } = await supabaseAdmin
+          .from("payment_orders")
+          .select("id, status")
+          .in("id", accPOsToCheck);
+        for (const po of (accPOs || [])) {
+          if (po.status === "paid") paidEventPOIds.add(po.id);
+        }
+      }
+
+      pendingPaymentOrderIds = allPaymentOrderIds.filter((id) => !paidEventPOIds.has(id));
+    }
+  }
+
   let error;
 
   if (permanent) {
@@ -608,6 +704,59 @@ export async function DELETE(
       p_admin_id: auth.user.id,
     });
     error = res.error;
+
+    if (!error && participantId) {
+      // 1. Identify registration-bound accommodations from pre-fetched data.
+      // We use pre-fetched data because AFTER deletion, ON DELETE SET NULL may have
+      // cleared payment_order_items.participant_event_id, breaking post-hoc lineage queries.
+      // Only affect accommodations whose payment_order_id is in allPaymentOrderIds
+      // (proving they were co-created in the same checkout session).
+      const linkedAccs = preDeleteAccommodations.filter(
+        (a) => a.payment_order_id && allPaymentOrderIds.includes(a.payment_order_id)
+      );
+      
+      const unpaidAccIds = linkedAccs.filter((a) => a.status !== "paid").map((a) => a.id);
+      const paidAccIds = linkedAccs.filter((a) => a.status === "paid").map((a) => a.id);
+
+      // 2. Delete entirely any pending payment orders that were mathematically invalidated by this deletion.
+      for (const poId of pendingPaymentOrderIds) {
+        await supabaseAdmin
+          .from("payment_orders")
+          .delete()
+          .eq("id", poId)
+          .neq("status", "paid");
+      }
+
+      // 3. Prevent Orphaned Accommodation Bookings
+      // Check if participant has any other remaining events
+      const { count: remainingCount } = await supabaseAdmin
+        .from("participant_events")
+        .select("*", { count: "exact", head: true })
+        .eq("participant_id", participantId);
+
+      // ONLY affect accommodation when the participant is completely dropping out (0 remaining events).
+      // This protects multi-event participants: deleting Event A while Event B exists won't touch accommodation.
+      if (remainingCount === 0) {
+        if (unpaidAccIds.length > 0) {
+          // Unpaid/pending accommodations from the checkout can be safely deleted
+          await supabaseAdmin
+            .from("participant_accommodations")
+            .delete()
+            .in("id", unpaidAccIds)
+            .neq("status", "paid");
+        }
+
+        if (paidAccIds.length > 0) {
+          // Paid accommodations must NOT be deleted. Transition them safely to 'cancelled'
+          // so financial history is preserved, but they no longer block re-registration.
+          await supabaseAdmin
+            .from("participant_accommodations")
+            .update({ status: "cancelled" })
+            .in("id", paidAccIds)
+            .eq("status", "paid");
+        }
+      }
+    }
   } else {
     const res = await supabaseAdmin
       .from("participant_events")
