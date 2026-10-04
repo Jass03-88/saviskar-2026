@@ -1212,7 +1212,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       return [
         acc.participants?.participant_id || "",
         `"${(acc.participants?.name || "").replace(/"/g, '""')}"`,
-        `"${(data.role === "master_admin" || data.role === "master" ? acc.participants?.email || "" : maskEmail(acc.participants?.email || "")).replace(/"/g, '""')}"`,
+        `"${(data.role === "master" ? acc.participants?.email || "" : maskEmail(acc.participants?.email || "")).replace(/"/g, '""')}"`,
         acc.participants?.gender || "",
         `"${(acc.participants?.state || "").replace(/"/g, '""')}"`,
         `"${(plan?.name || "").replace(/"/g, '""')}"`,
@@ -1401,7 +1401,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
                   <td className="py-4 pr-4 font-mono text-xs text-black/60">{acc.participants?.participant_id}</td>
                   <td className="py-4 px-4 font-medium text-black">
                     {acc.participants?.name}
-                    <div className="text-xs text-black/50 font-normal">{data?.role === "master_admin" ? acc.participants?.email : maskEmail(acc.participants?.email || "")}</div>
+                    <div className="text-xs text-black/50 font-normal">{data?.role === "master" ? acc.participants?.email : maskEmail(acc.participants?.email || "")}</div>
                   </td>
                   <td className="py-4 px-4 uppercase text-xs">
                     {acc.participants?.gender || "—"}<br/>
