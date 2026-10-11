@@ -12,7 +12,7 @@ function makeThenableChain(maybySingleOverride?: () => Promise<{ data: unknown; 
   }
   const chain: Record<string, unknown> = {
     then, catch: () => chain, finally: () => chain, select: () => chain, eq: () => chain,
-    in: () => chain, not: () => chain, is: () => chain, or: () => chain, limit: () => chain,
+    in: () => chain, not: () => chain, is: () => chain, or: () => chain, limit: () => chain, neq: () => chain,
     order: () => chain, update: () => chain, insert: () => chain, upsert: () => chain,
     delete: () => chain, maybeSingle: terminalFn, single: terminalFn,
   };

@@ -229,148 +229,71 @@ export async function POST(
       return new Response("Currency mismatch.", { status: 400 });
     }
 
-    // ─── Database-Enforced Idempotency Claim ─────────────────
-    const { data: eventClaim, error: claimError } = await supabaseAdmin
-      .from("processed_payment_events")
-      .insert({
-        order_id: paymentOrder.id,
-        payment_id: event.gatewayPaymentId,
-        event_type: "payment.captured",
-      })
-      .select("id")
-      .maybeSingle();
+    // ─── Execute Atomic Settlement RPC ────────────────────────
+    const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc("process_payment_success", {
+      p_gateway_order_id: event.gatewayOrderId,
+      p_gateway_payment_id: event.gatewayPaymentId,
+      p_amount_paise: capturedAmount,
+      p_currency: capturedCurrency || "INR",
+      p_gateway_name: gateway.name,
+    });
 
-    // Explicitly check for Postgres error code 23505 (unique_violation)
-    const isDuplicate =
-      claimError?.code === "23505" ||
-      (!claimError && !eventClaim);
+    if (rpcError) {
+      console.error("Webhook DB error executing settlement RPC:", rpcError);
 
-    if (claimError && !isDuplicate) {
-      console.error("Webhook DB error claiming payment event:", claimError);
-      return new Response("Database error recording payment claim", { status: 500 });
+      // Capability Gate: Fail closed if RPC is missing or unavailable
+      if (
+        rpcError.code === "PGRST202" || 
+        rpcError.code === "42883" || 
+        (rpcError.message && rpcError.message.includes("does not exist"))
+      ) {
+        console.warn("Capability Gate: Atomic settlement RPC not available. Failing closed to allow PayU retry.");
+        return new Response("Service temporarily unavailable during upgrade", { status: 503 });
+      }
+
+      return new Response("Database error recording payment", { status: 500 });
     }
 
-    if (isDuplicate) {
-      console.log(
-        `[WEBHOOK IDEMPOTENCY] Event already processed for payment ${event.gatewayPaymentId}. Skipping duplicate execution.`
-      );
+    if (rpcData && !rpcData.success) {
+      console.error("Webhook settlement RPC failed:", rpcData.error);
+      return new Response(rpcData.error || "Settlement failed", { status: 400 });
+    }
+
+    if (rpcData?.action === "already_processed" || rpcData?.action === "already_paid" || rpcData?.action === "already_refunded") {
+      console.log(`[WEBHOOK IDEMPOTENCY] Event already processed for payment ${event.gatewayPaymentId}. Skipping duplicate execution.`);
       return new Response("OK", { status: 200 });
     }
 
-    // Update payment_orders
-    await supabaseAdmin
-      .from("payment_orders")
-      .update({
-        status: "paid",
-        gateway_payment_id:
-          event.gatewayPaymentId,
-        updated_at:
-          new Date().toISOString(),
-      })
-      .eq("id", paymentOrder.id);
-
-    // Get linked participant_events
-    const { data: orderItems } =
-      await supabaseAdmin
-        .from("payment_order_items")
-        .select(
-          "participant_event_id, participant_id"
-        )
-        .eq(
-          "payment_order_id",
-          paymentOrder.id
-        );
-
-    const participantEventIds = (
-      orderItems ?? []
-    )
-      .map(
-        (item: { participant_event_id?: string | null }) =>
-          item.participant_event_id
-      )
-      .filter(Boolean);
-
-    // Update participant_events
-    if (participantEventIds.length > 0) {
-      await supabaseAdmin
-        .from("participant_events")
-        .update({
-          payment_status: "paid",
-          payment_id:
-            event.gatewayPaymentId,
-          updated_at:
-            new Date().toISOString(),
-        })
-        .in("id", participantEventIds);
-    }
-
-    // Update linked participant_accommodations
-    await supabaseAdmin
-      .from("participant_accommodations")
-      .update({
-        status: "paid",
-        updated_at:
-          new Date().toISOString(),
-      })
-      .eq("payment_order_id", paymentOrder.id);
-
-    // Create payment record (idempotent check)
-    if (
-      paymentOrder.payer_participant_id
-    ) {
-      // Check if payment already exists
-      const { data: existingPayment } =
-        await supabaseAdmin
-          .from("payments")
-          .select("id")
-          .eq(
-            "gateway_payment_id",
-            event.gatewayPaymentId
-          )
-          .maybeSingle();
-
-      if (!existingPayment) {
-        await supabaseAdmin
-          .from("payments")
-          .insert({
-            participant_id:
-              paymentOrder.payer_participant_id,
-            participant_event_id:
-              participantEventIds[0] ??
-              null,
-            amount: Number(
-              paymentOrder.amount
-            ),
-            status: "paid",
-            gateway: gateway.name,
-            gateway_payment_id:
-              event.gatewayPaymentId,
-            gateway_order_id:
-              event.gatewayOrderId,
-          });
-      }
-    }
-
     console.log(
-      "Webhook: payment marked as paid:",
+      "Webhook: payment atomic settlement complete:",
       {
         paymentOrderId: paymentOrder.id,
-        gatewayPaymentId:
-          event.gatewayPaymentId,
+        gatewayPaymentId: event.gatewayPaymentId,
+        action: rpcData?.action,
       }
     );
 
     // ─── Trigger Idempotent Post-Payment Logic ─────────────
     await ensurePaymentConfirmationSent(paymentOrder.id);
   } else if (event.status === "failed") {
-    await supabaseAdmin
-      .from("payment_orders")
-      .update({
-        status: "failed",
-        updated_at:
-          new Date().toISOString(),
-      })
-      .eq("id", paymentOrder.id);
+    const { error: failureRpcError } = await supabaseAdmin.rpc("process_payment_failure", {
+      p_gateway_order_id: event.gatewayOrderId
+    });
+
+    if (failureRpcError) {
+      console.error("Webhook DB error executing failure RPC:", failureRpcError);
+      
+      if (
+        failureRpcError.code === "PGRST202" || 
+        failureRpcError.code === "42883" || 
+        (failureRpcError.message && failureRpcError.message.includes("does not exist"))
+      ) {
+        console.warn("Capability Gate: Atomic failure RPC not available. Failing closed.");
+        return new Response("Service temporarily unavailable during upgrade", { status: 503 });
+      }
+
+      return new Response("Database error", { status: 500 });
+    }
 
     console.log(
       "Webhook: payment marked as failed:",

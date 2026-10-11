@@ -25,10 +25,9 @@ export class PayUGateway implements PaymentGateway {
   }
 
   private get environment(): "test" | "production" {
-    if (process.env.PAYU_ENVIRONMENT === "production" || process.env.NODE_ENV === "production") {
-      return "production";
-    }
-    return "test";
+    if (process.env.PAYU_ENVIRONMENT === "production") return "production";
+    if (process.env.PAYU_ENVIRONMENT === "test") return "test";
+    throw new Error("CRITICAL: PAYU_ENVIRONMENT must be explicitly 'test' or 'production'");
   }
 
   private get endpoint(): string {

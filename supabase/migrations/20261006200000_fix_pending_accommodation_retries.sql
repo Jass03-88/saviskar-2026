@@ -3,24 +3,6 @@
 -- Migration: 20261006200000_fix_pending_accommodation_retries.sql
 -- ============================================================
 
--- 1. One-time cleanup: Cancel stale/unpaid pending accommodation records
--- that were created during abandoned checkout attempts
-UPDATE public.payment_orders po
-SET status = 'cancelled', updated_at = now()
-FROM public.participant_accommodations pa
-WHERE pa.status IN ('pending', 'unpaid')
-  AND pa.payment_order_id = po.id
-  AND po.status = 'pending';
-
-UPDATE public.participant_accommodations
-SET status = 'cancelled', updated_at = now()
-WHERE status IN ('pending', 'unpaid')
-  AND (
-    payment_order_id IS NULL
-    OR payment_order_id IN (
-      SELECT id FROM public.payment_orders WHERE status != 'paid'
-    )
-  );
 
 -- 2. Update register_participant_events RPC function
 CREATE OR REPLACE FUNCTION "public"."register_participant_events"(
@@ -525,6 +507,16 @@ begin
                 raise exception 'Participant already has an active accommodation booking' using errcode = 'SVK11';
             end if;
 
+            -- Reject if there is an active checkout in progress
+            if exists (
+                select 1 from public.participant_accommodations pa
+                where pa.participant_id = v_acc_participant_uuid
+                  and pa.status in ('pending', 'unpaid')
+                  and pa.updated_at >= now() - interval '1 hour'
+            ) then
+                raise exception 'Active checkout in progress. Please complete it or wait for it to expire.' using errcode = 'SVK11';
+            end if;
+
             -- Cancel any existing unpaid/pending accommodation bookings for this participant
             -- so that this new booking attempt (and its new payment order) can proceed cleanly
             -- without violating the single-active index constraint.
@@ -534,12 +526,14 @@ begin
             where pa.participant_id = v_acc_participant_uuid
               and pa.status in ('pending', 'unpaid')
               and pa.payment_order_id = po.id
-              and po.status = 'pending';
+              and po.status = 'pending'
+              and pa.updated_at < now() - interval '1 hour';
 
             update public.participant_accommodations
             set status = 'cancelled', updated_at = now()
             where participant_id = v_acc_participant_uuid
-              and status in ('pending', 'unpaid');
+              and status in ('pending', 'unpaid')
+              and updated_at < now() - interval '1 hour';
 
             select coalesce(fc.accommodation_start_date, '2026-10-28'::date) into v_acc_base_start_date from public.festival_config fc where fc.id = 'current' limit 1;
             if v_acc_base_start_date is null then v_acc_base_start_date := '2026-10-28'::date; end if;

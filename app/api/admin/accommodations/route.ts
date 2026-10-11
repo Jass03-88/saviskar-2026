@@ -83,122 +83,36 @@ export async function DELETE(request: Request) {
       );
     }
 
-    // 1. Try atomic RPC if installed
-    try {
-      const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc(
-        "delete_accommodation_permanently",
-        {
-          p_accommodation_id: accommodationId,
-          p_admin_id: auth.user.id,
-        }
-      );
-
-      if (!rpcError && rpcData?.success) {
-        return NextResponse.json({
-          success: true,
-          message: "Accommodation record deleted successfully.",
-        });
+    // Attempt the atomic RPC for safe cancellation / deletion
+    const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc(
+      "delete_accommodation_permanently",
+      {
+        p_accommodation_id: accommodationId,
+        p_admin_id: auth.user.id,
       }
+    );
 
-      if (rpcError) {
-        console.warn(
-          "delete_accommodation_permanently RPC skipped, falling back to direct admin deletion:",
-          rpcError.message
-        );
-      }
-    } catch (rpcEx) {
-      console.warn("delete_accommodation_permanently RPC exception:", rpcEx);
-    }
-
-    // 2. Direct Admin Fallback (guaranteed execution across all database environments)
-    const { data: acc, error: fetchError } = await supabaseAdmin
-      .from("participant_accommodations")
-      .select(`
-        id,
-        participant_id,
-        amount,
-        status,
-        start_date,
-        end_date,
-        hostel_id,
-        room_id,
-        participants (
-          id,
-          name,
-          email,
-          participant_id
-        )
-      `)
-      .eq("id", accommodationId)
-      .maybeSingle();
-
-    if (fetchError || !acc) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: "NOT_FOUND",
-            message: "Accommodation record not found.",
-          },
-        },
-        { status: 404 }
-      );
-    }
-
-    // A. Delete allocation records
-    await supabaseAdmin
-      .from("accommodation_allocations")
-      .delete()
-      .eq("participant_accommodation_id", accommodationId);
-
-    // B. Handle payment order items
-    // Set participant_accommodation_id to null so foreign key never blocks deletion
-    await supabaseAdmin
-      .from("payment_order_items")
-      .update({ participant_accommodation_id: null })
-      .eq("participant_accommodation_id", accommodationId);
-
-    // C. Audit log
-    const p = Array.isArray(acc.participants) ? acc.participants[0] : acc.participants;
-    await supabaseAdmin.from("admin_audit_logs").insert({
-      admin_id: auth.user.id,
-      action_type: "DELETE_ACCOMMODATION",
-      target_id: accommodationId,
-      details: {
-        participant_id: p?.participant_id,
-        participant_name: p?.name,
-        participant_email: p?.email,
-        amount: acc.amount,
-        status: acc.status,
-        start_date: acc.start_date,
-        end_date: acc.end_date,
-        deleted_at: new Date().toISOString(),
-      },
-    });
-
-    // D. Delete the accommodation record
-    const { error: deleteError } = await supabaseAdmin
-      .from("participant_accommodations")
-      .delete()
-      .eq("id", accommodationId);
-
-    if (deleteError) {
-      console.error("Direct accommodation delete failed:", deleteError);
+    if (rpcError) {
+      console.error("delete_accommodation_permanently RPC failed:", rpcError);
       return NextResponse.json(
         {
           success: false,
           error: {
             code: "DELETE_FAILED",
-            message: deleteError.message || "Could not delete accommodation record.",
+            message: rpcError.message || "Failed to process accommodation deletion.",
           },
         },
         { status: 500 }
       );
     }
 
+    const action = rpcData?.action || "deleted";
+    
     return NextResponse.json({
       success: true,
-      message: "Accommodation record deleted successfully.",
+      message: action === "cancelled" 
+        ? "Accommodation cancelled and room released. Financial history preserved."
+        : "Accommodation record deleted successfully.",
     });
   } catch (err: any) {
     console.error("DELETE /api/admin/accommodations exception:", err);

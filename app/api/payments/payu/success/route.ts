@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   const validateResult = gateway.validateWebhook({ body: bodyText, signature: "" });
   const rawParams = new URLSearchParams(bodyText);
 
-  let gatewayOrderId = validateResult.event?.gatewayOrderId || rawParams.get("txnid")?.trim() || "";
+  const gatewayOrderId = validateResult.event?.gatewayOrderId || rawParams.get("txnid")?.trim() || "";
   let gatewayPaymentId = validateResult.event?.gatewayPaymentId || rawParams.get("mihpayid")?.trim() || "";
   const isSignatureValid = validateResult.valid && !!validateResult.event;
 
@@ -110,9 +110,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  let verifiedAmountPaise = Number(paymentOrder.amount) * 100;
+  let verifiedCurrency = paymentOrder.currency || "INR";
+
   // ─── P0-2: Server-Side Payment Verification ───────────
   try {
     const fetchedPayment = await gateway.fetchPaymentDetails(gatewayOrderId); // PayU Verify Payment API uses txnid (gatewayOrderId)
+    
+    verifiedAmountPaise = fetchedPayment.amount;
+    verifiedCurrency = fetchedPayment.currency || verifiedCurrency;
 
     if (fetchedPayment.status !== "paid") {
       console.error("Server-side verification: payment not paid", {
@@ -152,90 +158,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.redirect(redirectUrl, 303);
   }
 
-  // ─── Database-Enforced Idempotency Claim ─────────────────
-  const { data: eventClaim, error: claimError } = await supabaseAdmin
-    .from("processed_payment_events")
-    .insert({
-      order_id: paymentOrderId,
-      payment_id: gatewayPaymentId,
-      event_type: "payment.captured",
-    })
-    .select("id")
-    .maybeSingle();
+  // ─── Execute Atomic Settlement RPC ────────────────────────
+  const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc("process_payment_success", {
+    p_gateway_order_id: gatewayOrderId,
+    p_gateway_payment_id: gatewayPaymentId,
+    p_amount_paise: verifiedAmountPaise,
+    p_currency: verifiedCurrency,
+    p_gateway_name: gateway.name,
+  });
 
-  const isDuplicate = claimError?.code === "23505" || (!claimError && !eventClaim);
-
-  if (claimError && !isDuplicate) {
-    console.error("Database error claiming payment event:", claimError);
+  if (rpcError) {
+    console.error("Database error executing payment settlement RPC:", rpcError);
     const redirectUrl = new URL(resumeUrl);
+
+    // Capability Gate: Fail gracefully if RPC is missing
+    if (
+      rpcError.code === "PGRST202" || 
+      rpcError.code === "42883" || 
+      (rpcError.message && rpcError.message.includes("does not exist"))
+    ) {
+      console.warn("Capability Gate: Atomic settlement RPC not available. Redirecting to retryable state.");
+      redirectUrl.searchParams.set("error", "system-upgrade");
+      return NextResponse.redirect(redirectUrl, 303);
+    }
+
     redirectUrl.searchParams.set("error", "database-error");
     return NextResponse.redirect(redirectUrl, 303);
   }
 
-  if (isDuplicate) {
-    return NextResponse.redirect(new URL(resumeUrl), 303);
-  }
-
-  // ─── Mark Payment Order as Paid ─────────────────────────
-  const { error: updateOrderError } = await supabaseAdmin
-    .from("payment_orders")
-    .update({
-      status: "paid",
-      gateway_payment_id: gatewayPaymentId,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", paymentOrderId);
-
-  if (updateOrderError) {
-    console.error("Failed to update payment_orders status:", updateOrderError);
+  if (rpcData && !rpcData.success) {
+    console.error("Payment settlement RPC failed:", rpcData.error);
     const redirectUrl = new URL(resumeUrl);
-    redirectUrl.searchParams.set("error", "database-error");
+    redirectUrl.searchParams.set("error", "settlement-failed");
     return NextResponse.redirect(redirectUrl, 303);
   }
 
-  // ─── Update Linked participant_events ───────────────────
-  const { data: orderItems } = await supabaseAdmin
-    .from("payment_order_items")
-    .select("participant_event_id, participant_id")
-    .eq("payment_order_id", paymentOrderId);
-
-  const participantEventIds = (orderItems ?? [])
-    .map((item) => item.participant_event_id)
-    .filter(Boolean) as string[];
-
-  if (participantEventIds.length > 0) {
-    await supabaseAdmin
-      .from("participant_events")
-      .update({
-        payment_status: "paid",
-        payment_id: gatewayPaymentId,
-        updated_at: new Date().toISOString(),
-      })
-      .in("id", participantEventIds);
-  }
-
-  // ─── Update Linked participant_accommodations ───────────
-  await supabaseAdmin
-    .from("participant_accommodations")
-    .update({
-      status: "paid",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("payment_order_id", paymentOrderId);
-
-  // ─── Create Payment Record ─────────────────────────────
-  if (payerParticipantUuid) {
-    await supabaseAdmin
-      .from("payments")
-      .insert({
-        participant_id: payerParticipantUuid,
-        participant_event_id: participantEventIds[0] ?? null,
-        amount: Number(paymentOrder.amount),
-        status: "paid",
-        gateway: gateway.name,
-        gateway_payment_id: gatewayPaymentId,
-        gateway_order_id: gatewayOrderId,
-      });
+  // Handle idempotent returns
+  if (rpcData?.action === "already_paid" || rpcData?.action === "already_processed" || rpcData?.action === "already_refunded") {
+    console.log(`[PAYU SUCCESS] Order ${gatewayOrderId} was already settled. Proceeding to resume URL.`);
+  } else {
+    console.log(`[PAYU SUCCESS] Order ${gatewayOrderId} settled successfully.`);
   }
 
   // ─── Trigger Idempotent Post-Payment Logic ─────────────

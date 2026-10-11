@@ -19,7 +19,7 @@ function makeThenableChain(override?: () => Promise<{ data: unknown; error: unkn
   }
   const chain: Record<string, unknown> = {
     then, catch: () => chain, finally: () => chain, select: () => chain, eq: () => chain,
-    in: () => chain, not: () => chain, is: () => chain, or: () => chain, limit: () => chain,
+    in: () => chain, not: () => chain, is: () => chain, or: () => chain, limit: () => chain, neq: () => chain,
     order: () => chain, update: () => chain, insert: () => chain, upsert: () => chain,
     delete: () => chain, maybeSingle: defaultResolve, single: defaultResolve,
   };
@@ -32,6 +32,9 @@ let mockOrderItems: Array<Record<string, unknown>> = [];
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: () => ({
+    rpc: (rpcName: string) => {
+      return Promise.resolve({ data: { success: true, action: "settled", payment_order_id: "po_uuid_test" }, error: null });
+    },
     from: (table: string) => {
       if (table === "payment_orders") {
         return {

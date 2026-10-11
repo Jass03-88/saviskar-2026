@@ -3,6 +3,9 @@
 -- Migration: 20261003040000_rpc_payment_order.sql
 -- ============================================================
 
+-- Drop the 5-column signature from Migration 22 to allow return-type change
+DROP FUNCTION IF EXISTS "public"."register_participant_events"("text", "text", "text", "text", "text", "jsonb", "jsonb", "jsonb", "text", "text", "text");
+
 CREATE OR REPLACE FUNCTION "public"."register_participant_events"(
     "p_participant_id" "text" DEFAULT NULL::"text",
     "p_name" "text" DEFAULT NULL::"text",

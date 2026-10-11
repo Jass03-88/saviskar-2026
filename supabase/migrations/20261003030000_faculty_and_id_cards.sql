@@ -8,7 +8,7 @@ insert into storage.buckets (id, name, public)
 values ('id_cards', 'id_cards', false)
 on conflict (id) do nothing;
 
-alter table storage.objects enable row level security;
+-- alter table storage.objects enable row level security;
 
 -- Only authenticated access is allowed (service_role will bypass RLS anyway).
 drop policy if exists "Admins can access ID cards" on storage.objects;
@@ -38,6 +38,10 @@ GRANT ALL ON TABLE public.faculty_incharges TO service_role;
 GRANT SELECT ON TABLE public.faculty_incharges TO authenticated;
 
 -- 4. Replace RPC
+DROP FUNCTION IF EXISTS "public"."register_participant_events"(text, text, text, text, text, jsonb);
+DROP FUNCTION IF EXISTS "public"."register_participant_events"(text, text, text, text, text, jsonb, jsonb);
+DROP FUNCTION IF EXISTS "public"."register_participant_events"("text", "text", "text", "text", "text", "jsonb", "jsonb", "jsonb", "text", "text", "text");
+
 CREATE OR REPLACE FUNCTION "public"."register_participant_events"(
     "p_participant_id" "text" DEFAULT NULL::"text",
     "p_name" "text" DEFAULT NULL::"text",
@@ -55,7 +59,8 @@ CREATE OR REPLACE FUNCTION "public"."register_participant_events"(
     "participant_event_id" "uuid",
     "event_id" "uuid",
     "event_name" "text",
-    "status" "text"
+    "status" "text",
+    "payment_order_id" "uuid"
 )
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
@@ -107,7 +112,7 @@ declare
     v_new_amounts integer[] := array[]::integer[];
     v_total_paid_amount integer := 0;
     v_order_reference text;
-    v_payment_order_id uuid;
+    v_payment_order_id uuid := null;
     v_idx integer;
 
     -- Accommodation variables
@@ -136,6 +141,10 @@ declare
     v_faculty_public_id text;
     v_faculty_name text;
     v_faculty_college text;
+    
+    -- Result Table
+    v_results jsonb := '[]'::jsonb;
+    v_res jsonb;
 
 begin
 
@@ -285,8 +294,9 @@ begin
         if not coalesce(v_event_row.registration_open, true) then raise exception 'Registration for this event is closed' using errcode = 'SVK05'; end if;
 
         if v_event_row.registration_limit is not null then
+            -- ISSUE 5 FIX: qualify event_id
             perform 1 from public.events where id = v_event_id for update;
-            select count(*) into v_current_reg_count from public.participant_events where event_id = v_event_id and is_archived = false;
+            select count(*) into v_current_reg_count from public.participant_events pe where pe.event_id = v_event_id and pe.is_archived = false;
             if v_current_reg_count >= v_event_row.registration_limit then
                 raise exception 'Registration limit reached for %', v_event_row.name using errcode = 'SVK05';
             end if;
@@ -301,7 +311,14 @@ begin
             select pe.id into v_participant_event_id
             from public.participant_events pe
             where pe.participant_id = v_participant_uuid and pe.event_id = v_event_id limit 1;
-            return query select v_participant_public_id, v_participant_event_id, v_event_row.id, v_event_row.name, 'already_registered'::text;
+            
+            v_results := v_results || jsonb_build_object(
+                'participant_public_id', v_participant_public_id,
+                'participant_event_id', v_participant_event_id,
+                'event_id', v_event_row.id,
+                'event_name', v_event_row.name,
+                'status', 'already_registered'
+            );
             continue;
         end if;
 
@@ -388,10 +405,10 @@ begin
                     v_member_public_id := v_member_participant.participant_id;
 
                     update public.participants
-                    set id_card_storage_path = coalesce(trim(v_member->>'id_card_storage_path'), id_card_storage_path),
-                        id_card_uploaded_at = case when trim(v_member->>'id_card_storage_path') is not null then now() else id_card_uploaded_at end,
-                        gender = coalesce(trim(v_member->>'gender'), gender),
-                        state = coalesce(trim(v_member->>'state'), state)
+                    set id_card_storage_path = coalesce(id_card_storage_path, trim(v_member->>'id_card_storage_path')),
+                        id_card_uploaded_at = case when id_card_storage_path is null and trim(v_member->>'id_card_storage_path') is not null then now() else id_card_uploaded_at end,
+                        gender = coalesce(gender, trim(v_member->>'gender')),
+                        state = coalesce(state, trim(v_member->>'state'))
                     where id = v_member_uuid;
                 else
                     v_member_name := trim(v_member->>'name');
@@ -431,8 +448,14 @@ begin
                 );
             end loop;
         end if;
-
-        return query select v_participant_public_id, v_participant_event_id, v_event_row.id, v_event_row.name, 'added'::text;
+        
+        v_results := v_results || jsonb_build_object(
+            'participant_public_id', v_participant_public_id,
+            'participant_event_id', v_participant_event_id,
+            'event_id', v_event_row.id,
+            'event_name', v_event_row.name,
+            'status', 'added'
+        );
     end loop;
 
 
@@ -453,10 +476,10 @@ begin
             v_faculty_public_id := v_faculty_participant.participant_id;
 
             update public.participants
-            set id_card_storage_path = coalesce(trim(p_faculty->>'id_card_storage_path'), id_card_storage_path),
-                id_card_uploaded_at = case when trim(p_faculty->>'id_card_storage_path') is not null then now() else id_card_uploaded_at end,
-                gender = coalesce(trim(p_faculty->>'gender'), gender),
-                state = coalesce(trim(p_faculty->>'state'), state)
+            set id_card_storage_path = coalesce(id_card_storage_path, trim(p_faculty->>'id_card_storage_path')),
+                id_card_uploaded_at = case when id_card_storage_path is null and trim(p_faculty->>'id_card_storage_path') is not null then now() else id_card_uploaded_at end,
+                gender = coalesce(gender, trim(p_faculty->>'gender')),
+                state = coalesce(state, trim(p_faculty->>'state'))
             where id = v_faculty_uuid;
         else
             v_faculty_name := trim(p_faculty->>'name');
@@ -578,8 +601,29 @@ begin
         end if;
     end if;
 
+    -- Return the cached results and append the payment order ID
+    for v_res in select * from jsonb_array_elements(v_results) loop
+        participant_id := v_res->>'participant_public_id';
+        participant_event_id := (v_res->>'participant_event_id')::uuid;
+        event_id := (v_res->>'event_id')::uuid;
+        event_name := v_res->>'event_name';
+        status := v_res->>'status';
+        payment_order_id := v_payment_order_id;
+        return next;
+    end loop;
+    
+    -- If there were no events but there WAS an accommodation, we must still return at least one row with the payment_order_id!
+    if jsonb_array_length(v_results) = 0 and v_payment_order_id is not null then
+        participant_id := v_participant_public_id;
+        participant_event_id := null;
+        event_id := null;
+        event_name := null;
+        status := 'accommodation_only';
+        payment_order_id := v_payment_order_id;
+        return next;
+    end if;
+    
     return;
-
 end;
 $$;
 
@@ -591,6 +635,4 @@ REVOKE ALL ON FUNCTION "public"."register_participant_events"("text", "text", "t
 REVOKE ALL ON FUNCTION "public"."register_participant_events"("text", "text", "text", "text", "text", "jsonb", "jsonb", "jsonb", "text", "text", "text") FROM authenticated;
 GRANT ALL ON FUNCTION "public"."register_participant_events"("text", "text", "text", "text", "text", "jsonb", "jsonb", "jsonb", "text", "text", "text") TO "service_role";
 
--- Drop old signatures
-DROP FUNCTION IF EXISTS "public"."register_participant_events"(text, text, text, text, text, jsonb);
-DROP FUNCTION IF EXISTS "public"."register_participant_events"(text, text, text, text, text, jsonb, jsonb);
+

@@ -60,43 +60,27 @@ BEGIN
         )
     );
 
-    -- 4. Gather associated payment orders
+    -- 4. Gather associated payment orders (Retained for variable consistency)
     SELECT array_agg(DISTINCT payment_order_id) INTO v_payment_order_ids
     FROM public.payment_order_items
     WHERE participant_accommodation_id = p_accommodation_id AND payment_order_id IS NOT NULL;
 
-    -- 5. Delete allocation records
-    DELETE FROM public.accommodation_allocations
-    WHERE participant_accommodation_id = p_accommodation_id;
+    -- 5. Soft-cancel any active allocation to release capacity
+    UPDATE public.accommodation_allocations
+    SET status = 'cancelled',
+        deallocated_at = now(),
+        reason = 'Accommodation cancelled by administrator'
+    WHERE participant_accommodation_id = p_accommodation_id
+      AND status = 'active';
 
-    -- 6. For UNPAID / TEST payment records (status <> 'paid'):
-    -- Clean up payment order items referencing this accommodation
-    DELETE FROM public.payment_order_items poi
-    WHERE poi.participant_accommodation_id = p_accommodation_id
-      AND poi.payment_order_id IN (
-          SELECT po.id FROM public.payment_orders po WHERE po.status <> 'paid'
-      );
-
-    -- For PAID orders: decouple participant_accommodation_id to NULL so financial order remains intact
-    UPDATE public.payment_order_items
-    SET participant_accommodation_id = NULL
-    WHERE participant_accommodation_id = p_accommodation_id;
-
-    -- Clean up orphaned unpaid payment orders
-    IF v_payment_order_ids IS NOT NULL THEN
-        FOREACH v_payment_order_id IN ARRAY v_payment_order_ids LOOP
-            DELETE FROM public.payment_orders
-            WHERE id = v_payment_order_id
-              AND status <> 'paid'
-              AND NOT EXISTS (
-                  SELECT 1 FROM public.payment_order_items WHERE payment_order_id = v_payment_order_id
-              );
-        END LOOP;
-    END IF;
-
-    -- 7. Delete the accommodation record
-    DELETE FROM public.participant_accommodations
+    -- 6. Soft-cancel the accommodation record itself
+    UPDATE public.participant_accommodations
+    SET status = 'cancelled',
+        updated_at = now()
     WHERE id = p_accommodation_id;
+
+    -- 7. Note: We strictly PRESERVE all payment_orders and payment_order_items. 
+    -- The financial history and its links to this accommodation are untouched.
 
     RETURN jsonb_build_object('success', true);
 END;

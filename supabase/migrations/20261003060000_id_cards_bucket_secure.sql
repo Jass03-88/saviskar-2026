@@ -12,13 +12,10 @@ VALUES (
     2621440, -- 2.5MB in bytes
     ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/jpg']::text[]
 )
-ON CONFLICT (id) DO UPDATE SET 
-    public = false,
-    file_size_limit = 2621440,
-    allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/jpg']::text[];
+ON CONFLICT (id) DO NOTHING;
 
 -- Enable RLS
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
 -- Admins can view/select the files
 DROP POLICY IF EXISTS "Admins can access ID cards" ON storage.objects;

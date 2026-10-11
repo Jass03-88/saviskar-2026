@@ -272,18 +272,16 @@ describe("Phase 1A: Accommodation Payment Architecture Foundation Invariants", (
       expect(webhookContent).toContain("if (capturedAmount !== expectedAmountPaise)");
     });
 
-    it("B. Marks linked participant_accommodations as paid in PayU success handler", () => {
+    it("B. Calls process_payment_success RPC in PayU success handler", () => {
       expect(payuSuccessContent).toMatch(
-        /supabaseAdmin\s*\.from\("participant_accommodations"\)\s*\.update\({\s*status:\s*"paid",/
+        /supabaseAdmin\s*\.rpc\("process_payment_success",/
       );
-      expect(payuSuccessContent).toContain('.eq("payment_order_id", paymentOrderId)');
     });
 
-    it("C. Marks linked participant_accommodations as paid in webhook handler", () => {
+    it("C. Calls process_payment_success RPC in webhook handler", () => {
       expect(webhookContent).toMatch(
-        /supabaseAdmin\s*\.from\("participant_accommodations"\)\s*\.update\({\s*status:\s*"paid",/
+        /supabaseAdmin\s*\.rpc\("process_payment_success",/
       );
-      expect(webhookContent).toContain('.eq("payment_order_id", paymentOrder.id)');
     });
   });
 

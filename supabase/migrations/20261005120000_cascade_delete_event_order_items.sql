@@ -1,7 +1,6 @@
 -- Migration: 20261005120000_cascade_delete_event_order_items.sql
--- Description: Allow clean event deletion when there are no active registrations by updating
--- the foreign key constraint on payment_order_items.event_id to ON DELETE CASCADE.
--- Active participants in participant_events are still protected via ON DELETE RESTRICT and API validation.
+-- Description: Restored to ON DELETE RESTRICT to protect payment order item financial history.
+-- Events cannot be deleted if there are associated payment records.
 
 DO $$
 BEGIN
@@ -16,5 +15,5 @@ BEGIN
         ADD CONSTRAINT payment_order_items_event_id_fkey
         FOREIGN KEY (event_id)
         REFERENCES public.events(id)
-        ON DELETE CASCADE;
+        ON DELETE RESTRICT;
 END $$;
