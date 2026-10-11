@@ -277,7 +277,10 @@ export default function AdminPage() {
   const [documentError, setDocumentError] = useState<string | null>(null);
 
   async function handleViewDocument(path: string | null | undefined) {
-    if (!path) return;
+    if (!path) {
+      setDocumentError("No ID card document was uploaded.");
+      return;
+    }
     setDocumentLoading(true);
     setDocumentError(null);
     setViewDocumentUrl(null);
@@ -892,6 +895,8 @@ export default function AdminPage() {
     setSelectedParticipantEvents(
       registrationsForParticipant
     );
+    setViewDocumentUrl(null);
+    setDocumentError(null);
   }
 
   /* =======================================================
@@ -2477,6 +2482,8 @@ export default function AdminPage() {
               setSelectedParticipantEvents(
                 []
               );
+              setViewDocumentUrl(null);
+              setDocumentError(null);
             }}
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
           />
@@ -2508,6 +2515,8 @@ export default function AdminPage() {
                   setSelectedParticipantEvents(
                     []
                   );
+                  setViewDocumentUrl(null);
+                  setDocumentError(null);
                 }}
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-black hover:bg-black hover:text-white"
               >
@@ -2632,8 +2641,18 @@ export default function AdminPage() {
                       )}
                     {documentError && <p className="text-red-500 mt-2 text-xs font-medium">{documentError}</p>}
                     {viewDocumentUrl && (
-                      <div className="mt-4 border border-black/10 rounded-2xl overflow-hidden relative bg-black/5" style={{ height: "200px" }}>
-                        <Image src={viewDocumentUrl} alt="Document preview" fill className="object-contain" unoptimized />
+                      <div className="mt-4 space-y-2">
+                        <div className="border border-black/10 rounded-2xl overflow-hidden relative bg-black/5" style={{ height: "260px" }}>
+                          <Image src={viewDocumentUrl} alt="Document preview" fill className="object-contain" unoptimized />
+                        </div>
+                        <div className="flex items-center justify-between text-xs pt-1">
+                          <a href={viewDocumentUrl} target="_blank" rel="noopener noreferrer" className="text-violet-600 hover:underline font-semibold">
+                            Open full size in new tab ↗
+                          </a>
+                          <button type="button" onClick={() => setViewDocumentUrl(null)} className="text-black/50 hover:text-black">
+                            Close preview
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

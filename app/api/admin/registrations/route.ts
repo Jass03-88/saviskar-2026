@@ -16,6 +16,9 @@ type Participant = {
   email: string;
   phone: string | null;
   photo_url: string | null;
+  gender: string | null;
+  state: string | null;
+  id_card_storage_path: string | null;
   created_at: string;
 };
 
@@ -32,6 +35,7 @@ type ParticipantEvent = {
   checked_in_at: string | null;
   main_checked_in: boolean | null;
   main_checked_in_at: string | null;
+  registration_group_id?: string | null;
   is_archived: boolean | null;
   created_at: string;
 };
@@ -270,19 +274,27 @@ export async function GET(request: Request) {
     new Set(participantEvents.map((pe) => pe.participant_id).filter(Boolean))
   );
   const peIds = participantEvents.map((pe) => pe.id);
+  const registrationGroupIds = Array.from(
+    new Set(
+      participantEvents
+        .map((pe) => pe.registration_group_id)
+        .filter((id): id is string => Boolean(id))
+    )
+  );
 
-  // 2. Fetch associated participants, events catalog, members, and payment orders
+  // 2. Fetch associated participants, events catalog, members, payment orders, and faculty
   const [
     participantsResult,
     eventsResult,
     membersResult,
     paymentOrdersResult,
+    facultyResult,
   ] = await Promise.all([
     participantIds.length > 0
       ? supabaseAdmin
           .from("participants")
           .select(
-            "id, participant_id, name, college, email, phone, photo_url, created_at"
+            "id, participant_id, name, college, email, phone, photo_url, gender, state, id_card_storage_path, created_at"
           )
           .in("id", participantIds)
       : Promise.resolve({ data: [], error: null }),
@@ -311,13 +323,23 @@ export async function GET(request: Request) {
           )
           .in("participant_event_id", peIds)
       : Promise.resolve({ data: [], error: null }),
+
+    registrationGroupIds.length > 0
+      ? supabaseAdmin
+          .from("faculty_incharges")
+          .select(
+            "id, registration_group_id, participant_id, participants(id, name, email, phone, college, gender, state, id_card_storage_path)"
+          )
+          .in("registration_group_id", registrationGroupIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   const queryError =
     participantsResult.error ??
     eventsResult.error ??
     membersResult.error ??
-    paymentOrdersResult.error;
+    paymentOrdersResult.error ??
+    facultyResult.error;
 
   if (queryError) {
     console.error(
@@ -437,6 +459,34 @@ export async function GET(request: Request) {
     );
   });
 
+  const facultyItems = (facultyResult.data ?? []) as any[];
+  const facultyByGroupId = new Map<string, {
+    id: string;
+    name: string;
+    email: string;
+    phone: string | null;
+    college: string | null;
+    gender?: string | null;
+    state?: string | null;
+    id_card_storage_path?: string | null;
+  }>();
+
+  for (const f of facultyItems) {
+    const p = Array.isArray(f.participants) ? f.participants[0] : f.participants;
+    if (f.registration_group_id && p) {
+      facultyByGroupId.set(f.registration_group_id, {
+        id: f.id,
+        name: p.name,
+        email: p.email,
+        phone: p.phone,
+        college: p.college,
+        gender: p.gender,
+        state: p.state,
+        id_card_storage_path: p.id_card_storage_path,
+      });
+    }
+  }
+
   const registrations =
     participantEvents.flatMap(
       (registration) => {
@@ -458,6 +508,10 @@ export async function GET(request: Request) {
                 membersByParticipantEventId.get(
                   registration.id
                 ) ?? [],
+              faculty:
+                registration.registration_group_id
+                  ? facultyByGroupId.get(registration.registration_group_id) ?? null
+                  : null,
               payment_order:
                 paymentOrdersByRegistration.get(
                   registration.id
