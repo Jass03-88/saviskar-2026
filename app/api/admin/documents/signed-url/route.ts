@@ -70,7 +70,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Security Gate: Verify that the requested storage path exactly matches an
-    // id_card_storage_path stored in the database for an existing participant.
+    // id_card_storage_path stored in the database for an existing participant
+    // or a faculty member associated with a valid registration group.
     // Reject any arbitrary or unverified storage paths.
     const { data: matchedParticipant, error: dbError } = await supabaseAdmin
       .from("participants")
@@ -86,7 +87,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!matchedParticipant || matchedParticipant.length === 0) {
+    let isAuthorized = Boolean(matchedParticipant && matchedParticipant.length > 0);
+
+    if (!isAuthorized) {
+      const { data: matchedFaculty, error: facultyError } = await supabaseAdmin
+        .from("faculty_incharges")
+        .select("id, participant_id, participants!inner(id, id_card_storage_path)")
+        .eq("participants.id_card_storage_path", cleanPath)
+        .limit(1);
+
+      if (facultyError) {
+        console.error("Database error verifying faculty document path:", facultyError);
+      } else if (matchedFaculty && matchedFaculty.length > 0) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
       return NextResponse.json(
         { error: "Unauthorized or unregistered document path." },
         { status: 403 }

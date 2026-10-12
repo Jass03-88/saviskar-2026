@@ -288,7 +288,21 @@ export async function GET(
     if (groupIds.length > 0) {
       const { data: facultyData } = await supabaseAdmin
         .from("faculty_incharges")
-        .select("*")
+        .select(`
+          id,
+          registration_group_id,
+          participant_id,
+          participants (
+            id,
+            name,
+            college,
+            email,
+            phone,
+            gender,
+            state,
+            id_card_storage_path
+          )
+        `)
         .in("registration_group_id", groupIds);
       if (facultyData) {
         facultyIncharges = facultyData;
@@ -308,22 +322,30 @@ export async function GET(
 
     const facultyWithSignedUrls = await Promise.all(
       facultyIncharges.map(async (faculty) => {
+        const participant = Array.isArray(faculty.participants)
+          ? faculty.participants[0]
+          : faculty.participants;
+        const storagePath = participant?.id_card_storage_path ?? null;
+
         let signedUrl = null;
-        if (faculty.id_card_storage_path) {
+        if (storagePath) {
           const { data } = await supabaseAdmin.storage
             .from("id_cards")
-            .createSignedUrl(faculty.id_card_storage_path, 60 * 60);
+            .createSignedUrl(storagePath, 60 * 60);
           if (data) signedUrl = data.signedUrl;
         }
         return {
           id: faculty.id,
           registrationGroupId: faculty.registration_group_id,
-          name: faculty.name,
-          college: faculty.college,
-          email: faculty.email,
-          phone: faculty.phone,
-          gender: faculty.gender,
-          state: faculty.state,
+          participantId: faculty.participant_id,
+          name: participant?.name ?? null,
+          college: participant?.college ?? null,
+          email: participant?.email ?? null,
+          phone: participant?.phone ?? null,
+          gender: participant?.gender ?? null,
+          state: participant?.state ?? null,
+          idCardStoragePath: storagePath,
+          id_card_storage_path: storagePath,
           idCardUrl: signedUrl,
         };
       })

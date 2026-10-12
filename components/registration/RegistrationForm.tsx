@@ -1040,6 +1040,9 @@ export default function RegistrationForm({
         if (!facultyState.name.trim() || !facultyState.email.trim() || !facultyState.phone.trim() || !facultyState.gender || !facultyState.state.trim() || !facultyState.idCardStoragePath) {
           throw new ValidationError("Please complete all Faculty Incharge details (including ID card).");
         }
+        if (facultyState.email.trim().toLowerCase() === email.trim().toLowerCase()) {
+          throw new ValidationError("Faculty In-Charge email cannot be the same as the participant email.");
+        }
         if (facultyState.accommodationPlanSlug) {
           const resolved = resolveAccommodationSelection(
             facultyState.accommodationPlanSlug,
@@ -1120,6 +1123,10 @@ export default function RegistrationForm({
                 selectedDate: resolved.selectedDate,
                 extraDays: resolved.extraDays,
               });
+            }
+
+            if (facultyEnabled && member.email.trim().toLowerCase() === facultyState.email.trim().toLowerCase()) {
+              throw new ValidationError("Faculty In-Charge email cannot match any team member email.");
             }
           }
 
