@@ -469,6 +469,7 @@ export async function GET(request: Request) {
     gender?: string | null;
     state?: string | null;
     id_card_storage_path?: string | null;
+    idCardStoragePath?: string | null;
   }>();
 
   for (const f of facultyItems) {
@@ -483,6 +484,7 @@ export async function GET(request: Request) {
         gender: p.gender,
         state: p.state,
         id_card_storage_path: p.id_card_storage_path,
+        idCardStoragePath: p.id_card_storage_path,
       });
     }
   }

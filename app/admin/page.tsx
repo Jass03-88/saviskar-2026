@@ -106,6 +106,7 @@ type Registration = {
     gender?: string | null;
     state?: string | null;
     id_card_storage_path?: string | null;
+    idCardStoragePath?: string | null;
   } | null;
   payment_order?: {
     id: string;
@@ -276,27 +277,58 @@ export default function AdminPage() {
   const [documentLoading, setDocumentLoading] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
 
-  async function handleViewDocument(path: string | null | undefined) {
-    if (!path) {
-      setDocumentError("No ID card document was uploaded.");
-      return;
-    }
-    setDocumentLoading(true);
-    setDocumentError(null);
-    setViewDocumentUrl(null);
-    try {
-      const res = await fetch("/api/admin/documents/signed-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Failed to load document");
-      setViewDocumentUrl(json.signedUrl);
-    } catch (e: any) {
-      setDocumentError(e.message || "Document not available");
-    } finally {
-      setDocumentLoading(false);
+  const [facultyDocumentUrl, setFacultyDocumentUrl] = useState<string | null>(null);
+  const [facultyDocumentLoading, setFacultyDocumentLoading] = useState(false);
+  const [facultyDocumentError, setFacultyDocumentError] = useState<string | null>(null);
+
+  async function handleViewDocument(
+    path: string | null | undefined,
+    target: "participant" | "faculty" = "participant"
+  ) {
+    if (target === "faculty") {
+      if (!path) {
+        setFacultyDocumentError("No ID card document was uploaded.");
+        return;
+      }
+      setFacultyDocumentLoading(true);
+      setFacultyDocumentError(null);
+      setFacultyDocumentUrl(null);
+      try {
+        const res = await fetch("/api/admin/documents/signed-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Failed to load document");
+        setFacultyDocumentUrl(json.signedUrl);
+      } catch (e: any) {
+        setFacultyDocumentError(e.message || "Document not available");
+      } finally {
+        setFacultyDocumentLoading(false);
+      }
+    } else {
+      if (!path) {
+        setDocumentError("No ID card document was uploaded.");
+        return;
+      }
+      setDocumentLoading(true);
+      setDocumentError(null);
+      setViewDocumentUrl(null);
+      try {
+        const res = await fetch("/api/admin/documents/signed-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Failed to load document");
+        setViewDocumentUrl(json.signedUrl);
+      } catch (e: any) {
+        setDocumentError(e.message || "Document not available");
+      } finally {
+        setDocumentLoading(false);
+      }
     }
   }
 
@@ -897,6 +929,8 @@ export default function AdminPage() {
     );
     setViewDocumentUrl(null);
     setDocumentError(null);
+    setFacultyDocumentUrl(null);
+    setFacultyDocumentError(null);
   }
 
   /* =======================================================
@@ -2484,6 +2518,8 @@ export default function AdminPage() {
               );
               setViewDocumentUrl(null);
               setDocumentError(null);
+              setFacultyDocumentUrl(null);
+              setFacultyDocumentError(null);
             }}
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
           />
@@ -2517,6 +2553,8 @@ export default function AdminPage() {
                   );
                   setViewDocumentUrl(null);
                   setDocumentError(null);
+                  setFacultyDocumentUrl(null);
+                  setFacultyDocumentError(null);
                 }}
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-black hover:bg-black hover:text-white"
               >
@@ -2634,7 +2672,7 @@ export default function AdminPage() {
                       {selectedParticipant.id_card_storage_path && (
                         <div>
                           <p className="text-xs font-medium mb-1 mt-3">Participant ID Card</p>
-                          <button onClick={() => handleViewDocument(selectedParticipant.id_card_storage_path)} className="text-xs border border-black/10 bg-white text-black hover:bg-black/5 rounded-full px-4 py-2 font-semibold transition" disabled={documentLoading}>
+                          <button onClick={() => handleViewDocument(selectedParticipant.id_card_storage_path, "participant")} className="text-xs border border-black/10 bg-white text-black hover:bg-black/5 rounded-full px-4 py-2 font-semibold transition" disabled={documentLoading}>
                             {documentLoading ? "Loading..." : "View Participant ID Card"}
                           </button>
                         </div>
@@ -2662,28 +2700,62 @@ export default function AdminPage() {
               {/* FACULTY */}
               <div className="mt-7">
                 <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30 mb-2">Faculty In-Charge</p>
-                {selectedParticipantEvents[0]?.faculty ? (
-                  <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <SmallDetail label="Name" value={selectedParticipantEvents[0].faculty.name} />
-                      <SmallDetail label="Email" value={selectedParticipantEvents[0].faculty.email} className="truncate" />
-                      <SmallDetail label="Phone" value={selectedParticipantEvents[0].faculty.phone ?? "No phone"} />
-                      <SmallDetail label="College / Institution" value={selectedParticipantEvents[0].faculty.college ?? "No college"} />
-                    </div>
-                    {selectedParticipantEvents[0].faculty.id_card_storage_path && (
+                {(() => {
+                  const facultyInCharge = selectedParticipantEvents.find((item) => item.faculty)?.faculty ?? selectedParticipantEvents[0]?.faculty ?? null;
+                  const facultyStoragePath = facultyInCharge?.id_card_storage_path || facultyInCharge?.idCardStoragePath;
+
+                  if (!facultyInCharge) {
+                    return (
+                      <div className="rounded-[24px] border border-black/10 bg-black/5 p-5 text-black/50 text-sm font-medium text-center">
+                        No Faculty Information
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <SmallDetail label="Name" value={facultyInCharge.name} />
+                        <SmallDetail label="Email" value={facultyInCharge.email} className="truncate" />
+                        <SmallDetail label="Phone" value={facultyInCharge.phone ?? "No phone"} />
+                        <SmallDetail label="College / Institution" value={facultyInCharge.college ?? "No college"} />
+                      </div>
                       <div className="pt-3 border-t border-black/10 mt-2">
                         <p className="text-xs font-medium mb-2">Faculty ID Card</p>
-                        <button onClick={() => handleViewDocument(selectedParticipantEvents[0].faculty!.id_card_storage_path)} className="text-xs border border-black/10 bg-white text-black hover:bg-black/5 rounded-full px-4 py-2 font-semibold transition w-full" disabled={documentLoading}>
-                          {documentLoading ? "Loading..." : "View Faculty ID Card"}
-                        </button>
+                        {facultyStoragePath ? (
+                          <button
+                            type="button"
+                            onClick={() => handleViewDocument(facultyStoragePath, "faculty")}
+                            className="text-xs border border-black/10 bg-white text-black hover:bg-black/5 rounded-full px-4 py-2 font-semibold transition w-full"
+                            disabled={facultyDocumentLoading}
+                          >
+                            {facultyDocumentLoading ? "Loading..." : "View Faculty ID Card"}
+                          </button>
+                        ) : (
+                          <p className="text-xs text-black/40 italic">No ID card uploaded for faculty member</p>
+                        )}
+                        {facultyDocumentError && (
+                          <p className="text-red-500 mt-2 text-xs font-medium">{facultyDocumentError}</p>
+                        )}
+                        {facultyDocumentUrl && (
+                          <div className="mt-4 space-y-2">
+                            <div className="border border-black/10 rounded-2xl overflow-hidden relative bg-black/5" style={{ height: "260px" }}>
+                              <Image src={facultyDocumentUrl} alt="Faculty ID Card preview" fill className="object-contain" unoptimized />
+                            </div>
+                            <div className="flex items-center justify-between text-xs pt-1">
+                              <a href={facultyDocumentUrl} target="_blank" rel="noopener noreferrer" className="text-violet-600 hover:underline font-semibold">
+                                Open full size in new tab ↗
+                              </a>
+                              <button type="button" onClick={() => setFacultyDocumentUrl(null)} className="text-black/50 hover:text-black">
+                                Close preview
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-[24px] border border-black/10 bg-black/5 p-5 text-black/50 text-sm font-medium text-center">
-                    No Faculty Information
-                  </div>
-                )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* EVENT REGISTRATIONS */}

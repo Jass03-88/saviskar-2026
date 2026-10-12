@@ -621,6 +621,19 @@ export async function POST(
     if (!facEmail || !EMAIL_PATTERN.test(facEmail)) {
       return errorResponse("Invalid faculty email address.", 400);
     }
+
+    if (facEmail === email) {
+      return errorResponse("Faculty In-Charge email cannot be the same as the participant email.", 400);
+    }
+
+    for (const ev of events) {
+      for (const m of ev.members) {
+        if (m.email === facEmail) {
+          return errorResponse("Faculty In-Charge email cannot match any team member email.", 400);
+        }
+      }
+    }
+
     const facIdCardStoragePath = cleanString(rawFac.idCardStoragePath, 255);
     
     if (facIdCardStoragePath && !facIdCardStoragePath.startsWith(`${authenticatedEmail}/`)) {
@@ -636,6 +649,11 @@ export async function POST(
       state: cleanString(rawFac.state, 100),
       id_card_storage_path: facIdCardStoragePath,
     };
+
+    console.log("[Registration] Faculty details verified:", {
+      hasFaculty: true,
+      hasIdCardPath: Boolean(facIdCardStoragePath),
+    });
   }
 
   // =====================================================
