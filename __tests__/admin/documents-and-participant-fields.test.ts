@@ -11,6 +11,7 @@ process.env.SUPABASE_SECRET_KEY = "test-secret-key";
 let mockParticipantsDb: any[] = [];
 let mockParticipantEventsDb: any[] = [];
 let mockFacultyDb: any[] = [];
+let mockMembersDb: any[] = [];
 let mockStorageFiles: Set<string> = new Set();
 let storageShouldError = false;
 
@@ -69,7 +70,10 @@ function createMockAdminClient() {
       if (table === "participant_event_members") {
         return {
           select: () => ({
-            in: () => Promise.resolve({ data: [], error: null }),
+            in: (field: string, ids: string[]) => {
+              const matched = mockMembersDb.filter((m) => ids.includes(m.participant_event_id));
+              return Promise.resolve({ data: matched, error: null });
+            },
           }),
         };
       }
@@ -137,6 +141,7 @@ describe("Admin Registrations - Participant Gender, State & ID Card Fields", () 
   beforeEach(() => {
     vi.clearAllMocks();
     storageShouldError = false;
+    mockMembersDb = [];
     mockStorageFiles = new Set(["aman@test.com/id_card.jpg", "faculty/verma.jpg"]);
 
     mockParticipantsDb = [
@@ -230,6 +235,82 @@ describe("Admin Registrations - Participant Gender, State & ID Card Fields", () 
 
     const json = await res.json();
     expect(json.registrations[0].participant.id_card_storage_path).toBeNull();
+  });
+
+  it("extracts and normalizes each team member's own id_card_storage_path without falling back to team leader", async () => {
+    mockMembersDb = [
+      {
+        id: "mem-leader",
+        participant_event_id: "pe-1",
+        name: "Aman Sharma",
+        email: "aman@test.com",
+        phone: "9876543210",
+        is_team_leader: true,
+        participant_id: "part-1",
+        participants: {
+          participant_id: "SVK26-11111111",
+          college: "ABC College",
+          id_card_storage_path: "aman@test.com/id_card.jpg",
+        },
+      },
+      {
+        id: "mem-teammate-1",
+        participant_event_id: "pe-1",
+        name: "Rohan Gupta",
+        email: "rohan@test.com",
+        phone: "9876543211",
+        is_team_leader: false,
+        participant_id: "part-2",
+        participants: [
+          {
+            participant_id: "SVK26-22222222",
+            college: "XYZ Institute",
+            id_card_storage_path: "rohan@test.com/id_card_rohan.png",
+          },
+        ],
+      },
+      {
+        id: "mem-teammate-no-card",
+        participant_event_id: "pe-1",
+        name: "Pooja Singh",
+        email: "pooja@test.com",
+        phone: "9876543212",
+        is_team_leader: false,
+        participant_id: "part-3",
+        participants: {
+          participant_id: "SVK26-33333333",
+          college: "PQR College",
+          id_card_storage_path: null,
+        },
+      },
+    ];
+
+    const req = new Request("https://localhost/api/admin/registrations");
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    const reg = json.registrations[0];
+    expect(reg.members).toHaveLength(3);
+
+    // Leader member
+    const leader = reg.members.find((m: any) => m.is_team_leader);
+    expect(leader.name).toBe("Aman Sharma");
+    expect(leader.id_card_storage_path).toBe("aman@test.com/id_card.jpg");
+    expect(leader.participants.id_card_storage_path).toBe("aman@test.com/id_card.jpg");
+
+    // Teammate with array normalization
+    const rohan = reg.members.find((m: any) => m.name === "Rohan Gupta");
+    expect(rohan.is_team_leader).toBe(false);
+    expect(rohan.id_card_storage_path).toBe("rohan@test.com/id_card_rohan.png");
+    expect(rohan.participants.id_card_storage_path).toBe("rohan@test.com/id_card_rohan.png");
+    expect(rohan.participants.college).toBe("XYZ Institute");
+
+    // Teammate without card - must NOT fallback to leader's card
+    const pooja = reg.members.find((m: any) => m.name === "Pooja Singh");
+    expect(pooja.is_team_leader).toBe(false);
+    expect(pooja.id_card_storage_path).toBeNull();
+    expect(pooja.participants.id_card_storage_path).toBeNull();
   });
 });
 

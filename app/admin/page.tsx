@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useRef,
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -86,9 +87,11 @@ type RegistrationMember = {
   phone: string | null;
   is_team_leader: boolean | null;
   participant_id: string | null;
+  id_card_storage_path?: string | null;
   participants: {
     participant_id: string;
     college: string | null;
+    id_card_storage_path?: string | null;
   } | null;
 };
 
@@ -274,8 +277,11 @@ export default function AdminPage() {
     useState<string | null>(null);
 
   const [viewDocumentUrl, setViewDocumentUrl] = useState<string | null>(null);
+  const [activeDocumentLabel, setActiveDocumentLabel] = useState<string | null>(null);
+  const [activeDocumentPath, setActiveDocumentPath] = useState<string | null>(null);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
+  const documentRequestRef = useRef(0);
 
   const [facultyDocumentUrl, setFacultyDocumentUrl] = useState<string | null>(null);
   const [facultyDocumentLoading, setFacultyDocumentLoading] = useState(false);
@@ -283,10 +289,11 @@ export default function AdminPage() {
 
   async function handleViewDocument(
     path: string | null | undefined,
-    target: "participant" | "faculty" = "participant"
+    target: "participant" | "faculty" = "participant",
+    label?: string | null
   ) {
     if (target === "faculty") {
-      if (!path) {
+      if (!path || !path.trim()) {
         setFacultyDocumentError("No ID card document was uploaded.");
         return;
       }
@@ -297,7 +304,7 @@ export default function AdminPage() {
         const res = await fetch("/api/admin/documents/signed-url", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
+          body: JSON.stringify({ path: path.trim() }),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || "Failed to load document");
@@ -308,26 +315,49 @@ export default function AdminPage() {
         setFacultyDocumentLoading(false);
       }
     } else {
-      if (!path) {
-        setDocumentError("No ID card document was uploaded.");
+      const requestId = ++documentRequestRef.current;
+      setViewDocumentUrl(null);
+      setDocumentError(null);
+      setActiveDocumentLabel(label ?? null);
+      setActiveDocumentPath(path ?? null);
+
+      if (!path || !path.trim()) {
+        setDocumentError(
+          label ? `No ID card document was uploaded for ${label}.` : "No ID card document was uploaded."
+        );
         return;
       }
+
       setDocumentLoading(true);
-      setDocumentError(null);
-      setViewDocumentUrl(null);
+
+      if (typeof document !== "undefined") {
+        document.getElementById("participant-id-card-preview")?.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+      }
+
       try {
         const res = await fetch("/api/admin/documents/signed-url", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
+          body: JSON.stringify({ path: path.trim() }),
         });
         const json = await res.json();
+
+        if (requestId !== documentRequestRef.current) {
+          return;
+        }
+
         if (!res.ok) throw new Error(json.error || "Failed to load document");
         setViewDocumentUrl(json.signedUrl);
       } catch (e: any) {
+        if (requestId !== documentRequestRef.current) return;
         setDocumentError(e.message || "Document not available");
       } finally {
-        setDocumentLoading(false);
+        if (requestId === documentRequestRef.current) {
+          setDocumentLoading(false);
+        }
       }
     }
   }
@@ -928,9 +958,12 @@ export default function AdminPage() {
       registrationsForParticipant
     );
     setViewDocumentUrl(null);
+    setActiveDocumentLabel(null);
+    setActiveDocumentPath(null);
     setDocumentError(null);
     setFacultyDocumentUrl(null);
     setFacultyDocumentError(null);
+    documentRequestRef.current++;
   }
 
   /* =======================================================
@@ -2517,9 +2550,12 @@ export default function AdminPage() {
                 []
               );
               setViewDocumentUrl(null);
+              setActiveDocumentLabel(null);
+              setActiveDocumentPath(null);
               setDocumentError(null);
               setFacultyDocumentUrl(null);
               setFacultyDocumentError(null);
+              documentRequestRef.current++;
             }}
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
           />
@@ -2552,9 +2588,12 @@ export default function AdminPage() {
                     []
                   );
                   setViewDocumentUrl(null);
+                  setActiveDocumentLabel(null);
+                  setActiveDocumentPath(null);
                   setDocumentError(null);
                   setFacultyDocumentUrl(null);
                   setFacultyDocumentError(null);
+                  documentRequestRef.current++;
                 }}
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-black hover:bg-black hover:text-white"
               >
@@ -2657,8 +2696,19 @@ export default function AdminPage() {
               </div>
 
               {/* DOCUMENTS */}
-              {(selectedParticipant.photo_url || selectedParticipant.id_card_storage_path) && (
-                <div className="mt-7">
+              {(selectedParticipant.photo_url ||
+                selectedParticipant.id_card_storage_path ||
+                viewDocumentUrl ||
+                documentLoading ||
+                documentError ||
+                selectedParticipantEvents.some((item) =>
+                  item.members?.some(
+                    (m) =>
+                      m.id_card_storage_path ||
+                      m.participants?.id_card_storage_path
+                  )
+                )) && (
+                <div id="participant-id-card-preview" className="mt-7">
                   <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30 mb-2">Documents</p>
                   <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black">
                       {selectedParticipant.photo_url && (
@@ -2669,25 +2719,66 @@ export default function AdminPage() {
                           </a>
                         </div>
                       )}
-                      {selectedParticipant.id_card_storage_path && (
-                        <div>
-                          <p className="text-xs font-medium mb-1 mt-3">Participant ID Card</p>
-                          <button onClick={() => handleViewDocument(selectedParticipant.id_card_storage_path, "participant")} className="text-xs border border-black/10 bg-white text-black hover:bg-black/5 rounded-full px-4 py-2 font-semibold transition" disabled={documentLoading}>
-                            {documentLoading ? "Loading..." : "View Participant ID Card"}
+                      <div>
+                        <p className="text-xs font-medium mb-1 mt-3">Participant ID Card</p>
+                        {selectedParticipant.id_card_storage_path ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleViewDocument(
+                                selectedParticipant.id_card_storage_path,
+                                "participant",
+                                `${selectedParticipant.name} (Primary)`
+                              )
+                            }
+                            className="text-xs border border-black/10 bg-white text-black hover:bg-black/5 rounded-full px-4 py-2 font-semibold transition"
+                            disabled={documentLoading}
+                          >
+                            {documentLoading && activeDocumentPath === selectedParticipant.id_card_storage_path
+                              ? "Loading..."
+                              : "View Participant ID Card"}
                           </button>
-                        </div>
-                      )}
+                        ) : (
+                          <p className="text-xs text-black/40 italic">
+                            No ID card uploaded for primary participant
+                          </p>
+                        )}
+                      </div>
                     {documentError && <p className="text-red-500 mt-2 text-xs font-medium">{documentError}</p>}
                     {viewDocumentUrl && (
                       <div className="mt-4 space-y-2">
+                        {activeDocumentLabel && (
+                          <div className="flex items-center justify-between text-xs pb-1 border-b border-black/5">
+                            <span className="text-black/60 font-medium">
+                              Showing ID Card:{" "}
+                              <span className="text-black font-bold">
+                                {activeDocumentLabel}
+                              </span>
+                            </span>
+                          </div>
+                        )}
                         <div className="border border-black/10 rounded-2xl overflow-hidden relative bg-black/5" style={{ height: "260px" }}>
-                          <Image src={viewDocumentUrl} alt="Document preview" fill className="object-contain" unoptimized />
+                          <Image
+                            src={viewDocumentUrl}
+                            alt={activeDocumentLabel ? `ID Card - ${activeDocumentLabel}` : "Document preview"}
+                            fill
+                            className="object-contain"
+                            unoptimized
+                          />
                         </div>
                         <div className="flex items-center justify-between text-xs pt-1">
                           <a href={viewDocumentUrl} target="_blank" rel="noopener noreferrer" className="text-violet-600 hover:underline font-semibold">
                             Open full size in new tab ↗
                           </a>
-                          <button type="button" onClick={() => setViewDocumentUrl(null)} className="text-black/50 hover:text-black">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setViewDocumentUrl(null);
+                              setActiveDocumentLabel(null);
+                              setActiveDocumentPath(null);
+                            }}
+                            className="text-black/50 hover:text-black font-medium"
+                          >
                             Close preview
                           </button>
                         </div>
@@ -2917,36 +3008,91 @@ export default function AdminPage() {
                               Team Members
                             </p>
                             <div className="space-y-2">
-                              {item.members.map((member) => (
-                                <div
-                                  key={member.id}
-                                  className="rounded-[18px] border border-black/5 bg-black/[0.01] p-4 text-xs"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="font-semibold text-black">
-                                      {member.name}
-                                    </span>
-                                    {member.is_team_leader ? (
-                                      <span className="rounded-full bg-black px-2 py-0.5 text-[8px] font-semibold text-white">
-                                        Leader
-                                      </span>
-                                    ) : (
-                                      <span className="font-mono text-[10px] font-bold text-black/45">
-                                        {member.participants?.participant_id || "No ID"}
-                                      </span>
-                                    )}
+                              {item.members.map((member) => {
+                                const memberPath =
+                                  member.id_card_storage_path ||
+                                  member.participants?.id_card_storage_path ||
+                                  (member.is_team_leader
+                                    ? selectedParticipant.id_card_storage_path
+                                    : null);
+                                const memberLabel = `${member.name}${
+                                  member.participants?.participant_id
+                                    ? ` (${member.participants.participant_id})`
+                                    : member.is_team_leader
+                                    ? " (Leader)"
+                                    : ""
+                                }`;
+                                const isCurrentlyLoading =
+                                  documentLoading &&
+                                  Boolean(memberPath) &&
+                                  activeDocumentPath === memberPath;
+                                const isCurrentlyActive =
+                                  viewDocumentUrl !== null &&
+                                  Boolean(memberPath) &&
+                                  activeDocumentPath === memberPath;
+
+                                return (
+                                  <div
+                                    key={member.id}
+                                    className="rounded-[18px] border border-black/5 bg-black/[0.01] p-4 text-xs"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-semibold text-black">
+                                          {member.name}
+                                        </span>
+                                        {member.is_team_leader ? (
+                                          <span className="rounded-full bg-black px-2 py-0.5 text-[8px] font-semibold text-white">
+                                            Leader
+                                          </span>
+                                        ) : (
+                                          <span className="font-mono text-[10px] font-bold text-black/45">
+                                            {member.participants?.participant_id || "No ID"}
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <div>
+                                        {memberPath ? (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleViewDocument(
+                                                memberPath,
+                                                "participant",
+                                                memberLabel
+                                              )
+                                            }
+                                            disabled={documentLoading}
+                                            className={`text-[10px] rounded-full px-2.5 py-1 font-semibold transition border ${
+                                              isCurrentlyActive
+                                                ? "bg-black text-white border-black"
+                                                : "bg-white text-black border-black/10 hover:bg-black/5"
+                                            }`}
+                                          >
+                                            {isCurrentlyLoading
+                                              ? "Loading..."
+                                              : "View ID Card"}
+                                          </button>
+                                        ) : (
+                                          <span className="text-[10px] text-black/35 font-medium italic">
+                                            No ID Card
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="mt-1.5 flex flex-col gap-0.5 text-[10px] text-black/40">
+                                      {member.email && <span>{member.email}</span>}
+                                      {member.phone && <span>{member.phone}</span>}
+                                      {member.participants?.college && (
+                                        <span className="italic mt-0.5">
+                                          {member.participants.college}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="mt-1.5 flex flex-col gap-0.5 text-[10px] text-black/40">
-                                    {member.email && <span>{member.email}</span>}
-                                    {member.phone && <span>{member.phone}</span>}
-                                    {member.participants?.college && (
-                                      <span className="italic mt-0.5">
-                                        {member.participants.college}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         )}

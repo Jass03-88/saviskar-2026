@@ -57,9 +57,11 @@ type Member = {
   phone: string | null;
   is_team_leader: boolean | null;
   participant_id: string | null;
+  id_card_storage_path?: string | null;
   participants: {
     participant_id: string;
     college: string | null;
+    id_card_storage_path?: string | null;
   } | null;
 };
 
@@ -75,10 +77,12 @@ type RawMember = {
     | {
         participant_id?: string | null;
         college?: string | null;
+        id_card_storage_path?: string | null;
       }
     | {
         participant_id?: string | null;
         college?: string | null;
+        id_card_storage_path?: string | null;
       }[]
     | null;
 };
@@ -310,7 +314,7 @@ export async function GET(request: Request) {
       ? supabaseAdmin
           .from("participant_event_members")
           .select(
-            "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college)"
+            "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college, id_card_storage_path)"
           )
           .in("participant_event_id", peIds)
       : Promise.resolve({ data: [], error: null }),
@@ -377,6 +381,10 @@ export async function GET(request: Request) {
           ? member.participants[0]
           : member.participants;
 
+      const memberIdCardPath = participant?.id_card_storage_path
+        ? String(participant.id_card_storage_path).trim() || null
+        : null;
+
       return {
         id: member.id,
         participant_event_id:
@@ -388,6 +396,7 @@ export async function GET(request: Request) {
           member.is_team_leader,
         participant_id:
           member.participant_id,
+        id_card_storage_path: memberIdCardPath,
         participants: participant
           ? {
             participant_id: String(
@@ -398,6 +407,7 @@ export async function GET(request: Request) {
                 participant.college
               )
               : null,
+            id_card_storage_path: memberIdCardPath,
           }
           : null,
       };
