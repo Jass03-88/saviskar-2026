@@ -1,6 +1,7 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { requireAccommodationAdmin } from "@/lib/supabase/server";
+import { fetchInBatches } from "@/lib/supabase/batch";
 
 export const dynamic = "force-dynamic";
 
@@ -142,15 +143,17 @@ export async function GET(request: Request) {
     if (audits && audits.length > 0) {
       const targetIds = audits.map(a => a.target_id);
       
-      const { data: paData } = await supabaseAdmin
-        .from("participant_accommodations")
-        .select(`
-          id,
-          participants ( participant_id, name ),
-          hostels ( name ),
-          hostel_rooms ( room_number, hostel_floors ( floor_number ) )
-        `)
-        .in("id", targetIds);
+      const { data: paData } = await fetchInBatches<any>(targetIds, (chunk) =>
+        supabaseAdmin
+          .from("participant_accommodations")
+          .select(`
+            id,
+            participants ( participant_id, name ),
+            hostels ( name ),
+            hostel_rooms ( room_number, hostel_floors ( floor_number ) )
+          `)
+          .in("id", chunk)
+      );
 
       const paMap = new Map();
       for (const pa of paData || []) paMap.set(pa.id, pa);

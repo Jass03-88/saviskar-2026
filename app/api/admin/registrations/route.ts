@@ -5,6 +5,7 @@ import {
   requireMasterAdmin,
 } from "@/lib/supabase/server";
 import { parseAdminCategories } from "@/lib/admin/scope";
+import { fetchInBatches } from "@/lib/supabase/batch";
 
 export const dynamic = "force-dynamic";
 
@@ -277,7 +278,7 @@ export async function GET(request: Request) {
   const participantIds = Array.from(
     new Set(participantEvents.map((pe) => pe.participant_id).filter(Boolean))
   );
-  const peIds = participantEvents.map((pe) => pe.id);
+  const peIds = Array.from(new Set(participantEvents.map((pe) => pe.id).filter(Boolean)));
   const registrationGroupIds = Array.from(
     new Set(
       participantEvents
@@ -287,6 +288,7 @@ export async function GET(request: Request) {
   );
 
   // 2. Fetch associated participants, events catalog, members, payment orders, and faculty
+  // Batched to prevent UND_ERR_HEADERS_OVERFLOW / 16KB URL limit when pageSize is large (e.g. 2000)
   const [
     participantsResult,
     eventsResult,
@@ -294,14 +296,14 @@ export async function GET(request: Request) {
     paymentOrdersResult,
     facultyResult,
   ] = await Promise.all([
-    participantIds.length > 0
-      ? supabaseAdmin
-          .from("participants")
-          .select(
-            "id, participant_id, name, college, email, phone, photo_url, gender, state, id_card_storage_path, created_at"
-          )
-          .in("id", participantIds)
-      : Promise.resolve({ data: [], error: null }),
+    fetchInBatches<Participant>(participantIds, (chunk) =>
+      supabaseAdmin
+        .from("participants")
+        .select(
+          "id, participant_id, name, college, email, phone, photo_url, gender, state, id_card_storage_path, created_at"
+        )
+        .in("id", chunk)
+    ),
 
     supabaseAdmin
       .from("events")
@@ -310,32 +312,32 @@ export async function GET(request: Request) {
         ascending: true,
       }),
 
-    peIds.length > 0
-      ? supabaseAdmin
-          .from("participant_event_members")
-          .select(
-            "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college, id_card_storage_path)"
-          )
-          .in("participant_event_id", peIds)
-      : Promise.resolve({ data: [], error: null }),
+    fetchInBatches<RawMember>(peIds, (chunk) =>
+      supabaseAdmin
+        .from("participant_event_members")
+        .select(
+          "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college, id_card_storage_path)"
+        )
+        .in("participant_event_id", chunk)
+    ),
 
-    peIds.length > 0
-      ? supabaseAdmin
-          .from("payment_order_items")
-          .select(
-            "participant_event_id, payment_orders(id, order_reference, gateway, gateway_order_id, gateway_payment_id, status, updated_at)"
-          )
-          .in("participant_event_id", peIds)
-      : Promise.resolve({ data: [], error: null }),
+    fetchInBatches<RawPaymentOrderItem>(peIds, (chunk) =>
+      supabaseAdmin
+        .from("payment_order_items")
+        .select(
+          "participant_event_id, payment_orders(id, order_reference, gateway, gateway_order_id, gateway_payment_id, status, updated_at)"
+        )
+        .in("participant_event_id", chunk)
+    ),
 
-    registrationGroupIds.length > 0
-      ? supabaseAdmin
-          .from("faculty_incharges")
-          .select(
-            "id, registration_group_id, participant_id, participants(id, name, email, phone, college, gender, state, id_card_storage_path)"
-          )
-          .in("registration_group_id", registrationGroupIds)
-      : Promise.resolve({ data: [], error: null }),
+    fetchInBatches<any>(registrationGroupIds, (chunk) =>
+      supabaseAdmin
+        .from("faculty_incharges")
+        .select(
+          "id, registration_group_id, participant_id, participants(id, name, email, phone, college, gender, state, id_card_storage_path)"
+        )
+        .in("registration_group_id", chunk)
+    ),
   ]);
 
   const queryError =
