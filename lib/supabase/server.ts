@@ -52,10 +52,17 @@ export async function createClient() {
 export async function requireAdmin() {
   const supabase = await createClient();
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+  let user = null;
+  let userError = null;
+
+  try {
+    const res = await supabase.auth.getUser();
+    user = res.data?.user ?? null;
+    userError = res.error ?? null;
+  } catch (err: any) {
+    user = null;
+    userError = err;
+  }
 
   if (userError || !user) {
     return {

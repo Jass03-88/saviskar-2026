@@ -29,9 +29,19 @@ export async function updateSession(request: NextRequest) {
   );
 
   // getUser() validates the access token with Supabase Auth.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const {
+      data: { user: authUser },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (!userError && authUser) {
+      user = authUser;
+    }
+  } catch {
+    // If refresh token is missing, expired, or invalid, treat user as unauthenticated
+    user = null;
+  }
 
   const pathname = request.nextUrl.pathname;
   const isAdminPath =

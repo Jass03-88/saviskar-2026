@@ -16,8 +16,10 @@ import {
   Trash2,
   Users,
   X,
+  FileDown,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { getEventRulebook } from "@/lib/events/rulebooks";
 
 type EventRecord = {
   id: string;
@@ -936,6 +938,22 @@ export default function EventsAdminPage() {
                     <span className="rounded-full bg-black/[0.04] px-2.5 py-0.5 text-[10px] text-black/50">
                       {formatFee(event)}
                     </span>
+                    {(() => {
+                      const rb = getEventRulebook(event.slug || event.name, event.category);
+                      return (
+                        <a
+                          href={rb.pdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          download={`${event.slug}-rulebook.pdf`}
+                          className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-black/[0.02] hover:bg-black/[0.06] px-2 py-0.5 text-[10px] font-medium text-black/60 transition"
+                          title={`View/Download ${event.name} Rulebook`}
+                        >
+                          <FileDown size={10} className="text-black/50" />
+                          <span>Rulebook</span>
+                        </a>
+                      );
+                    })()}
                     <span className="ml-auto text-[10px] uppercase tracking-[0.08em] text-black/35 font-medium">
                       {event.registration_count}{event.registration_limit ? `/${event.registration_limit}` : ""} registration
                       {event.registration_count === 1 ? "" : "s"}

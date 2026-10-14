@@ -8,6 +8,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/ui/Navbar";
 import { SITE_ACCESS } from "@/lib/config/site-access";
+import { getEventRulebook } from "@/lib/events/rulebooks";
 
 const categories = {
   technical: {
@@ -333,10 +334,29 @@ export default function CategoryPage() {
             {!loading &&
               filteredEvents.length > 0 &&
               filteredEvents.map((item, index) => {
-                const cardInner = (
-                  <>
-                    <div className="flex items-start gap-6 md:gap-10">
-                      <span className="font-mono text-sm tracking-widest text-violet-400/80 mt-1">
+                const rulebook = getEventRulebook(item.slug || item.name, category);
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`liquid-glass group relative flex flex-col md:flex-row md:items-center md:justify-between gap-6 rounded-[24px] border border-white/10 p-7 transition-all md:p-8 ${
+                      SITE_ACCESS.EVENT_DETAILS_ENABLED
+                        ? "hover:border-violet-500/40 hover:bg-white/[0.05] hover:shadow-[0_15px_40px_rgba(168,85,247,0.15)]"
+                        : "hover:border-white/20 hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    {/* Primary Card Link (when enabled) */}
+                    {SITE_ACCESS.EVENT_DETAILS_ENABLED && (
+                      <Link
+                        href={`/events/${category}/${item.slug}`}
+                        className="absolute inset-0 z-0 rounded-[24px]"
+                        aria-label={`View ${item.name} details`}
+                      />
+                    )}
+
+                    {/* Card Content */}
+                    <div className="relative z-10 flex flex-1 items-start gap-6 md:gap-10 pointer-events-none">
+                      <span className="font-mono text-sm tracking-widest text-violet-400/80 mt-1 shrink-0">
                         {String(index + 1).padStart(2, "0")}
                       </span>
 
@@ -351,7 +371,7 @@ export default function CategoryPage() {
                           </p>
                         )}
 
-                        <div className="mt-4 flex flex-wrap gap-2">
+                        <div className="mt-4 flex flex-wrap items-center gap-2 pointer-events-auto">
                           {!SITE_ACCESS.EVENT_DETAILS_ENABLED ? (
                             <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-violet-300">
                               <Lock size={10} />
@@ -378,11 +398,21 @@ export default function CategoryPage() {
                               {item.venue}
                             </span>
                           )}
+
+                          <a
+                            href={rulebook.pdfUrl}
+                            download={`${item.slug}-rulebook.pdf`}
+                            className="liquid-glass relative z-20 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-violet-300 transition hover:bg-violet-500/20 hover:border-violet-400"
+                            title={`Download ${item.name} Rulebook PDF`}
+                          >
+                            <FileDown size={11} />
+                            <span>Rulebook</span>
+                          </a>
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2.5">
+                    <div className="relative z-10 pointer-events-none flex items-center gap-2.5 shrink-0">
                       {!SITE_ACCESS.EVENT_DETAILS_ENABLED ? (
                         <>
                           <span className="hidden sm:inline font-mono text-[10px] tracking-wider uppercase text-violet-300/60">
@@ -398,23 +428,6 @@ export default function CategoryPage() {
                         </div>
                       )}
                     </div>
-                  </>
-                );
-
-                return SITE_ACCESS.EVENT_DETAILS_ENABLED ? (
-                  <Link
-                    key={item.id}
-                    href={`/events/${category}/${item.slug}`}
-                    className="liquid-glass group flex flex-col md:flex-row md:items-center md:justify-between gap-6 rounded-[24px] border border-white/10 p-7 transition-all hover:border-violet-500/40 hover:bg-white/[0.05] hover:shadow-[0_15px_40px_rgba(168,85,247,0.15)] md:p-8"
-                  >
-                    {cardInner}
-                  </Link>
-                ) : (
-                  <div
-                    key={item.id}
-                    className="liquid-glass group flex flex-col md:flex-row md:items-center md:justify-between gap-6 rounded-[24px] border border-white/10 p-7 transition-all hover:border-white/20 hover:bg-white/[0.03] md:p-8"
-                  >
-                    {cardInner}
                   </div>
                 );
               })}

@@ -16,6 +16,7 @@ import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/ui/Navbar";
 import TerminalPlaceholder from "@/components/ui/TerminalPlaceholder";
 import { SITE_ACCESS } from "@/lib/config/site-access";
+import { getEventRulebook } from "@/lib/events/rulebooks";
 
 export const revalidate = 300;
 
@@ -340,17 +341,35 @@ const heroImage =
             <div className="flex flex-col justify-end">
               <p className="max-w-lg text-base leading-7 text-white/60">
                 Official eligibility requirements, competition formats,
-                judging criteria and realm-specific regulations verified by the CGC University festival committee.
+                judging criteria, and round guidelines for <span className="text-white font-medium">{currentEvent.name}</span>, verified by the CGC University festival committee.
               </p>
 
-              <a
-                href={`/rulebooks/saviskar-2026-${category}-rulebook.pdf`}
-                download
-                className="mt-8 liquid-glass inline-flex w-fit items-center gap-2.5 rounded-full px-6 py-3.5 text-sm font-medium text-white transition hover:bg-white/15 hover:border-violet-400"
-              >
-                <FileDown size={16} />
-                Download {currentEvent.category ? currentEvent.category.toUpperCase() : "REALM"} Rulebook PDF
-              </a>
+              {(() => {
+                const rulebook = getEventRulebook(currentEvent.slug || event, category);
+                return (
+                  <div className="mt-8 flex flex-wrap items-center gap-3.5">
+                    <a
+                      href={rulebook.pdfUrl}
+                      download={`${currentEvent.slug || event}-rulebook.pdf`}
+                      className="liquid-glass inline-flex items-center gap-2.5 rounded-full px-6 py-3.5 text-sm font-medium text-white transition hover:bg-white/15 hover:border-violet-400 shadow-[0_10px_30px_rgba(168,85,247,0.15)]"
+                    >
+                      <FileDown size={16} className="text-violet-300" />
+                      <span>Download {currentEvent.name} Rulebook PDF</span>
+                    </a>
+
+                    <a
+                      href={rulebook.realmPdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-full border border-white/10 px-5 py-3 text-xs font-mono uppercase tracking-wider text-white/60 transition hover:border-white/20 hover:text-white"
+                      title="Open full realm rulebook"
+                    >
+                      <span>Full {currentEvent.category ? currentEvent.category.toUpperCase() : "REALM"} Rulebook (p. {rulebook.startPage})</span>
+                      <ArrowUpRight size={14} />
+                    </a>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>

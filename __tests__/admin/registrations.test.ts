@@ -172,4 +172,15 @@ describe("P1-02: Admin Registrations Event Filtering & Pagination", () => {
     expect(data.totalPages).toBe(2);
     expect(data.registrations).toHaveLength(2);
   });
+
+  it("D. Handles large pageSize=2000 requests without URL/header overflow by chunking IDs", async () => {
+    const req = new Request("http://localhost/api/admin/registrations?pageSize=2000");
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data.pageSize).toBe(2000);
+    expect(data.registrations).toHaveLength(3);
+    expect(data.error).toBeUndefined();
+  });
 });
