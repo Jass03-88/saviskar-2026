@@ -64,6 +64,7 @@ type Member = {
     college: string | null;
     id_card_storage_path?: string | null;
   } | null;
+  accommodation?: any;
 };
 
 type RawMember = {
@@ -486,54 +487,53 @@ export async function GET(request: Request) {
       ])
     );
 
-  const membersByParticipantEventId =
-    new Map<string, Member[]>();
+  const memberParticipantIds = Array.from(
+    new Set(
+      members
+        .map((m) => m.participant_id)
+        .filter((id): id is string => Boolean(id) && !participantIds.includes(id!))
+    )
+  );
 
-  members.forEach((member) => {
-    const current =
-      membersByParticipantEventId.get(
-        member.participant_event_id
-      ) ?? [];
-
-    current.push(member);
-
-    membersByParticipantEventId.set(
-      member.participant_event_id,
-      current
-    );
-  });
-
-  const facultyItems = (facultyResult.data ?? []) as any[];
-  const facultyByGroupId = new Map<string, {
-    id: string;
-    name: string;
-    email: string;
-    phone: string | null;
-    college: string | null;
-    gender?: string | null;
-    state?: string | null;
-    id_card_storage_path?: string | null;
-    idCardStoragePath?: string | null;
-  }>();
-
-  for (const f of facultyItems) {
-    const p = Array.isArray(f.participants) ? f.participants[0] : f.participants;
-    if (f.registration_group_id && p) {
-      facultyByGroupId.set(f.registration_group_id, {
-        id: f.id,
-        name: p.name,
-        email: p.email,
-        phone: p.phone,
-        college: p.college,
-        gender: p.gender,
-        state: p.state,
-        id_card_storage_path: p.id_card_storage_path,
-        idCardStoragePath: p.id_card_storage_path,
-      });
+  let memberAccommodations: any[] = [];
+  if (memberParticipantIds.length > 0) {
+    try {
+      const memberAccResult = await fetchInBatches<any>(memberParticipantIds, (chunk) =>
+        supabaseAdmin
+          .from("participant_accommodations")
+          .select(`
+            id,
+            participant_id,
+            accommodation_plan_id,
+            start_date,
+            end_date,
+            duration_days,
+            amount,
+            currency,
+            status,
+            hostel_id,
+            room_id,
+            checked_in,
+            checked_in_at,
+            checked_out,
+            checked_out_at,
+            created_at,
+            accommodation_plans ( id, name, price ),
+            hostels ( id, name ),
+            hostel_rooms ( id, room_number )
+          `)
+          .in("participant_id", chunk)
+      );
+      memberAccommodations = memberAccResult.data ?? [];
+    } catch (e) {
+      console.warn("Member accommodations fetch error:", e);
     }
   }
 
-  const rawAccommodations = (accommodationsResult?.data ?? []) as any[];
+  const rawAccommodations = [
+    ...((accommodationsResult?.data ?? []) as any[]),
+    ...memberAccommodations,
+  ];
   rawAccommodations.sort((a, b) => {
     if (a.status === "paid" && b.status !== "paid") return -1;
     if (b.status === "paid" && a.status !== "paid") return 1;
@@ -573,12 +573,14 @@ export async function GET(request: Request) {
     expectedAmount: 0,
     paidAmount: 0,
     outstandingAmount: 0,
+    checkedIn: 0,
+    checkedOut: 0,
   };
 
   try {
     const { data: allAccs } = await supabaseAdmin
       .from("participant_accommodations")
-      .select("id, status, amount")
+      .select("id, status, amount, checked_in, checked_out")
       .not("status", "in", '("cancelled","failed")');
 
     if (Array.isArray(allAccs)) {
@@ -593,10 +595,66 @@ export async function GET(request: Request) {
           accommodationStats.pendingBookings++;
           accommodationStats.outstandingAmount += amt;
         }
+        if (a.checked_in) accommodationStats.checkedIn++;
+        if (a.checked_out) accommodationStats.checkedOut++;
       }
     }
   } catch (accStatsErr) {
     console.warn("Global accommodation stats skipped:", accStatsErr);
+  }
+
+  const membersByParticipantEventId =
+    new Map<string, Member[]>();
+
+  members.forEach((member) => {
+    const current =
+      membersByParticipantEventId.get(
+        member.participant_event_id
+      ) ?? [];
+
+    const memberAcc = member.participant_id
+      ? accommodationsByParticipantId.get(member.participant_id) ?? null
+      : null;
+
+    current.push({
+      ...member,
+      accommodation: memberAcc,
+    });
+
+    membersByParticipantEventId.set(
+      member.participant_event_id,
+      current
+    );
+  });
+
+  const facultyItems = (facultyResult.data ?? []) as any[];
+  const facultyByGroupId = new Map<string, {
+    id: string;
+    name: string;
+    email: string;
+    phone: string | null;
+    college: string | null;
+    gender?: string | null;
+    state?: string | null;
+    id_card_storage_path?: string | null;
+    idCardStoragePath?: string | null;
+  }>();
+
+  for (const f of facultyItems) {
+    const p = Array.isArray(f.participants) ? f.participants[0] : f.participants;
+    if (f.registration_group_id && p) {
+      facultyByGroupId.set(f.registration_group_id, {
+        id: f.id,
+        name: p.name,
+        email: p.email,
+        phone: p.phone,
+        college: p.college,
+        gender: p.gender,
+        state: p.state,
+        id_card_storage_path: p.id_card_storage_path,
+        idCardStoragePath: p.id_card_storage_path,
+      });
+    }
   }
 
   const registrations =

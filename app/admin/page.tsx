@@ -114,6 +114,7 @@ type RegistrationMember = {
     college: string | null;
     id_card_storage_path?: string | null;
   } | null;
+  accommodation?: AccommodationDetail | null;
 };
 
 type Registration = {
@@ -292,6 +293,7 @@ export default function AdminPage() {
     expectedAmount: number;
     paidAmount: number;
     outstandingAmount: number;
+    checkedIn?: number;
   } | null>(null);
 
   const [isBreakdownOpen, setIsBreakdownOpen] = useState(true);
@@ -544,6 +546,15 @@ export default function AdminPage() {
             isPrimary?: boolean;
             accommodation_access?: boolean;
             total?: number;
+            accommodationStats?: {
+              totalBookings: number;
+              paidBookings: number;
+              pendingBookings: number;
+              expectedAmount: number;
+              paidAmount: number;
+              outstandingAmount: number;
+              checkedIn?: number;
+            };
             error?: string;
           };
 
@@ -557,6 +568,9 @@ export default function AdminPage() {
         if (!ignore) {
           if (typeof payload.total === "number") {
             setServerTotal(payload.total);
+          }
+          if (payload.accommodationStats) {
+            setServerAccommodationStats(payload.accommodationStats);
           }
           setRegistrations(
             payload.registrations ?? []
@@ -766,7 +780,7 @@ export default function AdminPage() {
 
           const matchesAccommodation = (() => {
             if (accommodationFilter === "all") return true;
-            const hasAcc = Boolean(item.accommodation);
+            const hasAcc = Boolean(item.accommodation) || Boolean(item.members?.some((m) => m.accommodation));
             if (accommodationFilter === "with") return hasAcc;
             if (accommodationFilter === "without") return !hasAcc;
             return true;
@@ -863,6 +877,11 @@ export default function AdminPage() {
       if (item.accommodation && !accMap.has(item.accommodation.id || item.participant.id)) {
         accMap.set(item.accommodation.id || item.participant.id, item.accommodation);
       }
+      item.members?.forEach((m) => {
+        if (m.accommodation && !accMap.has(m.accommodation.id || m.participant_id || m.id)) {
+          accMap.set(m.accommodation.id || m.participant_id || m.id, m.accommodation);
+        }
+      });
     });
 
     const accList = Array.from(accMap.values());
@@ -894,15 +913,18 @@ export default function AdminPage() {
     const globalOutstanding = serverAccommodationStats?.outstandingAmount ?? outstandingAmount;
     const globalTotal = serverAccommodationStats?.totalBookings ?? totalBookings;
     const globalPaidBookings = serverAccommodationStats?.paidBookings ?? paidBookings;
+    const globalPendingBookings = serverAccommodationStats?.pendingBookings ?? pendingBookings;
+    const globalCheckedIn = serverAccommodationStats?.checkedIn ?? checkedIn;
 
     return {
-      totalBookings: Math.max(globalTotal, totalBookings),
-      paidBookings: Math.max(globalPaidBookings, paidBookings),
-      pendingBookings: Math.max(globalTotal - globalPaidBookings, pendingBookings),
-      expectedAmount: Math.max(globalExpected, expectedAmount),
-      paidAmount: Math.max(globalPaid, paidAmount),
-      outstandingAmount: Math.max(globalOutstanding, outstandingAmount),
-      checkedIn,
+      totalBookings: serverAccommodationStats ? globalTotal : totalBookings,
+      paidBookings: serverAccommodationStats ? globalPaidBookings : paidBookings,
+      pendingBookings: serverAccommodationStats ? globalPendingBookings : pendingBookings,
+      expectedAmount: serverAccommodationStats ? globalExpected : expectedAmount,
+      paidAmount: serverAccommodationStats ? globalPaid : paidAmount,
+      outstandingAmount: serverAccommodationStats ? globalOutstanding : outstandingAmount,
+      checkedIn: globalCheckedIn,
+      localEventBookings: totalBookings,
     };
   }, [registrations, serverAccommodationStats]);
 
@@ -2704,6 +2726,8 @@ export default function AdminPage() {
                     group[0].participant;
 
                   const acc = group.find((item) => item.accommodation)?.accommodation;
+                  const memberAcc = group.flatMap((item) => item.members ?? []).find((m) => m.accommodation)?.accommodation;
+                  const effectiveAcc = acc || memberAcc;
 
                   const checked =
                     group.filter(
@@ -2765,15 +2789,15 @@ export default function AdminPage() {
                                 participant.participant_id
                               }
                             </span>
-                            {acc && (
+                            {effectiveAcc && (
                               <span
                                 className={`inline-flex items-center rounded-full px-1.5 py-0.2 text-[8px] font-bold tracking-tight border ${
-                                  acc.status === "paid"
+                                  effectiveAcc.status === "paid"
                                     ? "bg-violet-50 text-violet-700 border-violet-200"
                                     : "bg-amber-50 text-amber-700 border-amber-200"
                                 }`}
                               >
-                                🏨 Stay {acc.status === "paid" ? "Paid" : "Pending"}
+                                🏨 Stay {effectiveAcc.status === "paid" ? "Paid" : "Pending"}{!acc && memberAcc ? " (Member)" : ""}
                               </span>
                             )}
                           </div>
@@ -3551,6 +3575,18 @@ export default function AdminPage() {
                                         ) : (
                                           <span className="font-mono text-[10px] font-bold text-black/45">
                                             {member.participants?.participant_id || "No ID"}
+                                          </span>
+                                        )}
+                                        {member.accommodation && (
+                                          <span
+                                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[8px] font-bold border ${
+                                              member.accommodation.status === "paid"
+                                                ? "bg-violet-50 text-violet-700 border-violet-200"
+                                                : "bg-amber-50 text-amber-700 border-amber-200"
+                                            }`}
+                                          >
+                                            <Bed size={9} />
+                                            <span>Stay: {member.accommodation.status === "paid" ? "Paid" : "Pending"}</span>
                                           </span>
                                         )}
                                       </div>

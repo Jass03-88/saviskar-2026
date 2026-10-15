@@ -109,11 +109,16 @@ function createMockAdminClient() {
         };
       }
       if (table === "participant_event_members" || table === "payment_order_items" || table === "faculty_incharges" || table === "participant_accommodations") {
+        const createBuilder = () => {
+          const builder: any = Promise.resolve({ data: [], error: null });
+          builder.in = () => Promise.resolve({ data: [], error: null });
+          builder.not = () => Promise.resolve({ data: [], error: null });
+          builder.order = () => builder;
+          builder.limit = () => Promise.resolve({ data: [], error: null });
+          return builder;
+        };
         return {
-          select: () => ({
-            in: () => Promise.resolve({ data: [], error: null }),
-            not: () => Promise.resolve({ data: [], error: null }),
-          }),
+          select: () => createBuilder(),
         };
       }
       return {};
