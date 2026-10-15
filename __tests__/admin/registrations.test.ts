@@ -108,10 +108,11 @@ function createMockAdminClient() {
           }),
         };
       }
-      if (table === "participant_event_members" || table === "payment_order_items") {
+      if (table === "participant_event_members" || table === "payment_order_items" || table === "faculty_incharges" || table === "participant_accommodations") {
         return {
           select: () => ({
             in: () => Promise.resolve({ data: [], error: null }),
+            not: () => Promise.resolve({ data: [], error: null }),
           }),
         };
       }

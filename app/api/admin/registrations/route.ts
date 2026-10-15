@@ -295,6 +295,7 @@ export async function GET(request: Request) {
     membersResult,
     paymentOrdersResult,
     facultyResult,
+    accommodationsResult,
   ] = await Promise.all([
     fetchInBatches<Participant>(participantIds, (chunk) =>
       supabaseAdmin
@@ -338,7 +339,38 @@ export async function GET(request: Request) {
         )
         .in("registration_group_id", chunk)
     ),
+
+    fetchInBatches<any>(participantIds, (chunk) =>
+      supabaseAdmin
+        .from("participant_accommodations")
+        .select(`
+          id,
+          participant_id,
+          accommodation_plan_id,
+          start_date,
+          end_date,
+          duration_days,
+          amount,
+          currency,
+          status,
+          hostel_id,
+          room_id,
+          checked_in,
+          checked_in_at,
+          checked_out,
+          checked_out_at,
+          created_at,
+          accommodation_plans ( id, name, price ),
+          hostels ( id, name ),
+          hostel_rooms ( id, room_number )
+        `)
+        .in("participant_id", chunk)
+    ),
   ]);
+
+  if (accommodationsResult?.error) {
+    console.warn("Accommodations batch fetch warning:", accommodationsResult.error);
+  }
 
   const queryError =
     participantsResult.error ??
@@ -501,6 +533,72 @@ export async function GET(request: Request) {
     }
   }
 
+  const rawAccommodations = (accommodationsResult?.data ?? []) as any[];
+  rawAccommodations.sort((a, b) => {
+    if (a.status === "paid" && b.status !== "paid") return -1;
+    if (b.status === "paid" && a.status !== "paid") return 1;
+    return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+  });
+
+  const accommodationsByParticipantId = new Map<string, any>();
+  for (const acc of rawAccommodations) {
+    if (acc.participant_id && !accommodationsByParticipantId.has(acc.participant_id)) {
+      const plan = Array.isArray(acc.accommodation_plans) ? acc.accommodation_plans[0] : acc.accommodation_plans;
+      const hostel = Array.isArray(acc.hostels) ? acc.hostels[0] : acc.hostels;
+      const room = Array.isArray(acc.hostel_rooms) ? acc.hostel_rooms[0] : acc.hostel_rooms;
+
+      accommodationsByParticipantId.set(acc.participant_id, {
+        id: acc.id,
+        plan_name: plan?.name || (acc.duration_days ? `${acc.duration_days}-Day Accommodation` : "Accommodation"),
+        start_date: acc.start_date,
+        end_date: acc.end_date,
+        duration_days: acc.duration_days,
+        amount: Number(acc.amount) || Number(plan?.price) || 0,
+        currency: acc.currency || "INR",
+        status: acc.status,
+        hostel_name: hostel?.name ?? null,
+        room_number: room?.room_number ?? null,
+        checked_in: !!acc.checked_in,
+        checked_in_at: acc.checked_in_at ?? null,
+        checked_out: !!acc.checked_out,
+        checked_out_at: acc.checked_out_at ?? null,
+      });
+    }
+  }
+
+  let accommodationStats = {
+    totalBookings: 0,
+    paidBookings: 0,
+    pendingBookings: 0,
+    expectedAmount: 0,
+    paidAmount: 0,
+    outstandingAmount: 0,
+  };
+
+  try {
+    const { data: allAccs } = await supabaseAdmin
+      .from("participant_accommodations")
+      .select("id, status, amount")
+      .not("status", "in", '("cancelled","failed")');
+
+    if (Array.isArray(allAccs)) {
+      for (const a of allAccs) {
+        const amt = Number(a.amount) || 0;
+        accommodationStats.totalBookings++;
+        accommodationStats.expectedAmount += amt;
+        if (a.status === "paid") {
+          accommodationStats.paidBookings++;
+          accommodationStats.paidAmount += amt;
+        } else {
+          accommodationStats.pendingBookings++;
+          accommodationStats.outstandingAmount += amt;
+        }
+      }
+    }
+  } catch (accStatsErr) {
+    console.warn("Global accommodation stats skipped:", accStatsErr);
+  }
+
   const registrations =
     participantEvents.flatMap(
       (registration) => {
@@ -509,10 +607,18 @@ export async function GET(request: Request) {
             registration.participant_id
           );
 
+        const acc =
+          accommodationsByParticipantId.get(
+            registration.participant_id
+          ) ?? null;
+
         return participant
           ? [
             {
-              participant,
+              participant: {
+                ...participant,
+                accommodation: acc,
+              },
               registration,
               event:
                 eventsById.get(
@@ -530,6 +636,7 @@ export async function GET(request: Request) {
                 paymentOrdersByRegistration.get(
                   registration.id
                 ) ?? null,
+              accommodation: acc,
             },
           ]
           : [];
@@ -548,6 +655,7 @@ export async function GET(request: Request) {
       page,
       pageSize,
       totalPages: Math.ceil((totalCount ?? 0) / pageSize),
+      accommodationStats,
       ...(schemaWarning ? { schemaWarning } : {}),
     },
     {

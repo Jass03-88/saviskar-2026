@@ -29,6 +29,9 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  Bed,
+  Building2,
+  SlidersHorizontal,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
@@ -37,6 +40,23 @@ import { parseAdminCategories } from "@/lib/admin/scope";
 /* =========================================================
    TYPES
 ========================================================= */
+
+export type AccommodationDetail = {
+  id: string;
+  plan_name: string;
+  start_date: string;
+  end_date: string;
+  duration_days: number;
+  amount: number;
+  currency: string;
+  status: string;
+  hostel_name: string | null;
+  room_number: string | null;
+  checked_in: boolean;
+  checked_in_at: string | null;
+  checked_out: boolean;
+  checked_out_at: string | null;
+};
 
 type Participant = {
   id: string;
@@ -50,6 +70,7 @@ type Participant = {
   state?: string | null;
   id_card_storage_path?: string | null;
   created_at: string;
+  accommodation?: AccommodationDetail | null;
 };
 
 type ParticipantEvent = {
@@ -120,6 +141,7 @@ type Registration = {
     status: string;
     updated_at: string;
   } | null;
+  accommodation?: AccommodationDetail | null;
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
@@ -261,6 +283,21 @@ export default function AdminPage() {
 
   const [paymentOverviewState, setPaymentOverviewState] = useState<"all" | "paid" | "unpaid" | "free">("all");
   const [paymentOverviewCategory, setPaymentOverviewCategory] = useState<"all" | "technical" | "non-technical" | "cultural">("all");
+  const [includeAccommodation, setIncludeAccommodation] = useState(false);
+  const [accommodationFilter, setAccommodationFilter] = useState<"all" | "with" | "without">("all");
+  const [serverAccommodationStats, setServerAccommodationStats] = useState<{
+    totalBookings: number;
+    paidBookings: number;
+    pendingBookings: number;
+    expectedAmount: number;
+    paidAmount: number;
+    outstandingAmount: number;
+  } | null>(null);
+
+  const [isBreakdownOpen, setIsBreakdownOpen] = useState(true);
+  const [breakdownCategory, setBreakdownCategory] = useState<string>("all");
+  const [breakdownPaymentType, setBreakdownPaymentType] = useState<"all" | "paid" | "free">("all");
+  const [breakdownSearch, setBreakdownSearch] = useState("");
   const [isPaymentOverviewOpen, setIsPaymentOverviewOpen] = useState(false);
   const [isEventAnalyticsOpen, setIsEventAnalyticsOpen] = useState(false);
 
@@ -401,6 +438,14 @@ export default function AdminPage() {
             assigned_category?: string | null;
             assigned_events?: string[] | null;
             total?: number;
+            accommodationStats?: {
+              totalBookings: number;
+              paidBookings: number;
+              pendingBookings: number;
+              expectedAmount: number;
+              paidAmount: number;
+              outstandingAmount: number;
+            };
             error?: string;
           };
 
@@ -413,6 +458,10 @@ export default function AdminPage() {
 
         if (typeof payload.total === "number") {
           setServerTotal(payload.total);
+        }
+
+        if (payload.accommodationStats) {
+          setServerAccommodationStats(payload.accommodationStats);
         }
 
         setRegistrations(
@@ -715,6 +764,14 @@ export default function AdminPage() {
             return true;
           })();
 
+          const matchesAccommodation = (() => {
+            if (accommodationFilter === "all") return true;
+            const hasAcc = Boolean(item.accommodation);
+            if (accommodationFilter === "with") return hasAcc;
+            if (accommodationFilter === "without") return !hasAcc;
+            return true;
+          })();
+
           return (
             matchesSearch &&
             matchesEvent &&
@@ -722,7 +779,8 @@ export default function AdminPage() {
             matchesStatus &&
             matchesPayment &&
             matchesArchive &&
-            matchesException
+            matchesException &&
+            matchesAccommodation
           );
         }
       );
@@ -736,6 +794,7 @@ export default function AdminPage() {
       archiveFilter,
       exceptionFilter,
       filterState,
+      accommodationFilter,
     ]);
 
   /* =======================================================
@@ -795,17 +854,66 @@ export default function AdminPage() {
   }, [registrations, serverTotal]);
 
   /* =======================================================
-     PAYMENT STATS
+     ACCOMMODATION SUMMARY & PAYMENT STATS
   ======================================================= */
+
+  const localAccommodationSummary = useMemo(() => {
+    const accMap = new Map<string, AccommodationDetail>();
+    registrations.forEach((item) => {
+      if (item.accommodation && !accMap.has(item.accommodation.id || item.participant.id)) {
+        accMap.set(item.accommodation.id || item.participant.id, item.accommodation);
+      }
+    });
+
+    const accList = Array.from(accMap.values());
+    let totalBookings = accList.length;
+    let paidBookings = 0;
+    let pendingBookings = 0;
+    let expectedAmount = 0;
+    let paidAmount = 0;
+    let outstandingAmount = 0;
+    let checkedIn = 0;
+
+    accList.forEach((acc) => {
+      const amt = Number(acc.amount) || 0;
+      expectedAmount += amt;
+      if (acc.status === "paid") {
+        paidBookings++;
+        paidAmount += amt;
+      } else {
+        pendingBookings++;
+        outstandingAmount += amt;
+      }
+      if (acc.checked_in) {
+        checkedIn++;
+      }
+    });
+
+    const globalExpected = serverAccommodationStats?.expectedAmount ?? expectedAmount;
+    const globalPaid = serverAccommodationStats?.paidAmount ?? paidAmount;
+    const globalOutstanding = serverAccommodationStats?.outstandingAmount ?? outstandingAmount;
+    const globalTotal = serverAccommodationStats?.totalBookings ?? totalBookings;
+    const globalPaidBookings = serverAccommodationStats?.paidBookings ?? paidBookings;
+
+    return {
+      totalBookings: Math.max(globalTotal, totalBookings),
+      paidBookings: Math.max(globalPaidBookings, paidBookings),
+      pendingBookings: Math.max(globalTotal - globalPaidBookings, pendingBookings),
+      expectedAmount: Math.max(globalExpected, expectedAmount),
+      paidAmount: Math.max(globalPaid, paidAmount),
+      outstandingAmount: Math.max(globalOutstanding, outstandingAmount),
+      checkedIn,
+    };
+  }, [registrations, serverAccommodationStats]);
 
   const paymentStats = useMemo(() => {
     let allCount = 0;
     let paidCount = 0;
     let unpaidCount = 0;
     let freeCount = 0;
-    let expectedAmount = 0;
-    let paidAmount = 0;
-    let outstandingAmount = 0;
+    let eventExpectedAmount = 0;
+    let eventPaidAmount = 0;
+    let eventOutstandingAmount = 0;
 
     const activeRegistrations = registrations.filter(
       (item) => item.registration.is_archived !== true
@@ -820,19 +928,49 @@ export default function AdminPage() {
       if (!isPaidEvent) {
         freeCount++;
       } else {
-        expectedAmount += amount;
+        eventExpectedAmount += amount;
         if (isSuccess) {
           paidCount++;
-          paidAmount += amount;
+          eventPaidAmount += amount;
         } else {
           unpaidCount++;
-          outstandingAmount += amount;
+          eventOutstandingAmount += amount;
         }
       }
     });
 
-    return { all: allCount, paid: paidCount, unpaid: unpaidCount, free: freeCount, expectedAmount, paidAmount, outstandingAmount };
-  }, [registrations]);
+    const accExpected = localAccommodationSummary.expectedAmount;
+    const accPaid = localAccommodationSummary.paidAmount;
+    const accOutstanding = localAccommodationSummary.outstandingAmount;
+
+    const expectedAmount = includeAccommodation
+      ? eventExpectedAmount + accExpected
+      : eventExpectedAmount;
+    const paidAmount = includeAccommodation
+      ? eventPaidAmount + accPaid
+      : eventPaidAmount;
+    const outstandingAmount = includeAccommodation
+      ? eventOutstandingAmount + accOutstanding
+      : eventOutstandingAmount;
+
+    return {
+      all: allCount,
+      paid: paidCount,
+      unpaid: unpaidCount,
+      free: freeCount,
+      expectedAmount,
+      paidAmount,
+      outstandingAmount,
+      eventExpectedAmount,
+      eventPaidAmount,
+      eventOutstandingAmount,
+      accExpected,
+      accPaid,
+      accOutstanding,
+      totalAccommodationBookings: localAccommodationSummary.totalBookings,
+      paidAccommodationBookings: localAccommodationSummary.paidBookings,
+    };
+  }, [registrations, includeAccommodation, localAccommodationSummary]);
 
   /* =======================================================
      EVENT ANALYTICS
@@ -860,15 +998,28 @@ export default function AdminPage() {
                 item.registration.is_archived !== true
             ).length;
 
-          const paidCount =
+          const mainChecked =
             registrations.filter(
               (item) =>
                 item.registration.event_id === event.id &&
-                item.registration.is_archived !== true &&
-                item.registration.payment_status === "paid"
+                item.registration.main_checked_in === true &&
+                item.registration.is_archived !== true
             ).length;
 
+          const paidRegs = registrations.filter(
+            (item) =>
+              item.registration.event_id === event.id &&
+              item.registration.is_archived !== true &&
+              item.registration.payment_status === "paid"
+          );
+          const paidCount = paidRegs.length;
+          const paidAmount = paidRegs.reduce(
+            (sum, r) => sum + (r.registration.payment_amount || (event.registration_fee || 0)),
+            0
+          );
+
           const pendingCount = event.payment_type === "paid" ? count - paidCount : 0;
+          const pendingAmount = pendingCount * (event.registration_fee || 0);
 
           const individualCount = registrations.filter(
             (item) => item.registration.event_id === event.id && item.registration.is_archived !== true && !item.registration.team_name
@@ -882,8 +1033,11 @@ export default function AdminPage() {
             ...event,
             count,
             checked,
+            mainChecked,
             paidCount,
+            paidAmount,
             pendingCount,
+            pendingAmount,
             individualCount,
             teamCount,
           };
@@ -965,6 +1119,48 @@ export default function AdminPage() {
     setFacultyDocumentError(null);
     documentRequestRef.current++;
   }
+
+  const closeDrawer = useCallback(() => {
+    setSelectedParticipant(null);
+    setSelectedParticipantEvents([]);
+    setViewDocumentUrl(null);
+    setActiveDocumentLabel(null);
+    setActiveDocumentPath(null);
+    setDocumentError(null);
+    setFacultyDocumentUrl(null);
+    setFacultyDocumentError(null);
+    documentRequestRef.current++;
+  }, []);
+
+  useEffect(() => {
+    if (selectedParticipant) {
+      const originalOverflow = document.body.style.overflow;
+      const originalOverscroll = document.body.style.overscrollBehavior;
+      document.body.style.overflow = "hidden";
+      document.body.style.overscrollBehavior = "none";
+      const globalLenis = (window as unknown as { __lenis?: { stop: () => void; start: () => void } }).__lenis;
+      if (globalLenis) {
+        globalLenis.stop();
+      }
+      return () => {
+        document.body.style.overflow = originalOverflow;
+        document.body.style.overscrollBehavior = originalOverscroll;
+        if (globalLenis) {
+          globalLenis.start();
+        }
+      };
+    }
+  }, [selectedParticipant]);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && selectedParticipant) {
+        closeDrawer();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedParticipant, closeDrawer]);
 
   /* =======================================================
      CHECK IN
@@ -1319,6 +1515,11 @@ export default function AdminPage() {
         "Main Checked In At",
         "Event Checked In",
         "Event Checked In At",
+        "Accommodation Plan",
+        "Accommodation Status",
+        "Accommodation Amount",
+        "Hostel",
+        "Room Number",
         "Registration Group ID",
         "Registered At",
       ],
@@ -1382,6 +1583,16 @@ export default function AdminPage() {
             item.registration
               .checked_in_at
           ),
+
+          item.accommodation?.plan_name ?? "None",
+
+          item.accommodation?.status ?? "None",
+
+          item.accommodation?.amount ?? 0,
+
+          item.accommodation?.hostel_name ?? "Unassigned",
+
+          item.accommodation?.room_number ?? "Unassigned",
 
           (item.registration as any).registration_group_id ?? "",
 
@@ -1704,383 +1915,503 @@ export default function AdminPage() {
 
         {/* PAYMENT OVERVIEW */}
 
+        {/* PAYMENT OVERVIEW */}
+
         <div className="mb-8 rounded-[28px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.04)] md:p-8">
           <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
                 Financial Snapshot
               </p>
-              <h2 className="mt-2 text-xl font-semibold text-black md:text-2xl">
-                Payment Overview
-              </h2>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setPaymentOverviewState("all")}
-                className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition ${paymentOverviewState === "all" ? "bg-black text-white" : "bg-black/[0.04] text-black/60 hover:bg-black/[0.08]"}`}
-              >
-                ALL <span className="opacity-50 font-mono">{paymentStats.all}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setPaymentOverviewState("paid")}
-                className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition ${paymentOverviewState === "paid" ? "bg-green-600 text-white" : "bg-green-50 text-green-700 hover:bg-green-100"}`}
-              >
-                PAID <span className="opacity-50 font-mono">{paymentStats.paid}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setPaymentOverviewState("unpaid")}
-                className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition ${paymentOverviewState === "unpaid" ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"}`}
-              >
-                UNPAID <span className="opacity-50 font-mono">{paymentStats.unpaid}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setPaymentOverviewState("free")}
-                className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition ${paymentOverviewState === "free" ? "bg-black/60 text-white" : "bg-black/[0.04] text-black/50 hover:bg-black/[0.08]"}`}
-              >
-                FREE <span className="opacity-50 font-mono">{paymentStats.free}</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 grid-cols-2 lg:grid-cols-4 pt-4 border-t border-black/5">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Expected Revenue</p>
-              <p className="text-xl font-semibold text-black mt-1">₹{paymentStats.expectedAmount.toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-green-600/70">Paid Revenue</p>
-              <p className="text-xl font-semibold text-green-700 mt-1">₹{paymentStats.paidAmount.toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-red-600/70">Outstanding</p>
-              <p className="text-xl font-semibold text-red-700 mt-1">₹{paymentStats.outstandingAmount.toLocaleString()}</p>
-            </div>
-          </div>
-
-          {/* Collapsible Dropdown Toggle */}
-          <div className="mt-6 border-t border-black/[0.05] pt-4">
-            <button
-              type="button"
-              onClick={() => setIsPaymentOverviewOpen((prev) => !prev)}
-              className="flex w-full items-center justify-between rounded-2xl bg-black/[0.02] hover:bg-black/[0.04] px-4 py-3 text-left transition border border-black/[0.04]"
-              aria-expanded={isPaymentOverviewOpen}
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="text-xs font-semibold text-black">
-                  {isPaymentOverviewOpen ? "Hide Event Payment Breakdown" : "View Event Payment Breakdown"}
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <h2 className="text-xl font-semibold text-black md:text-2xl">
+                  Payment Overview
+                </h2>
+                <span className="rounded-full bg-black/5 px-2.5 py-0.5 text-[10px] font-bold text-black/60">
+                  {includeAccommodation ? "Events + Accommodations" : "Events Only"}
                 </span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Accommodation Toggle */}
+              <div className="flex items-center rounded-full bg-black/[0.04] p-1 border border-black/[0.06]">
+                <button
+                  type="button"
+                  onClick={() => setIncludeAccommodation(false)}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                    !includeAccommodation
+                      ? "bg-white text-black shadow-sm"
+                      : "text-black/50 hover:text-black"
+                  }`}
+                >
+                  Events Only
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIncludeAccommodation(true)}
+                  className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                    includeAccommodation
+                      ? "bg-black text-white shadow-sm"
+                      : "text-black/50 hover:text-black"
+                  }`}
+                >
+                  <span>With Accommodation</span>
+                  {localAccommodationSummary.paidAmount > 0 && (
+                    <span className={`rounded-full px-1.5 py-0.2 text-[9px] font-mono font-bold ${
+                      includeAccommodation ? "bg-white/20 text-white" : "bg-black/10 text-black/60"
+                    }`}>
+                      +₹{localAccommodationSummary.paidAmount.toLocaleString()}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Status Filter Buttons */}
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPaymentOverviewState("all")}
+                  className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${paymentOverviewState === "all" ? "bg-black text-white" : "bg-black/[0.04] text-black/60 hover:bg-black/[0.08]"}`}
+                >
+                  ALL <span className="opacity-50 font-mono text-[10px]">{paymentStats.all}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentOverviewState("paid")}
+                  className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${paymentOverviewState === "paid" ? "bg-green-600 text-white" : "bg-green-50 text-green-700 hover:bg-green-100"}`}
+                >
+                  PAID <span className="opacity-50 font-mono text-[10px]">{paymentStats.paid}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentOverviewState("unpaid")}
+                  className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${paymentOverviewState === "unpaid" ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100"}`}
+                >
+                  UNPAID <span className="opacity-50 font-mono text-[10px]">{paymentStats.unpaid}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentOverviewState("free")}
+                  className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${paymentOverviewState === "free" ? "bg-black/60 text-white" : "bg-black/[0.04] text-black/50 hover:bg-black/[0.08]"}`}
+                >
+                  FREE <span className="opacity-50 font-mono text-[10px]">{paymentStats.free}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 grid-cols-1 sm:grid-cols-3 pt-5 border-t border-black/5">
+            <div className="rounded-2xl bg-black/[0.02] p-4 border border-black/[0.03]">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Expected Revenue</p>
+              <p className="text-2xl font-semibold text-black mt-1">₹{paymentStats.expectedAmount.toLocaleString()}</p>
+              {includeAccommodation && (
+                <p className="text-[10px] text-black/45 mt-1 font-medium">
+                  Events: ₹{paymentStats.eventExpectedAmount.toLocaleString()} · Acc: ₹{paymentStats.accExpected.toLocaleString()}
+                </p>
+              )}
+            </div>
+            <div className="rounded-2xl bg-green-50/60 p-4 border border-green-100/60">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-green-700/70">Paid Revenue</p>
+              <p className="text-2xl font-semibold text-green-700 mt-1">₹{paymentStats.paidAmount.toLocaleString()}</p>
+              {includeAccommodation && (
+                <p className="text-[10px] text-green-800/60 mt-1 font-medium">
+                  Events: ₹{paymentStats.eventPaidAmount.toLocaleString()} · Acc: ₹{paymentStats.accPaid.toLocaleString()}
+                </p>
+              )}
+            </div>
+            <div className="rounded-2xl bg-red-50/60 p-4 border border-red-100/60">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-red-700/70">Outstanding</p>
+              <p className="text-2xl font-semibold text-red-700 mt-1">₹{paymentStats.outstandingAmount.toLocaleString()}</p>
+              {includeAccommodation && (
+                <p className="text-[10px] text-red-800/60 mt-1 font-medium">
+                  Events: ₹{paymentStats.eventOutstandingAmount.toLocaleString()} · Acc: ₹{paymentStats.accOutstanding.toLocaleString()}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Accommodation Snapshot Banner (when accommodation is toggled ON) */}
+          {includeAccommodation && (
+            <div className="mt-4 rounded-2xl bg-violet-50/70 border border-violet-100 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-200">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-600 text-white shadow-sm">
+                  <Bed size={18} />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-violet-950">
+                    Campus Accommodation Snapshot
+                  </p>
+                  <p className="text-[11px] text-violet-700 mt-0.5">
+                    {localAccommodationSummary.totalBookings} booked delegates ({localAccommodationSummary.paidBookings} paid, {localAccommodationSummary.pendingBookings} pending) · {localAccommodationSummary.checkedIn} checked in
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAccommodationFilter(accommodationFilter === "with" ? "all" : "with")}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition border ${
+                    accommodationFilter === "with"
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "bg-white text-violet-800 border-violet-200 hover:bg-violet-100/60"
+                  }`}
+                >
+                  {accommodationFilter === "with" ? "Showing Acc in Table" : "Filter Table by Acc"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push("/admin/accommodations")}
+                  className="rounded-full bg-violet-950 text-white px-3.5 py-1.5 text-xs font-semibold hover:bg-black transition flex items-center gap-1.5"
+                >
+                  <span>Manage Rooms</span>
+                  <ExternalLink size={12} />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* =========================================================
+            BLENDED REGISTRATION & PAYMENT BREAKDOWN
+        ========================================================= */}
+
+        <div className="mb-8 rounded-[28px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.04)] md:p-8">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
+                Unified Analytics
+              </p>
+              <div className="mt-1 flex items-center gap-3">
+                <h2 className="text-xl font-semibold text-black md:text-2xl">
+                  Registration & Payment Breakdown
+                </h2>
                 <span className="rounded-full bg-black/5 px-2.5 py-0.5 text-[10px] font-bold text-black/50">
                   {eventAnalytics.length} events
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-xs font-medium text-black/50">
-                <span>{isPaymentOverviewOpen ? "Collapse" : "Expand"}</span>
-                {isPaymentOverviewOpen ? (
-                  <ChevronUp size={16} className="text-black/60 transition-transform" />
-                ) : (
-                  <ChevronDown size={16} className="text-black/60 transition-transform" />
-                )}
-              </div>
-            </button>
+            </div>
 
-            {isPaymentOverviewOpen && (
-              <div className="mt-5 pt-1 animate-in fade-in duration-200">
-                {availableCategories.length > 1 && (
-                  <div className="flex flex-wrap gap-2 mb-6">
+            <div className="flex items-center gap-2">
+              {eventFilter !== "all" && (
+                <button
+                  type="button"
+                  onClick={() => setEventFilter("all")}
+                  className="rounded-full bg-black/5 px-3 py-1.5 text-xs font-semibold text-black hover:bg-black/10 transition"
+                >
+                  Clear event filter
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsBreakdownOpen((prev) => !prev)}
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-black/[0.03] hover:bg-black/[0.06] px-4 py-2 text-xs font-semibold text-black transition"
+                aria-expanded={isBreakdownOpen}
+              >
+                <span>{isBreakdownOpen ? "Hide Breakdown" : "View Breakdown"}</span>
+                {isBreakdownOpen ? (
+                  <ChevronUp size={15} className="text-black/60" />
+                ) : (
+                  <ChevronDown size={15} className="text-black/60" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Active Filter Indicator */}
+          {eventFilter !== "all" && (
+            <div className="mt-4 flex items-center justify-between rounded-xl bg-black/[0.02] border border-black/[0.05] px-4 py-2.5 text-xs">
+              <span className="text-black/60">
+                Table currently filtered by:{" "}
+                <span className="font-bold text-black">
+                  {events.find((e) => e.id === eventFilter)?.name || eventFilter}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setEventFilter("all")}
+                className="text-xs font-medium text-black underline underline-offset-2 hover:opacity-70"
+              >
+                Reset to all events
+              </button>
+            </div>
+          )}
+
+          {isBreakdownOpen && (
+            <div className="mt-6 pt-2 animate-in fade-in duration-200">
+              {/* Category & Status Filter Controls */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-black/[0.05]">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setBreakdownCategory("all")}
+                    className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition border ${
+                      breakdownCategory === "all"
+                        ? "border-black bg-black text-white"
+                        : "border-black/10 bg-black/[0.02] text-black/60 hover:bg-black/[0.05]"
+                    }`}
+                  >
+                    All Categories
+                  </button>
+                  {availableCategories.map((cat) => (
                     <button
+                      key={cat}
                       type="button"
-                      onClick={() => setPaymentOverviewCategory("all")}
-                      className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition border ${
-                        paymentOverviewCategory === "all"
-                          ? "border-black/20 bg-black/[0.03] text-black"
-                          : "border-transparent text-black/40 hover:text-black/70"
+                      onClick={() => setBreakdownCategory(cat)}
+                      className={`rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition border ${
+                        breakdownCategory === cat
+                          ? "border-black bg-black text-white"
+                          : "border-black/10 bg-black/[0.02] text-black/60 hover:bg-black/[0.05]"
                       }`}
                     >
-                      All Categories
-                    </button>
-                    {availableCategories.map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setPaymentOverviewCategory(cat as any)}
-                        className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition border ${
-                          paymentOverviewCategory === cat
-                            ? "border-black/20 bg-black/[0.03] text-black"
-                            : "border-transparent text-black/40 hover:text-black/70"
-                        }`}
-                      >
-                        {cat.replace("-", " ")}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {eventAnalytics
-                    .filter((event) => {
-                      const isPaidEvent = event.payment_type === "paid";
-                      if (availableCategories.length > 1 && paymentOverviewCategory !== "all") {
-                        if (event.category?.toLowerCase() !== paymentOverviewCategory.toLowerCase()) return false;
-                      }
-                      if (paymentOverviewState === "free") return !isPaidEvent;
-                      if (paymentOverviewState === "paid" || paymentOverviewState === "unpaid") {
-                        if (!isPaidEvent) return false;
-                      }
-                      return true;
-                    })
-                    .map((event) => {
-                      const eventRegs = registrations.filter(r => r.registration.event_id === event.id && r.registration.is_archived !== true);
-                      let matchedCount = 0;
-
-                      eventRegs.forEach(r => {
-                        const isSuccess = r.registration.payment_status === "paid";
-                        if (paymentOverviewState === "paid" && !isSuccess) return;
-                        if (paymentOverviewState === "unpaid" && isSuccess) return;
-                        matchedCount++;
-                      });
-
-                      if (matchedCount === 0 && paymentOverviewState !== "all") return null;
-
-                      const fee = event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable";
-                      const isPaidEvent = event.payment_type === "paid";
-
-                      let badgeClass = "bg-black/[0.04] border-black/10 text-black/45";
-                      let badgeText = "FREE";
-
-                      if (isPaidEvent) {
-                        if (paymentOverviewState === "unpaid" || (paymentOverviewState === "all" && matchedCount > 0)) {
-                          badgeClass = "bg-red-50 text-red-700 border-red-200";
-                          badgeText = `${fee} · PAYMENT PENDING`;
-                        }
-                        if (paymentOverviewState === "paid") {
-                          badgeClass = "bg-green-50 text-green-700 border-green-200";
-                          badgeText = `${fee} · PAID`;
-                        }
-                      }
-
-                      return (
-                        <div key={`po-${event.id}`} className="rounded-[20px] bg-black/[0.02] border border-black/[0.04] p-5 flex flex-col justify-between">
-                          <div>
-                            <p className="truncate text-[10px] uppercase tracking-[0.16em] text-black/40">
-                              {event.category ?? "Event"}
-                            </p>
-                            <p className="mt-1 truncate text-sm font-semibold text-black">
-                              {event.name}
-                            </p>
-                            <div className="mt-2.5">
-                              {isPaidEvent ? (
-                                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${paymentOverviewState === 'all'
-                                  ? 'bg-black/[0.04] text-black/60 border-black/10'
-                                  : badgeClass
-                                  }`}>
-                                  {paymentOverviewState === 'all' ? `${fee} · PAID EVENT` : badgeText}
-                                </span>
-                              ) : (
-                                <span className="rounded-full bg-black/[0.04] border border-black/10 px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-black/45">
-                                  FREE
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="mt-5">
-                            <p className="text-2xl font-semibold text-black leading-none">
-                              {matchedCount} <span className="text-[9px] font-medium text-black/40 uppercase tracking-wider align-middle ml-1">registrations</span>
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* EVENT ANALYTICS */}
-
-        {eventAnalytics.length >
-          0 && (
-            <div className="mb-8 rounded-[28px] bg-white p-6 shadow-[0_20px_80px_rgba(0,0,0,0.04)] md:p-8">
-
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
-                    Event analytics
-                  </p>
-
-                  <div className="mt-1 flex items-center gap-3">
-                    <h2 className="text-xl font-semibold text-black md:text-2xl">
-                      Registration breakdown
-                    </h2>
-                    <span className="rounded-full bg-black/5 px-2.5 py-0.5 text-[10px] font-bold text-black/50">
-                      {eventAnalytics.length} events
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {eventFilter !== "all" && (
-                    <button
-                      type="button"
-                      onClick={() => setEventFilter("all")}
-                      className="rounded-full bg-black/5 px-3 py-1.5 text-xs font-semibold text-black hover:bg-black/10 transition"
-                    >
-                      Clear filter
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setIsEventAnalyticsOpen((prev) => !prev)}
-                    className="flex items-center gap-2 rounded-full border border-black/10 bg-black/[0.03] hover:bg-black/[0.06] px-4 py-2 text-xs font-semibold text-black transition"
-                    aria-expanded={isEventAnalyticsOpen}
-                  >
-                    <span>{isEventAnalyticsOpen ? "Hide Breakdown" : "View Breakdown"}</span>
-                    {isEventAnalyticsOpen ? (
-                      <ChevronUp size={15} className="text-black/60" />
-                    ) : (
-                      <ChevronDown size={15} className="text-black/60" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {!isEventAnalyticsOpen && eventFilter !== "all" && (
-                <div className="mt-4 flex items-center justify-between rounded-xl bg-black/[0.02] border border-black/[0.04] px-4 py-2 text-xs">
-                  <span className="text-black/60">
-                    Filtered by: <span className="font-semibold text-black">{events.find(e => e.id === eventFilter)?.name || eventFilter}</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setEventFilter("all")}
-                    className="text-xs font-medium text-black underline underline-offset-2 hover:opacity-70"
-                  >
-                    Reset to all
-                  </button>
-                </div>
-              )}
-
-              {isEventAnalyticsOpen && (
-                <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 animate-in fade-in duration-200">
-                {eventAnalytics.map(
-                  (event) => (
-                    <button
-                      type="button"
-                      key={event.id}
-                      onClick={() =>
-                        setEventFilter(
-                          eventFilter ===
-                            event.id
-                            ? "all"
-                            : event.id
-                        )
-                      }
-                      className={`rounded-[20px] p-5 text-left transition ${eventFilter ===
-                        event.id
-                        ? "bg-black text-white"
-                        : "bg-black/[0.035] hover:bg-black/[0.06]"
-                        }`}
-                    >
-                      <p
-                        className={`truncate text-[10px] uppercase tracking-[0.16em] ${eventFilter ===
-                          event.id
-                          ? "text-white/40"
-                          : "text-black/40"
-                          }`}
-                      >
-                        {event.category ??
-                          "Event"}
-                      </p>
-
-                      <div className="mt-1">
-                        <p
-                          className={`truncate text-sm font-semibold ${eventFilter === event.id
-                            ? "text-white"
-                            : "text-black"
-                            }`}
-                        >
-                          {event.name}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {event.payment_type === "paid" ? (
-                            <>
-                              {event.paidCount > 0 && (
-                                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${eventFilter === event.id
-                                  ? "border-green-400 bg-green-500/20 text-white"
-                                  : "border-green-200 bg-green-50 text-green-700"
-                                  }`}>
-                                  {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PAID
-                                </span>
-                              )}
-                              {event.pendingCount > 0 && (
-                                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${eventFilter === event.id
-                                  ? "border-red-400 bg-red-500/20 text-white"
-                                  : "border-red-200 bg-red-50 text-red-700"
-                                  }`}>
-                                  {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PENDING
-                                </span>
-                              )}
-                              {event.paidCount === 0 && event.pendingCount === 0 && (
-                                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${eventFilter === event.id
-                                  ? "border-white/20 text-white"
-                                  : "border-black/10 text-black/60 bg-black/[0.04]"
-                                  }`}>
-                                  {event.registration_fee != null ? `₹${event.registration_fee}` : "Amount unavailable"} · PAID EVENT
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wider border ${eventFilter === event.id
-                              ? "border-white/20 text-white/70"
-                              : "border-black/10 text-black/50 bg-black/[0.02]"
-                              }`}>
-                              FREE
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="mt-5 flex items-end justify-between">
-                        <div>
-                          <p
-                            className={`text-3xl font-semibold ${eventFilter === event.id
-                              ? "text-white"
-                              : "text-black"
-                              }`}
-                          >
-                            {event.count}
-                            {event.registration_limit ? <span className="text-xl opacity-50">/{event.registration_limit}</span> : ""}
-                          </p>
-                          {event.registration_limit && event.count >= event.registration_limit && (
-                            <span className="mt-1 inline-block rounded bg-red-600 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-white">
-                              FULL
-                            </span>
-                          )}
-                        </div>
-
-                        <p
-                          className={`text-xs ${eventFilter ===
-                            event.id
-                            ? "text-white/40"
-                            : "text-black/35"
-                            }`}
-                        >
-                          {event.checked}/
-                          {event.count} checked
-                          <br />
-                          {event.individualCount} Ind / {event.teamCount} Team
-                        </p>
-                      </div>
+                      {cat.replace("-", " ")}
                     </button>
                   ))}
                 </div>
-              )}
+
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center rounded-full bg-black/[0.03] p-1 border border-black/5">
+                    <button
+                      type="button"
+                      onClick={() => setBreakdownPaymentType("all")}
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition ${
+                        breakdownPaymentType === "all" ? "bg-white text-black shadow-xs" : "text-black/50 hover:text-black"
+                      }`}
+                    >
+                      All Events
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBreakdownPaymentType("paid")}
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition ${
+                        breakdownPaymentType === "paid" ? "bg-white text-green-700 shadow-xs" : "text-black/50 hover:text-black"
+                      }`}
+                    >
+                      Paid
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBreakdownPaymentType("free")}
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition ${
+                        breakdownPaymentType === "free" ? "bg-white text-black shadow-xs" : "text-black/50 hover:text-black"
+                      }`}
+                    >
+                      Free
+                    </button>
+                  </div>
+
+                  <input
+                    type="search"
+                    value={breakdownSearch}
+                    onChange={(e) => setBreakdownSearch(e.target.value)}
+                    placeholder="Search breakdown..."
+                    className="rounded-full border border-black/10 bg-black/[0.02] px-3.5 py-1 text-xs text-black outline-none placeholder:text-black/30 focus:border-black/30 w-36 sm:w-48"
+                  />
+                </div>
+              </div>
+
+              {/* Grid of Blended Cards */}
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {/* Accommodation Card (if opted or included) */}
+                {(includeAccommodation || localAccommodationSummary.totalBookings > 0) &&
+                  (breakdownCategory === "all" || breakdownCategory === "hospitality") && (
+                    <div
+                      onClick={() => setAccommodationFilter(accommodationFilter === "with" ? "all" : "with")}
+                      className={`rounded-[20px] p-5 text-left transition cursor-pointer flex flex-col justify-between border ${
+                        accommodationFilter === "with"
+                          ? "bg-violet-950 text-white border-violet-900 shadow-lg"
+                          : "bg-violet-50/70 border-violet-100 hover:border-violet-200 hover:bg-violet-50"
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className={`text-[10px] uppercase tracking-[0.16em] font-bold ${
+                            accommodationFilter === "with" ? "text-violet-300" : "text-violet-700"
+                          }`}>
+                            Hospitality
+                          </p>
+                          <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                            accommodationFilter === "with"
+                              ? "border-violet-400 bg-violet-800 text-white"
+                              : "border-violet-200 bg-white text-violet-700"
+                          }`}>
+                            PASS BASED
+                          </span>
+                        </div>
+
+                        <p className={`mt-2 truncate text-sm font-semibold ${
+                          accommodationFilter === "with" ? "text-white" : "text-black"
+                        }`}>
+                          Campus Accommodation
+                        </p>
+
+                        <div className="mt-3 flex flex-wrap gap-1">
+                          <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                            accommodationFilter === "with"
+                              ? "border-green-400 bg-green-500/20 text-white"
+                              : "border-green-200 bg-green-50 text-green-700"
+                          }`}>
+                            Paid: ₹{localAccommodationSummary.paidAmount.toLocaleString()} ({localAccommodationSummary.paidBookings})
+                          </span>
+                          {localAccommodationSummary.pendingBookings > 0 && (
+                            <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                              accommodationFilter === "with"
+                                ? "border-amber-400 bg-amber-500/20 text-white"
+                                : "border-amber-200 bg-amber-50 text-amber-700"
+                            }`}>
+                              Pending: {localAccommodationSummary.pendingBookings}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-5 flex items-end justify-between pt-3 border-t border-black/5">
+                        <div>
+                          <p className={`text-2xl font-bold ${accommodationFilter === "with" ? "text-white" : "text-black"}`}>
+                            {localAccommodationSummary.totalBookings}
+                          </p>
+                          <p className={`text-[9px] uppercase tracking-wider font-semibold ${
+                            accommodationFilter === "with" ? "text-violet-300" : "text-black/40"
+                          }`}>
+                            Bookings
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-xs font-semibold ${accommodationFilter === "with" ? "text-white/80" : "text-black/60"}`}>
+                            {localAccommodationSummary.checkedIn} checked in
+                          </p>
+                          <p className={`text-[9px] ${accommodationFilter === "with" ? "text-violet-300" : "text-black/35"}`}>
+                            Click to filter table
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                {/* Event Cards */}
+                {eventAnalytics
+                  .filter((event) => {
+                    const isPaidEvent = event.payment_type === "paid";
+                    if (breakdownCategory !== "all" && event.category?.toLowerCase() !== breakdownCategory.toLowerCase()) {
+                      return false;
+                    }
+                    if (breakdownPaymentType === "paid" && !isPaidEvent) return false;
+                    if (breakdownPaymentType === "free" && isPaidEvent) return false;
+                    if (breakdownSearch.trim()) {
+                      const q = breakdownSearch.toLowerCase();
+                      const matchName = event.name.toLowerCase().includes(q);
+                      const matchCat = (event.category || "").toLowerCase().includes(q);
+                      if (!matchName && !matchCat) return false;
+                    }
+                    return true;
+                  })
+                  .map((event) => {
+                    const isPaidEvent = event.payment_type === "paid";
+                    const isSelected = eventFilter === event.id;
+                    const fee = event.registration_fee != null ? `₹${event.registration_fee}` : "Free";
+
+                    return (
+                      <button
+                        type="button"
+                        key={event.id}
+                        onClick={() => setEventFilter(isSelected ? "all" : event.id)}
+                        className={`rounded-[20px] p-5 text-left transition flex flex-col justify-between border ${
+                          isSelected
+                            ? "bg-black text-white border-black shadow-lg"
+                            : "bg-black/[0.02] border-black/[0.04] hover:bg-black/[0.05] hover:border-black/10"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className={`truncate text-[10px] uppercase tracking-[0.16em] font-semibold ${
+                              isSelected ? "text-white/45" : "text-black/40"
+                            }`}>
+                              {event.category ?? "Event"}
+                            </p>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                                isPaidEvent
+                                  ? isSelected
+                                    ? "border-green-400 bg-green-500/20 text-white"
+                                    : "border-green-200 bg-green-50 text-green-700"
+                                  : isSelected
+                                  ? "border-white/20 text-white/70"
+                                  : "border-black/10 text-black/50 bg-black/[0.02]"
+                              }`}
+                            >
+                              {isPaidEvent ? `${fee} · PAID` : "FREE"}
+                            </span>
+                          </div>
+
+                          <p className={`mt-2 truncate text-sm font-semibold ${isSelected ? "text-white" : "text-black"}`}>
+                            {event.name}
+                          </p>
+
+                          {/* Financials Pill */}
+                          <div className="mt-2.5 flex flex-wrap gap-1">
+                            {isPaidEvent ? (
+                              <>
+                                <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                                  isSelected
+                                    ? "border-green-400 bg-green-500/20 text-white"
+                                    : "border-green-200 bg-green-50 text-green-700"
+                                }`}>
+                                  Paid: ₹{event.paidAmount.toLocaleString()} ({event.paidCount})
+                                </span>
+                                {event.pendingCount > 0 && (
+                                  <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                                    isSelected
+                                      ? "border-red-400 bg-red-500/20 text-white"
+                                      : "border-red-200 bg-red-50 text-red-700"
+                                  }`}>
+                                    Pending: ₹{event.pendingAmount.toLocaleString()} ({event.pendingCount})
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                                isSelected ? "border-white/20 text-white/70" : "border-black/10 text-black/50"
+                              }`}>
+                                Free Event · No Fee
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Counts & Check-in Footer */}
+                        <div className="mt-5 flex items-end justify-between pt-3 border-t border-black/5">
+                          <div>
+                            <p className={`text-2xl font-bold leading-none ${isSelected ? "text-white" : "text-black"}`}>
+                              {event.count}
+                              {event.registration_limit ? (
+                                <span className={`text-sm ml-1 font-normal ${isSelected ? "text-white/40" : "text-black/30"}`}>
+                                  /{event.registration_limit}
+                                </span>
+                              ) : ""}
+                            </p>
+                            <p className={`mt-1 text-[9px] uppercase tracking-wider font-semibold ${
+                              isSelected ? "text-white/40" : "text-black/35"
+                            }`}>
+                              Registrations
+                            </p>
+                          </div>
+
+                          <div className="text-right">
+                            <p className={`text-xs font-semibold ${isSelected ? "text-white/80" : "text-black/60"}`}>
+                              Check-In: {event.checked}/{event.count}
+                            </p>
+                            <p className={`text-[9px] mt-0.5 ${isSelected ? "text-white/40" : "text-black/35"}`}>
+                              {event.individualCount} Solo · {event.teamCount} Team
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
           )}
+        </div>
 
         {/* FILTERS */}
 
@@ -2245,6 +2576,20 @@ export default function AdminPage() {
               </option>
             </select>
 
+            <select
+              value={accommodationFilter}
+              onChange={(e) =>
+                setAccommodationFilter(
+                  e.target.value as "all" | "with" | "without"
+                )
+              }
+              className="rounded-[18px] border border-black/10 bg-black px-4 py-3 text-sm outline-none text-white"
+            >
+              <option value="all">All Accommodations</option>
+              <option value="with">🏨 Opted Accommodation</option>
+              <option value="without">No Accommodation</option>
+            </select>
+
             {role === "master" && (
               <select
                 value={archiveFilter}
@@ -2358,6 +2703,8 @@ export default function AdminPage() {
                   const participant =
                     group[0].participant;
 
+                  const acc = group.find((item) => item.accommodation)?.accommodation;
+
                   const checked =
                     group.filter(
                       (item) =>
@@ -2412,11 +2759,24 @@ export default function AdminPage() {
                             }
                           </p>
 
-                          <p className="mt-1 truncate font-mono text-[9px] text-black/35">
-                            {
-                              participant.participant_id
-                            }
-                          </p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                            <span className="truncate font-mono text-[9px] text-black/35">
+                              {
+                                participant.participant_id
+                              }
+                            </span>
+                            {acc && (
+                              <span
+                                className={`inline-flex items-center rounded-full px-1.5 py-0.2 text-[8px] font-bold tracking-tight border ${
+                                  acc.status === "paid"
+                                    ? "bg-violet-50 text-violet-700 border-violet-200"
+                                    : "bg-amber-50 text-amber-700 border-amber-200"
+                                }`}
+                              >
+                                🏨 Stay {acc.status === "paid" ? "Paid" : "Pending"}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -2506,6 +2866,17 @@ export default function AdminPage() {
                             +{group.length - 3}
                           </span>
                         )}
+                        {acc && (
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[9px] font-bold tracking-wider border ${
+                              acc.status === "paid"
+                                ? "bg-violet-50 text-violet-700 border-violet-200"
+                                : "bg-amber-50 text-amber-700 border-amber-200"
+                            }`}
+                          >
+                            🏨 Stay: {acc.status === "paid" ? `₹${acc.amount ?? 0} · PAID` : "PENDING"}
+                          </span>
+                        )}
                       </div>
 
                       {/* STATUS */}
@@ -2516,6 +2887,11 @@ export default function AdminPage() {
                           {group.length}{" "}
                           checked
                         </span>
+                        {acc && (
+                          <span className="rounded-full border border-violet-200 bg-violet-50/70 px-2.5 py-1.5 text-[9px] font-medium text-violet-800">
+                            Stay: {acc.checked_in ? "Checked In" : "Pending"}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex justify-end">
@@ -2536,164 +2912,194 @@ export default function AdminPage() {
           DETAIL DRAWER
       ===================================================== */}
 
-      {selectedParticipant && (
-        <div className="fixed inset-0 z-50">
+      {selectedParticipant && (() => {
+        const selectedParticipantAccommodation =
+          selectedParticipant.accommodation ??
+          selectedParticipantEvents.find((item) => item.accommodation)?.accommodation ??
+          null;
 
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={() => {
-              setSelectedParticipant(
-                null
-              );
-              setSelectedParticipantEvents(
-                []
-              );
-              setViewDocumentUrl(null);
-              setActiveDocumentLabel(null);
-              setActiveDocumentPath(null);
-              setDocumentError(null);
-              setFacultyDocumentUrl(null);
-              setFacultyDocumentError(null);
-              documentRequestRef.current++;
-            }}
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-          />
+        return (
+          <div className="fixed inset-0 z-[120] overflow-hidden" data-lenis-prevent="true">
 
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[620px] flex-col bg-[#f5f5f5] shadow-2xl">
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={closeDrawer}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
 
-            {/* DRAWER HEADER */}
+            <aside
+              data-lenis-prevent="true"
+              className="absolute right-0 top-0 z-[130] flex h-full w-full max-w-[620px] flex-col bg-[#f5f5f5] shadow-2xl overscroll-contain"
+            >
 
-            <div className="flex items-center justify-between border-b border-black/10 bg-white px-6 py-5">
+              {/* DRAWER HEADER */}
 
-              <div>
-                <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30">
-                  Participant
-                </p>
+              <div className="flex items-center justify-between border-b border-black/10 bg-white px-6 py-5">
 
-                <p className="mt-1 font-mono text-xs text-black/45">
-                  {
-                    selectedParticipant.participant_id
-                  }
-                </p>
-              </div>
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30">
+                    Participant
+                  </p>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedParticipant(
-                    null
-                  );
-                  setSelectedParticipantEvents(
-                    []
-                  );
-                  setViewDocumentUrl(null);
-                  setActiveDocumentLabel(null);
-                  setActiveDocumentPath(null);
-                  setDocumentError(null);
-                  setFacultyDocumentUrl(null);
-                  setFacultyDocumentError(null);
-                  documentRequestRef.current++;
-                }}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-black hover:bg-black hover:text-white"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* DRAWER BODY */}
-
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-
-              {/* PROFILE */}
-
-              <div className="rounded-[28px] bg-black p-6 text-white">
-
-                <div className="flex items-center gap-4">
-
-                  {selectedParticipant.photo_url ? (
-                    <Image
-                      src={
-                        selectedParticipant.photo_url
-                      }
-                      alt=""
-                      width={64}
-                      height={64}
-                      className="h-16 w-16 rounded-2xl object-cover"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-xl font-semibold text-black">
-                      {selectedParticipant.name
-                        ?.charAt(
-                          0
-                        )
-                        .toUpperCase()}
-                    </div>
-                  )}
-
-                  <div className="min-w-0">
-                    <h2 className="text-2xl font-semibold tracking-[-0.04em]">
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <p className="font-mono text-xs text-black/60 font-semibold">
                       {
-                        selectedParticipant.name
-                      }
-                    </h2>
-
-                    <p className="mt-1 text-xs text-white/70">
-                      {
-                        selectedParticipant.college
+                        selectedParticipant.participant_id
                       }
                     </p>
+                    {selectedParticipantAccommodation ? (
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                          selectedParticipantAccommodation.status === "paid"
+                            ? "bg-violet-50 text-violet-700 border-violet-200"
+                            : "bg-amber-50 text-amber-700 border-amber-200"
+                        }`}
+                      >
+                        🏨 Stay: {selectedParticipantAccommodation.status === "paid" ? "Paid" : "Pending"}
+                      </span>
+                    ) : (
+                      <span className="rounded-full px-2.5 py-0.5 text-[8px] font-medium text-black/35 bg-black/[0.03] border border-black/5">
+                        No Stay Opted
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                <div className="mt-6 space-y-3">
-
-                  <DrawerInfo
-                    icon={
-                      <Mail
-                        size={14}
-                      />
-                    }
-                    value={
-                      selectedParticipant.email
-                    }
-                  />
-
-                  <DrawerInfo
-                    icon={
-                      <Phone
-                        size={14}
-                      />
-                    }
-                    value={
-                      selectedParticipant.phone ??
-                      "No phone"
-                    }
-                  />
-
-                  <DrawerInfo
-                    icon={
-                      <GraduationCap
-                        size={14}
-                      />
-                    }
-                    value={
-                      selectedParticipant.college ??
-                      "No college"
-                    }
-                  />
-                </div>
+                <button
+                  type="button"
+                  onClick={closeDrawer}
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-black text-white hover:bg-black/80 transition"
+                >
+                  <X size={16} />
+                </button>
               </div>
 
-              {/* PERSONAL DETAILS */}
-              <div className="mt-7">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30 mb-2">Personal Details</p>
-                <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black grid grid-cols-2 gap-3">
-                  <SmallDetail label="Gender" value={selectedParticipant.gender ?? "No gender specified"} />
-                  <SmallDetail label="State" value={selectedParticipant.state ?? "No state specified"} />
+              {/* DRAWER BODY */}
+
+              <div
+                data-lenis-prevent="true"
+                className="flex-1 overflow-y-auto px-6 py-6 overscroll-contain"
+                style={{ overscrollBehavior: "contain" }}
+              >
+
+                {/* PROFILE */}
+
+                <div className="rounded-[28px] bg-black p-6 text-white">
+
+                  <div className="flex items-center gap-4">
+
+                    {selectedParticipant.photo_url ? (
+                      <Image
+                        src={
+                          selectedParticipant.photo_url
+                        }
+                        alt=""
+                        width={64}
+                        height={64}
+                        className="h-16 w-16 rounded-2xl object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-xl font-semibold text-black">
+                        {selectedParticipant.name
+                          ?.charAt(
+                            0
+                          )
+                          .toUpperCase()}
+                      </div>
+                    )}
+
+                    <div className="min-w-0">
+                      <h2 className="text-2xl font-semibold tracking-[-0.04em]">
+                        {
+                          selectedParticipant.name
+                        }
+                      </h2>
+
+                      <p className="mt-1 text-xs text-white/70">
+                        {
+                          selectedParticipant.college
+                        }
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 space-y-3">
+
+                    <DrawerInfo
+                      icon={
+                        <Mail
+                          size={14}
+                        />
+                      }
+                      value={
+                        selectedParticipant.email
+                      }
+                    />
+
+                    <DrawerInfo
+                      icon={
+                        <Phone
+                          size={14}
+                        />
+                      }
+                      value={
+                        selectedParticipant.phone ??
+                        "No phone"
+                      }
+                    />
+
+                    <DrawerInfo
+                      icon={
+                        <GraduationCap
+                          size={14}
+                        />
+                      }
+                      value={
+                        selectedParticipant.college ??
+                        "No college"
+                      }
+                    />
+
+                    <DrawerInfo
+                      icon={
+                        <Bed
+                          size={14}
+                        />
+                      }
+                      value={
+                        selectedParticipantAccommodation
+                          ? `Campus Stay: ${selectedParticipantAccommodation.plan_name} (${selectedParticipantAccommodation.status === "paid" ? `Paid · ₹${selectedParticipantAccommodation.amount}` : "Payment Pending"})`
+                          : "Campus Stay: Not Opted"
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
+
+                {/* PERSONAL DETAILS */}
+                <div className="mt-7">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30 mb-2">Personal Details</p>
+                  <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <SmallDetail label="Gender" value={selectedParticipant.gender ?? "No gender specified"} />
+                    <SmallDetail label="State" value={selectedParticipant.state ?? "No state specified"} />
+                    <SmallDetail
+                      label="Campus Stay"
+                      value={
+                        selectedParticipantAccommodation
+                          ? `${selectedParticipantAccommodation.plan_name} (${selectedParticipantAccommodation.status === "paid" ? "Paid" : "Pending"})`
+                          : "Not Opted"
+                      }
+                      className={
+                        selectedParticipantAccommodation
+                          ? selectedParticipantAccommodation.status === "paid"
+                            ? "text-violet-700 font-bold"
+                            : "text-amber-700 font-bold"
+                          : "text-black/40"
+                      }
+                    />
+                  </div>
+                </div>
 
               {/* DOCUMENTS */}
               {(selectedParticipant.photo_url ||
@@ -2848,6 +3254,103 @@ export default function AdminPage() {
                   );
                 })()}
               </div>
+
+              {/* CAMPUS ACCOMMODATION */}
+              <div className="mt-7">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30">
+                        Campus Accommodation
+                      </p>
+                      {selectedParticipantAccommodation && (
+                        <span
+                          className={`rounded-full px-2.5 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                            selectedParticipantAccommodation.status === "paid"
+                              ? "border-green-200 bg-green-50 text-green-700"
+                              : "border-amber-200 bg-amber-50 text-amber-700"
+                          }`}
+                        >
+                          {selectedParticipantAccommodation.status === "paid"
+                            ? "Paid"
+                            : "Payment Pending"}
+                        </span>
+                      )}
+                    </div>
+
+                    {selectedParticipantAccommodation ? (
+                      <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black space-y-4">
+                        <div className="flex items-center justify-between pb-3 border-b border-black/5">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 border border-violet-100">
+                              <Bed size={18} />
+                            </div>
+                            <div>
+                              <p className="text-sm font-semibold text-black">
+                                {selectedParticipantAccommodation.plan_name || "Campus Stay Pass"}
+                              </p>
+                              <p className="text-[10px] text-black/40">
+                                {selectedParticipantAccommodation.duration_days
+                                  ? `${selectedParticipantAccommodation.duration_days} Day${
+                                      selectedParticipantAccommodation.duration_days > 1 ? "s" : ""
+                                    } Pass`
+                                  : "Standard Stay"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-base font-bold text-black">
+                              ₹{(selectedParticipantAccommodation.amount || 0).toLocaleString()}
+                            </p>
+                            <p className="text-[9px] uppercase tracking-wider text-black/40 font-semibold">
+                              Accommodation Fee
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <SmallDetail
+                            label="Check-in Date"
+                            value={formatDate(selectedParticipantAccommodation.start_date)}
+                          />
+                          <SmallDetail
+                            label="Check-out Date"
+                            value={formatDate(selectedParticipantAccommodation.end_date)}
+                          />
+                          <SmallDetail
+                            label="Hostel"
+                            value={selectedParticipantAccommodation.hostel_name || "To be allocated"}
+                          />
+                          <SmallDetail
+                            label="Room / Bed"
+                            value={selectedParticipantAccommodation.room_number || "To be allocated"}
+                          />
+                          <SmallDetail
+                            label="Hostel Check-in"
+                            value={
+                              selectedParticipantAccommodation.checked_in
+                                ? (selectedParticipantAccommodation.checked_in_at
+                                    ? formatDate(selectedParticipantAccommodation.checked_in_at)
+                                    : "Checked in")
+                                : "Pending"
+                            }
+                          />
+                          <SmallDetail
+                            label="Hostel Check-out"
+                            value={
+                              selectedParticipantAccommodation.checked_out
+                                ? (selectedParticipantAccommodation.checked_out_at
+                                    ? formatDate(selectedParticipantAccommodation.checked_out_at)
+                                    : "Checked out")
+                                : "Pending"
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-[24px] border border-black/10 bg-black/5 p-4 text-black/40 text-xs font-medium text-center">
+                        No Accommodation Opted
+                      </div>
+                    )}
+                  </div>
 
               {/* EVENT REGISTRATIONS */}
 
@@ -3228,7 +3731,8 @@ export default function AdminPage() {
             </div>
           </aside>
         </div>
-      )}
+      );
+    })()}
     </main>
   );
 }
