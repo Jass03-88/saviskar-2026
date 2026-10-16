@@ -28,6 +28,7 @@ import {
   ExternalLink,
   LogOut,
   Calendar,
+  RefreshCw,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { supabase } from "@/lib/supabase";
@@ -267,6 +268,7 @@ export default function RegistrationForm({
   const [accommodationPlans, setAccommodationPlans] = useState<AccommodationPlan[]>([]);
   const [selectedEventIds, setSelectedEventIds] = useState<string[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const [eventSearch, setEventSearch] = useState("");
   const [eventCategory, setEventCategory] = useState("All");
   const [eventState, setEventState] = useState<
@@ -318,11 +320,20 @@ export default function RegistrationForm({
   const [existingParticipantId, setExistingParticipantId] = useState("");
   const [existingParticipantEmail, setExistingParticipantEmail] = useState(normalizedSessionEmail);
 
+  /*
+   * Reset participant state when session email changes (account switch / logout)
+   */
   useEffect(() => {
-    if (normalizedSessionEmail) {
+    if (normalizedSessionEmail !== existingParticipantEmail) {
       setExistingParticipantEmail(normalizedSessionEmail);
+      setParticipantLookup(null);
+      setParticipantLookupEvents([]);
+      setParticipantLookupAccommodations([]);
+      setSelectedEventIds([]);
+      setEventState({});
+      setMainAccommodationSlug("");
     }
-  }, [normalizedSessionEmail]);
+  }, [normalizedSessionEmail, existingParticipantEmail]);
 
   const [participantLookupLoading, setParticipantLookupLoading] = useState(false);
   const [participantLookup, setParticipantLookup] = useState<
@@ -341,15 +352,16 @@ export default function RegistrationForm({
   const [copiedId, setCopiedId] = useState(false);
   const isSaveOnlyRef = useRef(false);
   const [termsModalOpen, setTermsModalOpen] = useState(false);
+  const activeLookupRequestRef = useRef(0);
 
   /*
    * LOAD EVENTS
    */
-  useEffect(() => {
-    async function loadEvents() {
-      setEventsLoading(true);
-      setErrorMessage("");
+  const loadEvents = useCallback(async () => {
+    setEventsLoading(true);
+    setEventsError(null);
 
+    try {
       const { data, error } = await supabase
         .from("events")
         .select(`
@@ -379,18 +391,15 @@ export default function RegistrationForm({
 
       if (error) {
         console.error("EVENT LIST ERROR:", error);
-
-        setErrorMessage(
-          "We couldn't load the event list. Please refresh and try again."
+        setEventsError(
+          "We couldn't load the competition lineup. Please check your connection and retry."
         );
-
-        setEventsLoading(false);
         return;
       }
 
       const loaded = (data ?? []) as EventOption[];
-
       setEventOptions(loaded);
+      setEventsError(null);
 
       /*
        * Preserve old links such as:
@@ -410,12 +419,17 @@ export default function RegistrationForm({
       if (match) {
         setSelectedEventIds([match.id]);
       }
-
+    } catch (err) {
+      console.error("Exception loading events:", err);
+      setEventsError("Unable to load competition lineup. Please retry.");
+    } finally {
       setEventsLoading(false);
     }
-
-    loadEvents();
   }, [selectedEventParam]);
+
+  useEffect(() => {
+    void loadEvents();
+  }, [loadEvents]);
 
   /*
    * SELECTED EVENTS
@@ -451,10 +465,23 @@ export default function RegistrationForm({
     return ["All", ...categories];
   }, [eventOptions]);
 
-  const registeredEventIds = useMemo(
-    () => new Set(participantLookupEvents.map((item) => item.eventId)),
-    [participantLookupEvents]
-  );
+  const registeredEventIds = useMemo(() => {
+    if (!Array.isArray(participantLookupEvents) || participantLookupEvents.length === 0) {
+      return new Set<string>();
+    }
+    const ids = new Set<string>();
+    for (const item of participantLookupEvents) {
+      if (item && typeof item.eventId === "string" && item.eventId.trim().length > 0) {
+        const regStatus = (item.registrationStatus || "").toLowerCase();
+        const payStatus = (item.paymentStatus || "").toLowerCase();
+        // Exclude only active registrations; allow re-registration if cancelled or failed
+        if (regStatus !== "cancelled" && payStatus !== "failed" && payStatus !== "cancelled") {
+          ids.add(item.eventId.trim());
+        }
+      }
+    }
+    return ids;
+  }, [participantLookupEvents]);
 
   const filteredEvents = useMemo(() => {
     const query = eventSearch.trim().toLowerCase();
@@ -495,17 +522,31 @@ export default function RegistrationForm({
   const applyParticipantData = useCallback(
     (
       participant: NonNullable<ParticipantLookupResponse["participant"]>,
-      events: ParticipantLookupEvent[],
+      events: ParticipantLookupEvent[] = [],
       accommodations: ParticipantLookupAccommodation[] = []
     ) => {
-      setExistingParticipantId(participant.participantId);
+      if (!participant || typeof participant !== "object") return;
+      const safeEvents = Array.isArray(events) ? events : [];
+      const safeAccommodations = Array.isArray(accommodations) ? accommodations : [];
+
+      setExistingParticipantId(participant.participantId || "");
       setExistingParticipantEmail(normalizedSessionEmail || participant.email || "");
       setParticipantLookup(participant);
-      setParticipantLookupEvents(events);
-      setParticipantLookupAccommodations(accommodations);
+      setParticipantLookupEvents(safeEvents);
+      setParticipantLookupAccommodations(safeAccommodations);
 
-      // Never keep an event selected if the participant is already registered for it.
-      const registeredIds = new Set(events.map((item) => item.eventId));
+      // Never keep an event selected if the participant is already registered for it with an active/confirmed registration.
+      const registeredIds = new Set(
+        safeEvents
+          .filter((item) => {
+            if (!item || typeof item.eventId !== "string" || !item.eventId.trim()) return false;
+            const regStatus = (item.registrationStatus || "").toLowerCase();
+            const payStatus = (item.paymentStatus || "").toLowerCase();
+            return regStatus !== "cancelled" && payStatus !== "failed" && payStatus !== "cancelled";
+          })
+          .map((item) => item.eventId.trim())
+      );
+
       setSelectedEventIds((current) =>
         current.filter((eventId) => !registeredIds.has(eventId))
       );
@@ -516,8 +557,8 @@ export default function RegistrationForm({
       });
 
       // Clear draft accommodation if participant already has confirmed campus stay
-      const hasConfirmedAcc = accommodations.some(
-        (a) => a.status === "confirmed" || a.status === "approved"
+      const hasConfirmedAcc = safeAccommodations.some(
+        (a) => a && (a.status === "confirmed" || a.status === "approved" || a.status === "paid")
       );
       if (hasConfirmedAcc) {
         setMainAccommodationSlug("");
@@ -534,6 +575,8 @@ export default function RegistrationForm({
 
     async function autoFetchParticipant() {
       if (!normalizedSessionEmail) return;
+
+      const requestId = ++activeLookupRequestRef.current;
 
       try {
         setParticipantLookupLoading(true);
@@ -555,7 +598,7 @@ export default function RegistrationForm({
           accommodations?: ParticipantLookupAccommodation[];
         };
 
-        if (!isMounted) return;
+        if (!isMounted || requestId !== activeLookupRequestRef.current) return;
 
         if (result.success && result.found && result.participant) {
           applyParticipantData(
@@ -567,7 +610,7 @@ export default function RegistrationForm({
       } catch (err) {
         console.error("Auto participant lookup failed:", err);
       } finally {
-        if (isMounted) {
+        if (isMounted && requestId === activeLookupRequestRef.current) {
           setParticipantLookupLoading(false);
         }
       }
@@ -2702,6 +2745,20 @@ export default function RegistrationForm({
                   <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-violet-400 border-t-transparent mb-3" />
                   <p>Loading competitive realms...</p>
                 </div>
+              ) : eventsError ? (
+                <div className="rounded-2xl border border-red-500/30 bg-red-950/20 p-8 text-center backdrop-blur-md space-y-3">
+                  <AlertCircle className="mx-auto h-8 w-8 text-amber-400" />
+                  <p className="text-sm font-medium text-white">{eventsError}</p>
+                  <p className="text-xs text-white/50">Unable to reach the live competition database.</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadEvents()}
+                    className="inline-flex items-center gap-2 rounded-xl bg-violet-600/30 hover:bg-violet-600/50 border border-violet-400/40 px-4 py-2 text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(168,85,247,0.2)]"
+                  >
+                    <RefreshCw size={13} />
+                    <span>Retry Loading Competitions</span>
+                  </button>
+                </div>
               ) : (
                 <>
                   {participantLookup && (
@@ -2941,8 +2998,11 @@ export default function RegistrationForm({
                   <div className="overflow-hidden rounded-2xl border border-white/12 bg-gradient-to-b from-white/[0.03] to-black/40 backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.06)]">
                     <div className="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-5 py-3.5">
                       <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-white/50">
-                        {filteredEvents.length}{" "}
-                        {filteredEvents.length === 1 ? "competition" : "competitions"} available
+                        {eventsLoading
+                          ? "Loading competitions..."
+                          : eventsError
+                            ? "Error loading competitions"
+                            : `${filteredEvents.length} ${filteredEvents.length === 1 ? "competition" : "competitions"} available`}
                       </p>
 
                       {eventSearch || eventCategory !== "All" ? (
@@ -2960,11 +3020,33 @@ export default function RegistrationForm({
                       ) : null}
                     </div>
 
-                    {filteredEvents.length === 0 ? (
+                    {eventsLoading ? (
+                      <div className="px-6 py-14 text-center">
+                        <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+                        <p className="mt-3 text-xs font-mono text-white/50">Loading official competition catalogue...</p>
+                      </div>
+                    ) : eventsError ? (
+                      <div className="px-6 py-12 text-center space-y-3">
+                        <AlertCircle className="mx-auto h-8 w-8 text-amber-400" />
+                        <p className="text-sm font-medium text-white">{eventsError}</p>
+                        <button
+                          type="button"
+                          onClick={() => void loadEvents()}
+                          className="inline-flex items-center gap-2 rounded-xl bg-violet-600/30 hover:bg-violet-600/50 border border-violet-400/40 px-4 py-2 text-xs font-semibold text-white transition-all shadow-[0_0_15px_rgba(168,85,247,0.2)]"
+                        >
+                          <RefreshCw size={13} />
+                          <span>Retry Loading Competitions</span>
+                        </button>
+                      </div>
+                    ) : filteredEvents.length === 0 ? (
                       <div className="px-6 py-14 text-center">
                         <p className="text-sm font-medium text-white">No competitions found.</p>
                         <p className="mt-1 text-xs text-white/40">
-                          Try searching for keywords like &quot;Robotics&quot;, &quot;Dance&quot;, &quot;Hackathon&quot;, or change the realm filter.
+                          {eventOptions.length === 0
+                            ? "No active competitions are currently scheduled."
+                            : registeredEventIds.size > 0 && eventOptions.every((e) => registeredEventIds.has(e.id))
+                              ? "You have already registered for all available competitions in this selection."
+                              : "Try searching for keywords like \"Robotics\", \"Dance\", \"Hackathon\", or change the realm filter."}
                         </p>
                       </div>
                     ) : (
