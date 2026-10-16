@@ -118,25 +118,63 @@ export async function GET(request: NextRequest) {
       participant_events (
         id,
         event_id,
+        registration_status,
         payment_status,
         payment_amount,
+        team_name,
+        checked_in,
+        checked_in_at,
         is_archived,
         events (
-          name
+          id,
+          name,
+          category,
+          registration_type,
+          registration_fee,
+          payment_type,
+          payment_unit
         )
       ),
       participant_event_members (
         id,
         participant_event_id,
+        is_team_leader,
         participant_events (
           id,
           event_id,
+          registration_status,
           payment_status,
           payment_amount,
+          team_name,
+          checked_in,
+          checked_in_at,
           is_archived,
           events (
-            name
+            id,
+            name,
+            category,
+            registration_type,
+            registration_fee,
+            payment_type,
+            payment_unit
           )
+        )
+      ),
+      participant_accommodations (
+        id,
+        accommodation_plan_id,
+        start_date,
+        end_date,
+        duration_days,
+        amount,
+        currency,
+        status,
+        accommodation_plans (
+          id,
+          name,
+          slug,
+          duration,
+          price
         )
       )
     `
@@ -167,12 +205,30 @@ export async function GET(request: NextRequest) {
   type RawEventRecord = {
     id: string;
     event_id: string;
+    registration_status?: string | null;
     payment_status: string | null;
     payment_amount: number | null;
+    team_name?: string | null;
+    checked_in?: boolean | null;
+    checked_in_at?: string | null;
     is_archived?: boolean | null;
     events:
-      | { name: string | null }
-      | { name: string | null }[]
+      | {
+          id?: string;
+          name: string | null;
+          category?: string | null;
+          registration_type?: string | null;
+          registration_fee?: number | null;
+          payment_type?: string | null;
+        }
+      | {
+          id?: string;
+          name: string | null;
+          category?: string | null;
+          registration_type?: string | null;
+          registration_fee?: number | null;
+          payment_type?: string | null;
+        }[]
       | null;
   };
 
@@ -181,6 +237,7 @@ export async function GET(request: NextRequest) {
     (data.participant_event_members as Array<{
       id: string;
       participant_event_id: string;
+      is_team_leader?: boolean | null;
       participant_events: RawEventRecord | RawEventRecord[] | null;
     }> | null) ?? [];
 
@@ -190,24 +247,38 @@ export async function GET(request: NextRequest) {
       participantEventId: string;
       eventId: string;
       eventName: string;
+      category: string | null;
+      registrationType: string;
+      teamName: string | null;
+      isTeamLeader: boolean;
       paymentStatus: string | null;
       paymentAmount: number | null;
+      registrationStatus: string | null;
+      checkedIn: boolean;
     }
   >();
 
   // 1. Process direct events (individual or team events where this participant is the registrant/leader)
   for (const event of directEvents) {
     if (!event || event.is_archived === true) continue;
-    const eventName =
-      (Array.isArray(event.events) ? event.events[0] : event.events)?.name ??
-      "Unknown event";
+    const rawEvt = Array.isArray(event.events) ? event.events[0] : event.events;
+    const eventName = rawEvt?.name ?? "Unknown event";
+    const category = rawEvt?.category ?? null;
+    const registrationType = rawEvt?.registration_type ?? (event.team_name ? "team" : "individual");
+    const isTeamLeader = registrationType === "team";
 
     eventsByParticipantEventId.set(event.id, {
       participantEventId: event.id,
       eventId: event.event_id,
       eventName,
+      category,
+      registrationType,
+      teamName: event.team_name ?? null,
+      isTeamLeader,
       paymentStatus: event.payment_status,
       paymentAmount: event.payment_amount,
+      registrationStatus: event.registration_status ?? "confirmed",
+      checkedIn: Boolean(event.checked_in),
     });
   }
 
@@ -220,27 +291,70 @@ export async function GET(request: NextRequest) {
     if (!event || event.is_archived === true) continue;
     if (eventsByParticipantEventId.has(event.id)) continue;
 
-    const eventName =
-      (Array.isArray(event.events) ? event.events[0] : event.events)?.name ??
-      "Unknown event";
+    const rawEvt = Array.isArray(event.events) ? event.events[0] : event.events;
+    const eventName = rawEvt?.name ?? "Unknown event";
+    const category = rawEvt?.category ?? null;
+    const registrationType = rawEvt?.registration_type ?? "team";
+    const isTeamLeader = memberRow.is_team_leader === true;
 
     eventsByParticipantEventId.set(event.id, {
       participantEventId: event.id,
       eventId: event.event_id,
       eventName,
+      category,
+      registrationType,
+      teamName: event.team_name ?? null,
+      isTeamLeader,
       paymentStatus: event.payment_status,
       paymentAmount: event.payment_amount,
+      registrationStatus: event.registration_status ?? "confirmed",
+      checkedIn: Boolean(event.checked_in),
     });
   }
 
-  // ─── Auto-Reconcile Pending Orders with Gateway ───────────
-  // If the participant has pending events, check if any pending payment order has already
-  // been captured on the gateway (e.g. attendee completed payment on phone, or webhook was delayed).
-  const hasPendingEvents = Array.from(eventsByParticipantEventId.values()).some(
-    (e) => e.paymentStatus === "pending"
-  );
+  // ─── Format Accommodations ──────────────────────────────
+  type RawAccRecord = {
+    id: string;
+    start_date: string;
+    end_date: string;
+    duration_days: number;
+    amount: number;
+    currency: string | null;
+    status: string;
+    accommodation_plans:
+      | { name: string; slug: string; duration?: number; price?: number }
+      | { name: string; slug: string; duration?: number; price?: number }[]
+      | null;
+  };
 
-  if (hasPendingEvents) {
+  const rawAccs = (data.participant_accommodations as RawAccRecord[] | null) ?? [];
+  let accommodations = rawAccs
+    .filter((acc) => acc && acc.status !== "cancelled")
+    .map((acc) => {
+      const rawPlan = Array.isArray(acc.accommodation_plans)
+        ? acc.accommodation_plans[0]
+        : acc.accommodation_plans;
+      return {
+        id: acc.id,
+        planName: rawPlan?.name ?? "Accommodation",
+        planSlug: rawPlan?.slug ?? "",
+        startDate: acc.start_date,
+        endDate: acc.end_date,
+        durationDays: acc.duration_days,
+        amount: Number(acc.amount) || 0,
+        currency: acc.currency || "INR",
+        status: acc.status,
+      };
+    });
+
+  // ─── Auto-Reconcile Pending Orders with Gateway ───────────
+  // If the participant has pending events OR pending accommodation, check if any pending payment order has already
+  // been captured on the gateway (e.g. attendee completed payment on phone, or webhook was delayed).
+  const hasPendingItems =
+    Array.from(eventsByParticipantEventId.values()).some((e) => e.paymentStatus === "pending") ||
+    accommodations.some((a) => a.status === "pending" || a.status === "unpaid");
+
+  if (hasPendingItems) {
     try {
       const { data: pendingOrders } = await supabaseAdmin
         .from("payment_orders")
@@ -289,6 +403,12 @@ export async function GET(request: NextRequest) {
                     updated_at: new Date().toISOString(),
                   })
                   .eq("payment_order_id", pOrder.id);
+
+                // Update in-memory accommodations
+                accommodations = accommodations.map((acc) => ({
+                  ...acc,
+                  status: "paid",
+                }));
 
                 const { data: orderItems } = await supabaseAdmin
                   .from("payment_order_items")
@@ -343,6 +463,35 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // ─── Summary Totals ──────────────────────────────────────
+  let totalPayable = 0;
+  let totalPaid = 0;
+  let totalPending = 0;
+
+  for (const ev of eventsByParticipantEventId.values()) {
+    const amt = Number(ev.paymentAmount) || 0;
+    if (amt > 0) {
+      totalPayable += amt;
+      if (ev.paymentStatus === "paid") {
+        totalPaid += amt;
+      } else if (ev.paymentStatus === "pending") {
+        totalPending += amt;
+      }
+    }
+  }
+
+  for (const acc of accommodations) {
+    const amt = Number(acc.amount) || 0;
+    if (amt > 0) {
+      totalPayable += amt;
+      if (acc.status === "paid") {
+        totalPaid += amt;
+      } else if (acc.status === "pending" || acc.status === "unpaid") {
+        totalPending += amt;
+      }
+    }
+  }
+
   return jsonResponse({
     success: true,
     found: true,
@@ -354,5 +503,11 @@ export async function GET(request: NextRequest) {
       phone: data.phone,
     },
     events: Array.from(eventsByParticipantEventId.values()),
+    accommodations,
+    summary: {
+      totalPayable,
+      totalPaid,
+      totalPending,
+    },
   });
 }

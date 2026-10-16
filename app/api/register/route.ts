@@ -458,11 +458,16 @@ export async function POST(
     rawEvents = [];
   }
 
+  const rawAccommodations = Array.isArray(body.accommodations)
+    ? body.accommodations
+    : [];
+
   if (
-    rawEvents.length === 0
+    rawEvents.length === 0 &&
+    rawAccommodations.length === 0
   ) {
     return errorResponse(
-      "Please select at least one event.",
+      "Please select at least one event or accommodation.",
       400
     );
   }
@@ -1319,7 +1324,9 @@ export async function POST(
     const { data: itemData } = await supabaseAdmin
       .from("payment_order_items")
       .select("payment_order_id")
+      .eq("participant_id", participant.id)
       .eq("item_type", "accommodation")
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -1556,6 +1563,48 @@ export async function POST(
         "already_registered"
     );
 
+  const { data: participantAccommodations } = participant?.id
+    ? await supabaseAdmin
+      .from("participant_accommodations")
+      .select(
+        `
+        id,
+        accommodation_plan_id,
+        start_date,
+        end_date,
+        duration_days,
+        amount,
+        currency,
+        status,
+        accommodation_plans (
+          id,
+          name,
+          slug,
+          duration,
+          price
+        )
+      `
+      )
+      .eq("participant_id", participant.id)
+      .order("created_at", { ascending: false })
+    : { data: [] };
+
+  const accommodations = (participantAccommodations ?? []).map((acc) => {
+    const rawPlan = acc.accommodation_plans;
+    const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
+    return {
+      id: acc.id,
+      planName: plan?.name ?? "Accommodation",
+      planSlug: plan?.slug ?? "",
+      startDate: acc.start_date,
+      endDate: acc.end_date,
+      durationDays: acc.duration_days,
+      amount: Number(acc.amount) || 0,
+      currency: acc.currency || "INR",
+      status: acc.status,
+    };
+  });
+
   return NextResponse.json(
     {
       success: true,
@@ -1569,6 +1618,8 @@ export async function POST(
       addedEvents,
 
       alreadyRegisteredEvents,
+
+      accommodations,
 
       totalAmount,
 

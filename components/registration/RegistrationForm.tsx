@@ -166,13 +166,58 @@ type ParticipantLookupEvent = {
   participantEventId: string;
   eventId: string;
   eventName: string;
+  category?: string;
+  registrationType?: string;
+  isTeamLeader?: boolean;
   registrationStatus: string | null;
+  paymentType?: string;
   paymentStatus: string | null;
   paymentAmount: number | null;
   paymentId: string | null;
   teamName: string | null;
   checkedIn: boolean;
   checkedInAt: string | null;
+};
+
+export type ParticipantLookupAccommodation = {
+  participantAccommodationId: string;
+  planSlug: string;
+  planName: string;
+  startDate: string;
+  endDate: string;
+  durationDays: number;
+  price: number;
+  status: string;
+  assignedEmail?: string;
+};
+
+export type ConfirmedRegistrationData = {
+  participantId: string;
+  name?: string;
+  email?: string;
+  college?: string;
+  events: Array<{
+    name: string;
+    category?: string;
+    registrationType?: string;
+    teamName?: string | null;
+    isTeamLeader?: boolean;
+    fee: number;
+    paymentType?: string;
+    paymentStatus?: string;
+  }>;
+  accommodations: Array<{
+    planName: string;
+    startDate: string;
+    endDate: string;
+    durationDays: number;
+    price: number;
+    status: string;
+    assignedEmail?: string;
+  }>;
+  totalPayable: number;
+  totalPaid: number;
+  totalPending: number;
 };
 
 type ParticipantLookupResponse = {
@@ -186,6 +231,12 @@ type ParticipantLookupResponse = {
     phone: string | null;
   };
   events?: ParticipantLookupEvent[];
+  accommodations?: ParticipantLookupAccommodation[];
+  summary?: {
+    totalPayable: number;
+    totalPaid: number;
+    totalPending: number;
+  };
 };
 
 class ValidationError extends Error {
@@ -280,6 +331,12 @@ export default function RegistrationForm({
   const [participantLookupEvents, setParticipantLookupEvents] = useState<
     ParticipantLookupEvent[]
   >([]);
+  const [participantLookupAccommodations, setParticipantLookupAccommodations] = useState<
+    ParticipantLookupAccommodation[]
+  >([]);
+  const [confirmedRegistrationData, setConfirmedRegistrationData] = useState<
+    ConfirmedRegistrationData | null
+  >(null);
   const [showManualSync, setShowManualSync] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
   const isSaveOnlyRef = useRef(false);
@@ -438,12 +495,14 @@ export default function RegistrationForm({
   const applyParticipantData = useCallback(
     (
       participant: NonNullable<ParticipantLookupResponse["participant"]>,
-      events: ParticipantLookupEvent[]
+      events: ParticipantLookupEvent[],
+      accommodations: ParticipantLookupAccommodation[] = []
     ) => {
       setExistingParticipantId(participant.participantId);
       setExistingParticipantEmail(normalizedSessionEmail || participant.email || "");
       setParticipantLookup(participant);
       setParticipantLookupEvents(events);
+      setParticipantLookupAccommodations(accommodations);
 
       // Never keep an event selected if the participant is already registered for it.
       const registeredIds = new Set(events.map((item) => item.eventId));
@@ -455,6 +514,14 @@ export default function RegistrationForm({
         for (const eventId of registeredIds) delete next[eventId];
         return next;
       });
+
+      // Clear draft accommodation if participant already has confirmed campus stay
+      const hasConfirmedAcc = accommodations.some(
+        (a) => a.status === "confirmed" || a.status === "approved"
+      );
+      if (hasConfirmedAcc) {
+        setMainAccommodationSlug("");
+      }
     },
     [normalizedSessionEmail]
   );
@@ -485,12 +552,17 @@ export default function RegistrationForm({
           found?: boolean;
           participant?: ParticipantLookupResponse["participant"];
           events?: ParticipantLookupEvent[];
+          accommodations?: ParticipantLookupAccommodation[];
         };
 
         if (!isMounted) return;
 
         if (result.success && result.found && result.participant) {
-          applyParticipantData(result.participant, result.events ?? []);
+          applyParticipantData(
+            result.participant,
+            result.events ?? [],
+            result.accommodations ?? []
+          );
         }
       } catch (err) {
         console.error("Auto participant lookup failed:", err);
@@ -526,6 +598,7 @@ export default function RegistrationForm({
     if (!cleanId) {
       setParticipantLookup(null);
       setParticipantLookupEvents([]);
+      setParticipantLookupAccommodations([]);
       setErrorMessage("Enter your Participant ID first.");
       return;
     }
@@ -533,6 +606,7 @@ export default function RegistrationForm({
     if (!cleanEmail) {
       setParticipantLookup(null);
       setParticipantLookupEvents([]);
+      setParticipantLookupAccommodations([]);
       setErrorMessage("Enter your registered email address.");
       return;
     }
@@ -544,6 +618,7 @@ export default function RegistrationForm({
     ) {
       setParticipantLookup(null);
       setParticipantLookupEvents([]);
+      setParticipantLookupAccommodations([]);
       setErrorMessage(
         `Participant lookup must match your authenticated session email (${normalizedSessionEmail}).`
       );
@@ -554,6 +629,7 @@ export default function RegistrationForm({
     setErrorMessage("");
     setParticipantLookup(null);
     setParticipantLookupEvents([]);
+    setParticipantLookupAccommodations([]);
 
     try {
       const response = await fetch(
@@ -598,11 +674,13 @@ export default function RegistrationForm({
       }
 
       const registeredEvents = result.events ?? [];
-      applyParticipantData(result.participant, registeredEvents);
+      const registeredAccommodations = result.accommodations ?? [];
+      applyParticipantData(result.participant, registeredEvents, registeredAccommodations);
     } catch (error) {
       console.error("Participant lookup error:", error);
       setParticipantLookup(null);
       setParticipantLookupEvents([]);
+      setParticipantLookupAccommodations([]);
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -627,6 +705,22 @@ export default function RegistrationForm({
         (item) => item.paymentStatus === "pending" && (item.paymentAmount || 0) > 0
       ),
     [participantLookupEvents]
+  );
+
+  const confirmedAccommodations = useMemo(
+    () =>
+      participantLookupAccommodations.filter(
+        (item) => item.status === "confirmed" || item.status === "approved" || item.price === 0
+      ),
+    [participantLookupAccommodations]
+  );
+
+  const pendingAccommodations = useMemo(
+    () =>
+      participantLookupAccommodations.filter(
+        (item) => item.status === "pending" && (item.price || 0) > 0
+      ),
+    [participantLookupAccommodations]
   );
 
   async function handleSaveAndLogout() {
@@ -979,14 +1073,19 @@ export default function RegistrationForm({
     setErrorMessage("");
 
     try {
-      if (selectedEventIds.length === 0) {
-        throw new ValidationError(
-          "Please select at least one event before continuing."
-        );
-      }
-
       const form = event.currentTarget;
       const formData = new FormData(form);
+
+      const mainAccSlug = String(
+        formData.get("accommodationPlanSlug") ?? ""
+      ).trim();
+      const hasFacultyAcc = facultyEnabled && Boolean(facultyState.accommodationPlanSlug);
+
+      if (selectedEventIds.length === 0 && !mainAccSlug && !hasFacultyAcc) {
+        throw new ValidationError(
+          "Please select at least one competition or accommodation before continuing."
+        );
+      }
 
       const name = String(formData.get("name") ?? "").trim();
       const college = String(
@@ -1014,10 +1113,6 @@ export default function RegistrationForm({
 
       const stateLocation = String(
         formData.get("state") ?? ""
-      ).trim();
-
-      const mainAccSlug = String(
-        formData.get("accommodationPlanSlug") ?? ""
       ).trim();
 
       const accommodationsPayload: Array<{ email: string; planSlug: string; selectedDate?: string; extraDays?: string }> = [];
@@ -1246,6 +1341,67 @@ export default function RegistrationForm({
       setParticipantId(result.participantId);
       setTeamMembers(result.teamMembers ?? []);
 
+      // Build confirmed registration data before form clearing
+      const eventSummaries = selectedEvents.map((ev) => {
+        const state = getTeamState(ev.id);
+        const isTeam = isTeamEvent(ev);
+        let fee = 0;
+        if (ev.payment_type === "paid") {
+          const rawFee = Number(ev.registration_fee || 0);
+          fee = ev.payment_unit === "per_team" ? rawFee : isTeam ? rawFee * (1 + state.members.length) : rawFee;
+        }
+        return {
+          name: ev.name,
+          category: ev.category,
+          registrationType: ev.registration_type || "solo",
+          teamName: isTeam ? state.teamName : null,
+          isTeamLeader: isTeam ? state.isTeamHead : false,
+          fee,
+          paymentType: ev.payment_type || "free",
+          paymentStatus: fee > 0 ? (result.paymentRequired ? "pending" : "paid") : "free",
+        };
+      });
+
+      const accSummaries: ConfirmedRegistrationData["accommodations"] = [];
+      if (mainAccSlug) {
+        const plan = accommodationPlans.find((p) => p.slug === mainAccSlug);
+        const cost = getAccommodationCost(mainAccSlug, mainExtraDays);
+        accSummaries.push({
+          planName: plan?.name || "Standard Accommodation",
+          startDate: mainAccommodationDate,
+          endDate: mainAccommodationDate,
+          durationDays: plan?.duration || 1,
+          price: cost,
+          status: cost > 0 && result.paymentRequired ? "pending" : "confirmed",
+          assignedEmail: email,
+        });
+      }
+      if (facultyEnabled && facultyState.accommodationPlanSlug) {
+        const plan = accommodationPlans.find((p) => p.slug === facultyState.accommodationPlanSlug);
+        const cost = getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays);
+        accSummaries.push({
+          planName: `Faculty: ${plan?.name || "Standard Accommodation"}`,
+          startDate: facultyState.accommodationDate,
+          endDate: facultyState.accommodationDate,
+          durationDays: plan?.duration || 1,
+          price: cost,
+          status: cost > 0 && result.paymentRequired ? "pending" : "confirmed",
+          assignedEmail: facultyState.email,
+        });
+      }
+
+      setConfirmedRegistrationData({
+        participantId: result.participantId,
+        name,
+        email,
+        college,
+        events: eventSummaries,
+        accommodations: accSummaries,
+        totalPayable: Number(result.totalAmount || 0),
+        totalPaid: result.paymentRequired ? 0 : Number(result.totalAmount || 0),
+        totalPending: result.paymentRequired ? Number(result.totalAmount || 0) : 0,
+      });
+
       /*
        * PAYMENT FLOW
        *
@@ -1286,6 +1442,49 @@ export default function RegistrationForm({
           await onSignOut();
         }
         return;
+      }
+
+      // Reconcile against server records to ensure complete historical integrity
+      try {
+        const lookupRes = await fetch(
+          `/api/participants/${encodeURIComponent(result.participantId)}?email=${encodeURIComponent(email)}`,
+          { cache: "no-store", headers: { Accept: "application/json" } }
+        );
+        if (lookupRes.ok) {
+          const lData = (await lookupRes.json()) as ParticipantLookupResponse;
+          if (lData.success && lData.participant) {
+            setConfirmedRegistrationData({
+              participantId: lData.participant.participantId,
+              name: lData.participant.name,
+              email: lData.participant.email,
+              college: lData.participant.college ?? college,
+              events: (lData.events || []).map((e) => ({
+                name: e.eventName,
+                category: e.category,
+                registrationType: e.registrationType,
+                teamName: e.teamName,
+                isTeamLeader: e.isTeamLeader,
+                fee: e.paymentAmount || 0,
+                paymentType: e.paymentType,
+                paymentStatus: e.paymentStatus || "confirmed",
+              })),
+              accommodations: (lData.accommodations || []).map((a) => ({
+                planName: a.planName,
+                startDate: a.startDate,
+                endDate: a.endDate,
+                durationDays: a.durationDays,
+                price: a.price,
+                status: a.status,
+                assignedEmail: a.assignedEmail,
+              })),
+              totalPayable: lData.summary?.totalPayable ?? Number(result.totalAmount || 0),
+              totalPaid: lData.summary?.totalPaid ?? Number(result.totalAmount || 0),
+              totalPending: lData.summary?.totalPending ?? 0,
+            });
+          }
+        }
+      } catch (lookupErr) {
+        console.warn("Could not enrich confirmed registration data:", lookupErr);
       }
 
       const generatedQr = await QRCode.toDataURL(
@@ -1414,8 +1613,50 @@ export default function RegistrationForm({
               errorCorrectionLevel: "H",
             });
             setQrCode(qrData);
+
+            // Fetch authoritative registration details
+            const checkEmail = normalizedSessionEmail || existingParticipantEmail;
+            if (checkEmail) {
+              const enrichRes = await fetch(
+                `/api/participants/${encodeURIComponent(confirmedId)}?email=${encodeURIComponent(checkEmail)}`,
+                { cache: "no-store", headers: { Accept: "application/json" } }
+              );
+              if (enrichRes.ok) {
+                const enrData = (await enrichRes.json()) as ParticipantLookupResponse;
+                if (enrData.success && enrData.participant) {
+                  setConfirmedRegistrationData({
+                    participantId: enrData.participant.participantId,
+                    name: enrData.participant.name,
+                    email: enrData.participant.email,
+                    college: enrData.participant.college ?? "",
+                    events: (enrData.events || []).map((e) => ({
+                      name: e.eventName,
+                      category: e.category,
+                      registrationType: e.registrationType,
+                      teamName: e.teamName,
+                      isTeamLeader: e.isTeamLeader,
+                      fee: e.paymentAmount || 0,
+                      paymentType: e.paymentType,
+                      paymentStatus: e.paymentStatus || "confirmed",
+                    })),
+                    accommodations: (enrData.accommodations || []).map((a) => ({
+                      planName: a.planName,
+                      startDate: a.startDate,
+                      endDate: a.endDate,
+                      durationDays: a.durationDays,
+                      price: a.price,
+                      status: a.status,
+                      assignedEmail: a.assignedEmail,
+                    })),
+                    totalPayable: enrData.summary?.totalPayable ?? 0,
+                    totalPaid: enrData.summary?.totalPaid ?? 0,
+                    totalPending: enrData.summary?.totalPending ?? 0,
+                  });
+                }
+              }
+            }
           } catch (qrErr) {
-            console.error("QR generation error:", qrErr);
+            console.error("QR generation / enrich error:", qrErr);
           }
         }
         setSubmitted(true);
@@ -1529,6 +1770,69 @@ export default function RegistrationForm({
       );
     } catch (error) {
       console.error("Recovery error:", error);
+      setErrorMessage(
+        error instanceof Error ? error.message : "Recovery could not be processed."
+      );
+      setPaymentProcessing(false);
+      setLoading(false);
+    }
+  }
+
+  /*
+   * ACCOMMODATION PAYMENT RECOVERY
+   */
+  async function handleAccommodationRecovery(item: ParticipantLookupAccommodation) {
+    if (!participantLookup) return;
+
+    try {
+      setPaymentProcessing(true);
+      setErrorMessage("");
+
+      const recoveryResponse = await fetch("/api/payments/recover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          participantId: participantLookup.participantId,
+          participantAccommodationId: item.participantAccommodationId,
+        }),
+      });
+
+      let recoveryPayload: {
+        success?: boolean;
+        paymentOrderId?: string;
+        error?: string;
+      } | null = null;
+
+      try {
+        const text = await recoveryResponse.text();
+        if (text && text.trim().length > 0) {
+          recoveryPayload = JSON.parse(text);
+        }
+      } catch {
+        recoveryPayload = null;
+      }
+
+      if (!recoveryResponse.ok || !recoveryPayload) {
+        throw new Error(
+          recoveryPayload?.error || "Could not initialize payment recovery. Please try again."
+        );
+      }
+
+      const { paymentOrderId } = recoveryPayload;
+
+      if (!paymentOrderId) {
+        throw new Error("Invalid payment order returned.");
+      }
+
+      setPendingPaymentOrderId(paymentOrderId);
+      setPendingPaymentAmount(item.price || 0);
+
+      await initiatePaymentCheckout(
+        paymentOrderId,
+        participantLookup.participantId
+      );
+    } catch (error) {
+      console.error("Accommodation recovery error:", error);
       setErrorMessage(
         error instanceof Error ? error.message : "Recovery could not be processed."
       );
@@ -1740,6 +2044,104 @@ export default function RegistrationForm({
               </div>
             )}
 
+            {/* REGISTERED COMPETITIONS (FREE AND PAID) */}
+            {confirmedRegistrationData?.events && confirmedRegistrationData.events.length > 0 && (
+              <div className="relative z-10 mt-6 w-full max-w-xl rounded-2xl border border-white/12 bg-white/[0.03] p-5 text-left backdrop-blur-md">
+                <div className="flex items-center justify-between mb-3 border-b border-white/10 pb-2">
+                  <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-300 font-semibold">
+                    Registered Competitions ({confirmedRegistrationData.events.length})
+                  </p>
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-emerald-400 font-semibold">
+                    Confirmed
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {confirmedRegistrationData.events.map((ev, idx) => (
+                    <div
+                      key={`${ev.name}-${idx}`}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/40 px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{ev.name}</p>
+                        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/50">
+                          {ev.category ? `${ev.category} · ` : ""}
+                          {ev.teamName ? `Team: ${ev.teamName}` : "Solo"}
+                          {ev.isTeamLeader ? " (Leader)" : ""}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="font-mono text-xs font-semibold text-violet-200 block">
+                          {ev.fee > 0 ? `₹${ev.fee.toLocaleString("en-IN")}` : "Free (₹0)"}
+                        </span>
+                        <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 text-[8px] font-mono font-bold uppercase tracking-wider text-emerald-300">
+                          {ev.paymentStatus === "paid" ? "PAID" : ev.paymentStatus === "pending" ? "PENDING" : "CONFIRMED"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ACCOMMODATION BOOKINGS */}
+            {confirmedRegistrationData?.accommodations && confirmedRegistrationData.accommodations.length > 0 && (
+              <div className="relative z-10 mt-6 w-full max-w-xl rounded-2xl border border-violet-500/30 bg-violet-950/20 p-5 text-left backdrop-blur-md">
+                <div className="flex items-center justify-between mb-3 border-b border-white/10 pb-2">
+                  <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-300 font-semibold">
+                    Accommodation Booking
+                  </p>
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-emerald-400 font-semibold">
+                    Campus Stay
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {confirmedRegistrationData.accommodations.map((acc, idx) => (
+                    <div
+                      key={`${acc.planName}-${idx}`}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/40 px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{acc.planName}</p>
+                        <p className="font-mono text-[10px] text-white/50">
+                          Dates: {acc.startDate === acc.endDate ? acc.startDate : `${acc.startDate} to ${acc.endDate}`} ({acc.durationDays} {acc.durationDays === 1 ? "day" : "days"})
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="font-mono text-xs font-semibold text-violet-200 block">
+                          {acc.price > 0 ? `₹${acc.price.toLocaleString("en-IN")}` : "Free"}
+                        </span>
+                        <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 text-[8px] font-mono font-bold uppercase tracking-wider text-emerald-300">
+                          {acc.status === "confirmed" || acc.status === "approved" ? "CONFIRMED" : acc.status.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* FINANCIAL SUMMARY */}
+            {confirmedRegistrationData && (
+              <div className="relative z-10 mt-6 w-full max-w-xl rounded-2xl border border-white/12 bg-white/[0.02] p-4 text-left font-mono text-xs space-y-1">
+                <div className="flex items-center justify-between text-white/70 py-1">
+                  <span>Total Payable:</span>
+                  <span className="font-semibold text-white">₹{confirmedRegistrationData.totalPayable.toLocaleString("en-IN")}</span>
+                </div>
+                <div className="flex items-center justify-between text-emerald-400 py-1">
+                  <span>Amount Paid:</span>
+                  <span className="font-semibold">₹{confirmedRegistrationData.totalPaid.toLocaleString("en-IN")}</span>
+                </div>
+                {confirmedRegistrationData.totalPending > 0 && (
+                  <div className="flex items-center justify-between text-amber-400 py-1 border-t border-white/10 mt-1 pt-1">
+                    <span>Outstanding / Pending:</span>
+                    <span className="font-semibold">₹{confirmedRegistrationData.totalPending.toLocaleString("en-IN")}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {teamMembers.length > 0 && (
               <div className="relative z-10 mt-6 w-full max-w-xl rounded-2xl border border-white/12 bg-white/[0.03] p-5 text-left backdrop-blur-md">
                 <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-300 font-semibold mb-3">
@@ -1786,6 +2188,7 @@ export default function RegistrationForm({
                   setSubmitted(false);
                   setParticipantId("");
                   setQrCode("");
+                  setConfirmedRegistrationData(null);
                   setErrorMessage("");
                 }}
                 className="liquid-glass inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-medium text-white transition-all hover:bg-white/10 hover:border-violet-400"
@@ -1960,6 +2363,38 @@ export default function RegistrationForm({
                   </div>
                 )}
 
+                {/* SECTION: CONFIRMED ACCOMMODATIONS */}
+                {confirmedAccommodations.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400/90">
+                        Confirmed Accommodation ({confirmedAccommodations.length})
+                      </p>
+                      <span className="font-mono text-[10px] text-white/40">Campus Stay Verified</span>
+                    </div>
+
+                    <div className="grid gap-2.5 sm:grid-cols-2">
+                      {confirmedAccommodations.map((acc) => (
+                        <div
+                          key={acc.participantAccommodationId}
+                          className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-950/20 px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-medium text-sm text-white truncate">{acc.planName}</p>
+                            <p className="text-[10px] text-white/50 font-mono">
+                              {acc.startDate === acc.endDate ? acc.startDate : `${acc.startDate} to ${acc.endDate}`} ({acc.durationDays}d)
+                              {acc.price > 0 ? ` · ₹${acc.price} Paid` : " · Free"}
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider text-emerald-300">
+                            CONFIRMED
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* SECTION 2: PENDING PAYMENT (SAVED, AWAITING PAYMENT) */}
                 {pendingEvents.length > 0 && (
                   <div className="space-y-3">
@@ -2005,6 +2440,61 @@ export default function RegistrationForm({
                             ) : (
                               <>
                                 <span>Pay Now (₹{item.paymentAmount || 0})</span>
+                                <ArrowRight size={13} />
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* SECTION: PENDING ACCOMMODATION PAYMENT */}
+                {pendingAccommodations.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300">
+                          Pending Accommodation Payment ({pendingAccommodations.length})
+                        </p>
+                      </div>
+                      <span className="font-mono text-[10px] text-amber-300/70">Saved in Account</span>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {pendingAccommodations.map((acc) => (
+                        <div
+                          key={acc.participantAccommodationId}
+                          className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-950/20 p-4"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="font-medium text-sm text-white">{acc.planName}</p>
+                              <p className="text-xs font-mono text-amber-300/90 font-semibold mt-0.5">
+                                Dates: {acc.startDate} · Fee: ₹{acc.price || 0}
+                              </p>
+                            </div>
+                            <span className="rounded-full bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider text-amber-300">
+                              PENDING
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={paymentProcessing}
+                            onClick={() => handleAccommodationRecovery(acc)}
+                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black transition-all hover:bg-amber-100 hover:scale-[1.01] shadow-[0_0_15px_rgba(251,191,36,0.2)] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                          >
+                            {paymentProcessing ? (
+                              <>
+                                <span className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+                                <span>Connecting Gateway...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>Pay Now (₹{acc.price || 0})</span>
                                 <ArrowRight size={13} />
                               </>
                             )}
@@ -2282,89 +2772,166 @@ export default function RegistrationForm({
                     </div>
                   </div>
 
-                  {/* SELECTED EVENTS DRAWER */}
+                  {/* SELECTED EVENTS & ADDS-ON DRAWER */}
                   <AnimatePresence initial={false}>
-                    {selectedEvents.length > 0 && (
+                    {(selectedEvents.length > 0 || mainAccommodationSlug || (facultyEnabled && facultyState.accommodationPlanSlug)) && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
                         className="overflow-hidden"
                       >
-                        <div className="rounded-2xl border border-violet-500/35 bg-gradient-to-br from-violet-950/40 via-[#0a0714]/70 to-[#05030a]/85 p-5 md:p-6 backdrop-blur-2xl shadow-[0_0_45px_rgba(168,85,247,0.18),inset_0_1px_1px_rgba(255,255,255,0.12)]">
+                        <div className="rounded-2xl border border-violet-500/35 bg-gradient-to-br from-violet-950/40 via-[#0a0714]/70 to-[#05030a]/85 p-5 md:p-6 backdrop-blur-2xl shadow-[0_0_45px_rgba(168,85,247,0.18),inset_0_1px_1px_rgba(255,255,255,0.12)] space-y-4">
                           <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-3">
                             <div>
                               <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-300">
-                                Chosen Competitions
+                                {selectedEvents.length > 0 ? "Chosen Competitions & Add-ons" : "Selected Accommodation Add-on"}
                               </p>
                               <p className="text-xs text-white/60">
-                                Details for these will be configured below.
+                                Details will be configured below.
                               </p>
                             </div>
 
                             <p className="font-mono text-sm font-bold text-violet-300">
                               {totalPrice > 0
                                 ? `Total: ₹${totalPrice.toLocaleString("en-IN")}`
-                                : "Total: Free"}
+                                : "Total: ₹0 (Free)"}
                             </p>
                           </div>
 
-                          <div className="mt-3 divide-y divide-white/10">
-                            {selectedEvents.map((event) => {
-                              const state = getTeamState(event.id);
-                              const isTeam = isTeamEvent(event);
+                          {/* COMPETITIONS LIST */}
+                          {selectedEvents.length > 0 && (
+                            <div className="divide-y divide-white/10">
+                              {selectedEvents.map((event) => {
+                                const state = getTeamState(event.id);
+                                const isTeam = isTeamEvent(event);
 
-                              let amount = 0;
+                                let amount = 0;
 
-                              if (event.payment_type === "paid") {
-                                const fee = Number(event.registration_fee || 0);
+                                if (event.payment_type === "paid") {
+                                  const fee = Number(event.registration_fee || 0);
 
-                                amount =
-                                  event.payment_unit === "per_team"
-                                    ? fee
-                                    : isTeam
-                                      ? fee * (1 + state.members.length)
-                                      : fee;
-                              }
+                                  amount =
+                                    event.payment_unit === "per_team"
+                                      ? fee
+                                      : isTeam
+                                        ? fee * (1 + state.members.length)
+                                        : fee;
+                                }
 
-                              return (
-                                <motion.div
-                                  layout
-                                  key={event.id}
-                                  className="flex items-center gap-3 py-3"
-                                >
-                                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-400 text-black shadow-[0_0_10px_#c084fc]">
-                                    <Check size={13} />
-                                  </div>
-
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-sm font-medium text-white">
-                                      {event.name}
-                                    </p>
-                                    <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/40">
-                                      {event.category}
-                                      {isTeam ? " · Team" : " · Solo"}
-                                    </p>
-                                  </div>
-
-                                  <span className="shrink-0 font-mono text-xs font-medium text-violet-200">
-                                    {amount > 0
-                                      ? `₹${amount.toLocaleString("en-IN")}`
-                                      : "Free"}
-                                  </span>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => removeSelectedEvent(event.id)}
-                                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/40 transition hover:bg-red-500/20 hover:text-red-400"
-                                    aria-label={`Remove ${event.name}`}
+                                return (
+                                  <motion.div
+                                    layout
+                                    key={event.id}
+                                    className="flex items-center gap-3 py-3"
                                   >
-                                    <X size={13} />
-                                  </button>
-                                </motion.div>
-                              );
-                            })}
-                          </div>
+                                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-400 text-black shadow-[0_0_10px_#c084fc]">
+                                      <Check size={13} />
+                                    </div>
+
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-sm font-medium text-white">
+                                        {event.name}
+                                      </p>
+                                      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/40">
+                                        {event.category}
+                                        {isTeam ? " · Team" : " · Solo"}
+                                      </p>
+                                    </div>
+
+                                    <span className="shrink-0 font-mono text-xs font-medium text-violet-200">
+                                      {amount > 0
+                                        ? `₹${amount.toLocaleString("en-IN")}`
+                                        : "₹0 (Free)"}
+                                    </span>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => removeSelectedEvent(event.id)}
+                                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/40 transition hover:bg-red-500/20 hover:text-red-400"
+                                      aria-label={`Remove ${event.name}`}
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </motion.div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* ACCOMMODATION ADD-ON ITEM */}
+                          {mainAccommodationSlug && (
+                            <div className="rounded-xl border border-violet-500/30 bg-violet-950/30 p-3 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-400 text-black shadow-[0_0_10px_#34d399]">
+                                  <Check size={13} />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium text-white">
+                                    Campus Accommodation ({accommodationPlans.find((p) => p.slug === mainAccommodationSlug)?.name || mainAccommodationSlug})
+                                  </p>
+                                  <p className="font-mono text-[10px] text-violet-300/80">
+                                    {formatAccommodationDate(
+                                      accommodationPlans.find((p) => p.slug === mainAccommodationSlug)?.duration || 1,
+                                      mainAccommodationDate,
+                                      mainExtraDays
+                                    )}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-3 shrink-0">
+                                <span className="font-mono text-xs font-medium text-violet-200">
+                                  ₹{getAccommodationCost(mainAccommodationSlug, mainExtraDays).toLocaleString("en-IN")}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setMainAccommodationSlug("")}
+                                  className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition hover:bg-red-500/20 hover:text-red-400"
+                                  aria-label="Remove accommodation"
+                                >
+                                  <X size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* FACULTY ACCOMMODATION ITEM */}
+                          {facultyEnabled && facultyState.accommodationPlanSlug && (
+                            <div className="rounded-xl border border-violet-500/30 bg-violet-950/30 p-3 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-400 text-black shadow-[0_0_10px_#34d399]">
+                                  <Check size={13} />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium text-white">
+                                    Faculty Stay ({accommodationPlans.find((p) => p.slug === facultyState.accommodationPlanSlug)?.name || facultyState.accommodationPlanSlug})
+                                  </p>
+                                  <p className="font-mono text-[10px] text-violet-300/80">
+                                    {formatAccommodationDate(
+                                      accommodationPlans.find((p) => p.slug === facultyState.accommodationPlanSlug)?.duration || 1,
+                                      facultyState.accommodationDate,
+                                      facultyState.extraDays
+                                    )}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-3 shrink-0">
+                                <span className="font-mono text-xs font-medium text-violet-200">
+                                  ₹{getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays).toLocaleString("en-IN")}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setFacultyState({ ...facultyState, accommodationPlanSlug: "" })}
+                                  className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition hover:bg-red-500/20 hover:text-red-400"
+                                  aria-label="Remove faculty accommodation"
+                                >
+                                  <X size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </motion.div>
                     )}
@@ -4069,7 +4636,7 @@ export default function RegistrationForm({
             )}
 
             {/* PAYMENT SUMMARY & CHECKOUT TERMINAL */}
-            {selectedEvents.length > 0 && (
+            {(selectedEvents.length > 0 || mainAccommodationSlug || (facultyEnabled && facultyState.accommodationPlanSlug)) && (
               <div className="rounded-[28px] border border-violet-500/35 bg-gradient-to-br from-violet-950/40 via-[#0b0816]/75 to-[#040208]/90 p-6 sm:p-8 md:p-10 backdrop-blur-2xl shadow-[0_20px_70px_rgba(168,85,247,0.2),inset_0_1px_1px_rgba(255,255,255,0.12)]">
                 <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between border-b border-white/10 pb-6">
                   <div>
@@ -4078,12 +4645,13 @@ export default function RegistrationForm({
                     </p>
 
                     <h3 className="mt-2 text-2xl sm:text-3xl font-light tracking-tight text-white">
-                      {selectedEvents.length}{" "}
-                      {selectedEvents.length === 1 ? "Competition" : "Competitions"}{" "}
-                      Selected
+                      {selectedEvents.length > 0
+                        ? `${selectedEvents.length} ${selectedEvents.length === 1 ? "Competition" : "Competitions"} Selected`
+                        : "Accommodation Add-on Selected"}
                     </h3>
 
-                    <div className="mt-5 space-y-2">
+                    <div className="mt-5 space-y-2.5">
+                      {/* Competitions Line Items */}
                       {selectedEvents.map((event) => {
                         const state = getTeamState(event.id);
                         let amount = 0;
@@ -4110,11 +4678,55 @@ export default function RegistrationForm({
                             </span>
 
                             <span className="font-mono text-sm font-medium text-white">
-                              {amount > 0 ? `₹${amount.toLocaleString("en-IN")}` : "Free"}
+                              {amount > 0 ? `₹${amount.toLocaleString("en-IN")}` : "Free (₹0)"}
                             </span>
                           </div>
                         );
                       })}
+
+                      {/* Main Accommodation Line Item */}
+                      {mainAccommodationSlug && (
+                        <div className="flex items-center justify-between gap-6 text-sm">
+                          <div className="min-w-0">
+                            <span className="text-zinc-300">
+                              Accommodation: {accommodationPlans.find((p) => p.slug === mainAccommodationSlug)?.name || mainAccommodationSlug}
+                            </span>
+                            <span className="block text-[11px] font-mono text-violet-300/70">
+                              {formatAccommodationDate(
+                                accommodationPlans.find((p) => p.slug === mainAccommodationSlug)?.duration || 1,
+                                mainAccommodationDate,
+                                mainExtraDays
+                              )}
+                            </span>
+                          </div>
+
+                          <span className="font-mono text-sm font-medium text-white shrink-0">
+                            ₹{getAccommodationCost(mainAccommodationSlug, mainExtraDays).toLocaleString("en-IN")}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Faculty Accommodation Line Item */}
+                      {facultyEnabled && facultyState.accommodationPlanSlug && (
+                        <div className="flex items-center justify-between gap-6 text-sm">
+                          <div className="min-w-0">
+                            <span className="text-zinc-300">
+                              Faculty Stay: {accommodationPlans.find((p) => p.slug === facultyState.accommodationPlanSlug)?.name || facultyState.accommodationPlanSlug}
+                            </span>
+                            <span className="block text-[11px] font-mono text-violet-300/70">
+                              {formatAccommodationDate(
+                                accommodationPlans.find((p) => p.slug === facultyState.accommodationPlanSlug)?.duration || 1,
+                                facultyState.accommodationDate,
+                                facultyState.extraDays
+                              )}
+                            </span>
+                          </div>
+
+                          <span className="font-mono text-sm font-medium text-white shrink-0">
+                            ₹{getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays).toLocaleString("en-IN")}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -4204,9 +4816,13 @@ export default function RegistrationForm({
             <div className="flex flex-col items-stretch justify-between gap-6 border-t border-white/10 pt-8 sm:flex-row sm:items-center">
               <div>
                 <p className="font-mono text-xs text-white/60">
-                  {selectedEvents.length === 0
-                    ? "Select at least one competition to continue."
-                    : `${selectedEvents.length} event${selectedEvents.length === 1 ? "" : "s"} ready for registration.`}
+                  {selectedEvents.length === 0 && !mainAccommodationSlug && (!facultyEnabled || !facultyState.accommodationPlanSlug)
+                    ? "Select at least one competition or accommodation to continue."
+                    : selectedEvents.length > 0 && (mainAccommodationSlug || (facultyEnabled && facultyState.accommodationPlanSlug))
+                      ? `${selectedEvents.length} event${selectedEvents.length === 1 ? "" : "s"} + Accommodation ready for registration.`
+                      : selectedEvents.length > 0
+                        ? `${selectedEvents.length} event${selectedEvents.length === 1 ? "" : "s"} ready for registration.`
+                        : "Accommodation booking ready for registration."}
                 </p>
 
                 {totalPrice > 0 && (
@@ -4218,7 +4834,11 @@ export default function RegistrationForm({
 
               <button
                 type="submit"
-                disabled={loading || eventsLoading || selectedEventIds.length === 0}
+                disabled={
+                  loading ||
+                  eventsLoading ||
+                  (selectedEventIds.length === 0 && !mainAccommodationSlug && (!facultyEnabled || !facultyState.accommodationPlanSlug))
+                }
                 className="group flex min-w-[240px] items-center justify-center gap-3 rounded-full bg-white px-8 py-4 text-sm font-semibold text-black transition-all hover:scale-105 hover:bg-violet-100 shadow-[0_10px_35px_rgba(255,255,255,0.3)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
               >
                 {loading ? (

@@ -80,21 +80,30 @@ const mockDbParticipantsByEmail: Record<string, Record<string, unknown>> = {
   },
 };
 
-vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({
-    from: () => ({
-      select: () => ({
-        eq: (_col: string, val: string) => ({
-          maybeSingle: async () => {
-            const p = mockDbParticipantsByEmail[val.toLowerCase()];
-            if (!p) return { data: null, error: null };
-            return { data: p, error: null };
-          },
-        }),
+vi.mock("@supabase/supabase-js", () => {
+  const createChainable = (val?: string) => {
+    const chain: any = {
+      eq: (_col: string, v: string) => createChainable(val || v),
+      not: () => chain,
+      order: () => chain,
+      limit: () => Promise.resolve({ data: [], error: null }),
+      maybeSingle: async () => {
+        const p = val ? mockDbParticipantsByEmail[val.toLowerCase()] : null;
+        if (!p) return { data: null, error: null };
+        return { data: p, error: null };
+      },
+    };
+    return chain;
+  };
+
+  return {
+    createClient: () => ({
+      from: () => ({
+        select: () => createChainable(),
       }),
     }),
-  }),
-}));
+  };
+});
 
 function makeRequest(): NextRequest {
   return new NextRequest("http://localhost/api/participants/me", { method: "GET" });
@@ -146,7 +155,7 @@ describe("GET /api/participants/me - Authenticated Participant Hydration", () =>
     expect(body.participant.phone).toBe("9876543210");
 
     expect(body.events).toHaveLength(1);
-    expect(body.events[0]).toEqual({
+    expect(body.events[0]).toMatchObject({
       participantEventId: "pe-1",
       eventId: "evt-robotics",
       eventName: "RoboWars",
@@ -166,7 +175,7 @@ describe("GET /api/participants/me - Authenticated Participant Hydration", () =>
     expect(body.found).toBe(true);
     expect(body.participant.participantId).toBe("SVK26-D917882D");
     expect(body.events).toHaveLength(1);
-    expect(body.events[0]).toEqual({
+    expect(body.events[0]).toMatchObject({
       participantEventId: "pe-chords-1",
       eventId: "evt-chords",
       eventName: "Clash of Chords",

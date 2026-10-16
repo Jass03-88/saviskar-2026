@@ -179,7 +179,8 @@ export async function GET(request: NextRequest) {
         end_date,
         accommodation_plans (
           name,
-          slug
+          slug,
+          duration
         )
       )
     `
@@ -204,6 +205,10 @@ export async function GET(request: NextRequest) {
         eventName: plan?.name ? `Accommodation: ${plan.name}` : "Accommodation",
         category: "Accommodation",
         amount: Number(item.amount) || 0,
+        startDate: acc?.start_date || null,
+        endDate: acc?.end_date || null,
+        durationDays: (plan as any)?.duration ?? 1,
+        planName: plan?.name || null,
       };
     }
 
@@ -217,6 +222,7 @@ export async function GET(request: NextRequest) {
       eventName: event?.name || "Event Registration",
       category: event?.category || null,
       amount: Number(item.amount) || 0,
+      registrationType: event?.registration_type || "individual",
     };
   });
 
@@ -283,6 +289,82 @@ export async function GET(request: NextRequest) {
     } : null,
   });
 
+  // 9. Authoritative Reconciliation of ALL Participant Registrations & Accommodations
+  // Ensures free competitions (amount = 0) and accommodation bookings are preserved and displayed
+  const { data: allParticipantEvents } = await supabaseAdmin
+    .from("participant_events")
+    .select(`
+      id,
+      event_id,
+      registration_status,
+      payment_status,
+      payment_amount,
+      team_name,
+      checked_in,
+      events (
+        id,
+        name,
+        category,
+        registration_type,
+        registration_fee,
+        payment_type
+      )
+    `)
+    .eq("participant_id", payerParticipantUuid)
+    .eq("is_archived", false);
+
+  const { data: allParticipantAccommodations } = await supabaseAdmin
+    .from("participant_accommodations")
+    .select(`
+      id,
+      accommodation_plan_id,
+      start_date,
+      end_date,
+      duration_days,
+      amount,
+      currency,
+      status,
+      accommodation_plans (
+        id,
+        name,
+        slug,
+        duration,
+        price
+      )
+    `)
+    .eq("participant_id", payerParticipantUuid)
+    .neq("status", "cancelled");
+
+  const registeredCompetitions = (allParticipantEvents ?? []).map((pe) => {
+    const rawEvt = Array.isArray(pe.events) ? pe.events[0] : pe.events;
+    return {
+      participantEventId: pe.id,
+      eventId: pe.event_id,
+      eventName: rawEvt?.name ?? "Unknown event",
+      category: rawEvt?.category ?? null,
+      registrationType: rawEvt?.registration_type ?? (pe.team_name ? "team" : "individual"),
+      teamName: pe.team_name,
+      paymentType: rawEvt?.payment_type ?? (Number(pe.payment_amount) > 0 ? "paid" : "free"),
+      paymentStatus: pe.payment_status,
+      amount: Number(pe.payment_amount) || 0,
+    };
+  });
+
+  const registeredAccommodations = (allParticipantAccommodations ?? []).map((acc) => {
+    const rawPlan = Array.isArray(acc.accommodation_plans) ? acc.accommodation_plans[0] : acc.accommodation_plans;
+    return {
+      id: acc.id,
+      planName: rawPlan?.name ?? "Accommodation",
+      planSlug: rawPlan?.slug ?? "",
+      startDate: acc.start_date,
+      endDate: acc.end_date,
+      durationDays: acc.duration_days,
+      amount: Number(acc.amount) || 0,
+      currency: acc.currency || "INR",
+      status: acc.status,
+    };
+  });
+
   return NextResponse.json(
     {
       success: true,
@@ -298,6 +380,8 @@ export async function GET(request: NextRequest) {
         email: payer?.email || "",
       },
       items,
+      registeredCompetitions,
+      registeredAccommodations,
       teamMembers: teamMembers.length > 0 ? teamMembers : undefined,
     },
     {

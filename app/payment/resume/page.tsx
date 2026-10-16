@@ -46,10 +46,38 @@ type ResumeOrderData = {
   };
   items?: Array<{
     itemId: string;
-    eventId: string;
+    eventId: string | null;
+    itemType?: "event" | "accommodation";
     eventName: string;
     category?: string | null;
     amount: number;
+    startDate?: string | null;
+    endDate?: string | null;
+    durationDays?: number | null;
+    planName?: string | null;
+    registrationType?: string | null;
+  }>;
+  registeredCompetitions?: Array<{
+    participantEventId: string;
+    eventId: string;
+    eventName: string;
+    category?: string | null;
+    registrationType: string;
+    teamName?: string | null;
+    paymentType?: string;
+    paymentStatus?: string | null;
+    amount: number;
+  }>;
+  registeredAccommodations?: Array<{
+    id: string;
+    planName: string;
+    planSlug: string;
+    startDate: string;
+    endDate: string;
+    durationDays: number;
+    amount: number;
+    currency: string;
+    status: string;
   }>;
   teamMembers?: ResumeTeamMember[];
   error?: string;
@@ -411,145 +439,218 @@ function PaymentResumeContent() {
               )}
             </div>
 
-            {/* Desktop Two-Column Section: Left (Registered Events) | Right (Digital Pass / QR) */}
-            <div className="relative z-10 mt-6 grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-5 w-full items-stretch">
-              {/* Left Column: Registered Events */}
-              <div className="md:col-span-7 flex flex-col justify-between rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5 text-left backdrop-blur-md">
-                <div>
-                  <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-3">
-                    <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.25em] text-violet-300">
-                      REGISTERED EVENTS
-                    </p>
-                    <span className="font-mono text-[10px] text-white/40 uppercase">
-                      {data?.items?.length || 1} {data?.items?.length === 1 ? "Event" : "Events"}
-                    </span>
-                  </div>
+            {/* Desktop Two-Column Section: Left (Registered Competitions & Accommodation) | Right (Digital Pass / QR) */}
+            {(() => {
+              const displayCompetitions =
+                data?.registeredCompetitions && data.registeredCompetitions.length > 0
+                  ? data.registeredCompetitions
+                  : (data?.items ?? []).filter((i) => i.itemType !== "accommodation");
 
-                  <div className="space-y-2 max-h-[190px] overflow-y-auto pr-1">
-                    {data?.items && data.items.length > 0 ? (
-                      data.items.map((item, idx) => (
-                        <div
-                          key={item.itemId || item.eventId || idx}
-                          className="flex items-start justify-between gap-3 rounded-xl border border-white/5 bg-black/40 p-2.5 transition-colors hover:border-violet-500/25"
-                        >
-                          <div className="flex items-start gap-2.5 min-w-0">
-                            <span className="font-mono text-xs font-bold text-violet-400 shrink-0 mt-0.5">
-                              {String(idx + 1).padStart(2, "0")}
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-xs sm:text-sm font-semibold text-white truncate">
-                                {item.eventName}
-                              </p>
-                              {item.category && (
-                                <p className="text-[10px] text-zinc-400 capitalize">
-                                  {item.category} Realm
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                          <span className="font-mono text-xs font-semibold text-white/90 shrink-0">
-                            ₹{item.amount.toLocaleString("en-IN")}
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="flex items-center justify-between rounded-xl border border-white/5 bg-black/40 p-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <span className="font-mono text-xs font-bold text-violet-400">01</span>
-                          <div>
-                            <p className="text-xs sm:text-sm font-semibold text-white">Event Registration</p>
-                            <p className="text-[10px] text-zinc-400">Official Fest Entry</p>
-                          </div>
-                        </div>
-                        <span className="font-mono text-xs font-semibold text-white/90">
-                          ₹{data?.amount?.toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+              const displayAccommodations =
+                data?.registeredAccommodations && data.registeredAccommodations.length > 0
+                  ? data.registeredAccommodations
+                  : (data?.items ?? [])
+                      .filter((i) => i.itemType === "accommodation")
+                      .map((i) => ({
+                        id: i.itemId,
+                        planName: i.planName || i.eventName,
+                        planSlug: "",
+                        startDate: i.startDate || "2026-10-28",
+                        endDate: i.endDate || "2026-10-29",
+                        durationDays: i.durationDays || 1,
+                        amount: i.amount,
+                        currency: "INR",
+                        status: "paid",
+                      }));
 
-                  {/* Team Members List (Only for Team Registrations) */}
-                  {data?.teamMembers && data.teamMembers.length > 0 && (
-                    <div className="mt-4 pt-3 border-t border-white/10">
-                      <div className="flex items-center justify-between pb-2 mb-1.5">
+              return (
+                <div className="relative z-10 mt-6 grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-5 w-full items-stretch">
+                  {/* Left Column: Registered Competitions & Accommodation */}
+                  <div className="md:col-span-7 flex flex-col justify-between rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5 text-left backdrop-blur-md">
+                    <div>
+                      {/* Competitions Section */}
+                      <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-3">
                         <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.25em] text-violet-300">
-                          TEAM MEMBERS
+                          REGISTERED COMPETITIONS
                         </p>
                         <span className="font-mono text-[10px] text-white/40 uppercase">
-                          {data.teamMembers.length} {data.teamMembers.length === 1 ? "Member" : "Members"}
+                          {displayCompetitions.length} {displayCompetitions.length === 1 ? "Event" : "Events"}
                         </span>
                       </div>
 
-                      <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
-                        {data.teamMembers.map((member, idx) => (
-                          <div
-                            key={member.participantId || idx}
-                            className="flex items-center justify-between gap-2.5 rounded-xl border border-white/5 bg-black/40 px-3 py-2 transition-colors hover:border-violet-500/25"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="font-mono text-[10px] font-bold text-violet-400 shrink-0">
-                                {String(idx + 1).padStart(2, "0")}
-                              </span>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
+                      <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                        {displayCompetitions.length > 0 ? (
+                          displayCompetitions.map((item, idx) => (
+                            <div
+                              key={("participantEventId" in item ? item.participantEventId : "") || ("itemId" in item ? item.itemId : "") || item.eventId || idx}
+                              className="flex items-start justify-between gap-3 rounded-xl border border-white/5 bg-black/40 p-2.5 transition-colors hover:border-violet-500/25"
+                            >
+                              <div className="flex items-start gap-2.5 min-w-0">
+                                <span className="font-mono text-xs font-bold text-violet-400 shrink-0 mt-0.5">
+                                  {String(idx + 1).padStart(2, "0")}
+                                </span>
+                                <div className="min-w-0">
                                   <p className="text-xs sm:text-sm font-semibold text-white truncate">
-                                    {member.name}
+                                    {item.eventName}
                                   </p>
-                                  {member.isTeamLeader && (
-                                    <span className="rounded-full bg-violet-500/20 border border-violet-500/30 px-1.5 py-0.5 text-[9px] font-mono font-medium text-violet-300 shrink-0">
-                                      Lead
-                                    </span>
-                                  )}
+                                  <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                    {item.category && (
+                                      <span className="text-[10px] text-zinc-400 capitalize">
+                                        {item.category} Realm
+                                      </span>
+                                    )}
+                                    {item.registrationType === "team" && (
+                                      <span className="rounded-full bg-violet-500/20 border border-violet-500/30 px-1.5 py-0.5 text-[9px] font-mono text-violet-300">
+                                        Team{"teamName" in item && item.teamName ? `: ${item.teamName}` : ""}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
+                              <div className="text-right shrink-0">
+                                <span className="font-mono text-xs font-semibold text-white/90">
+                                  {item.amount > 0 ? `₹${item.amount.toLocaleString("en-IN")}` : "Free"}
+                                </span>
+                                <p className="text-[9px] font-mono text-emerald-400">
+                                  {"paymentStatus" in item && item.paymentStatus === "not_required" ? "CONFIRMED" : "PAID"}
+                                </p>
+                              </div>
                             </div>
-                            <span className="font-mono text-xs font-bold text-violet-200 tracking-wider shrink-0 bg-violet-950/40 px-2 py-0.5 rounded border border-violet-500/20">
-                              {member.participantId}
+                          ))
+                        ) : (
+                          <p className="text-xs text-white/40 italic py-2">No competition passes in this order.</p>
+                        )}
+                      </div>
+
+                      {/* Accommodation Add-on Section (if booked) */}
+                      {displayAccommodations.length > 0 && (
+                        <div className="mt-4 pt-3 border-t border-white/10">
+                          <div className="flex items-center justify-between pb-2 mb-1.5">
+                            <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.25em] text-violet-300">
+                              ACCOMMODATION ADD-ON
+                            </p>
+                            <span className="font-mono text-[10px] text-white/40 uppercase">
+                              {displayAccommodations.length} {displayAccommodations.length === 1 ? "Booking" : "Bookings"}
                             </span>
                           </div>
-                        ))}
-                      </div>
+
+                          <div className="space-y-2 max-h-[140px] overflow-y-auto pr-1">
+                            {displayAccommodations.map((acc, idx) => (
+                              <div
+                                key={acc.id || idx}
+                                className="flex items-start justify-between gap-3 rounded-xl border border-white/5 bg-black/40 p-2.5 transition-colors hover:border-violet-500/25"
+                              >
+                                <div className="flex items-start gap-2.5 min-w-0">
+                                  <span className="font-mono text-xs font-bold text-violet-400 shrink-0 mt-0.5">
+                                    0{idx + 1}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <p className="text-xs sm:text-sm font-semibold text-white truncate">
+                                      {acc.planName}
+                                    </p>
+                                    <p className="text-[10px] font-mono text-zinc-400">
+                                      {acc.durationDays} {acc.durationDays === 1 ? "Day / 1 Night" : "Days"} • {acc.startDate} to {acc.endDate}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <span className="font-mono text-xs font-semibold text-white/90">
+                                    ₹{acc.amount.toLocaleString("en-IN")}
+                                  </span>
+                                  <p className="text-[9px] font-mono text-emerald-400 uppercase">
+                                    {acc.status === "paid" ? "PAID" : "CONFIRMED"}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Team Members List (Only for Team Registrations) */}
+                      {data?.teamMembers && data.teamMembers.length > 0 && (
+                        <div className="mt-4 pt-3 border-t border-white/10">
+                          <div className="flex items-center justify-between pb-2 mb-1.5">
+                            <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.25em] text-violet-300">
+                              TEAM MEMBERS
+                            </p>
+                            <span className="font-mono text-[10px] text-white/40 uppercase">
+                              {data.teamMembers.length} {data.teamMembers.length === 1 ? "Member" : "Members"}
+                            </span>
+                          </div>
+
+                          <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+                            {data.teamMembers.map((member, idx) => (
+                              <div
+                                key={member.participantId || idx}
+                                className="flex items-center justify-between gap-2.5 rounded-xl border border-white/5 bg-black/40 px-3 py-2 transition-colors hover:border-violet-500/25"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="font-mono text-[10px] font-bold text-violet-400 shrink-0">
+                                    {String(idx + 1).padStart(2, "0")}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <p className="text-xs sm:text-sm font-semibold text-white truncate">
+                                        {member.name}
+                                      </p>
+                                      {member.isTeamLeader && (
+                                        <span className="rounded-full bg-violet-500/20 border border-violet-500/30 px-1.5 py-0.5 text-[9px] font-mono font-medium text-violet-300 shrink-0">
+                                          Lead
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span className="font-mono text-xs font-bold text-violet-200 tracking-wider shrink-0 bg-violet-950/40 px-2 py-0.5 rounded border border-violet-500/20">
+                                  {member.participantId}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
 
-                {/* Total Paid & Verification Status */}
-                <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-xs text-white/60">
-                  <span>
-                    Total: <strong className="font-mono text-white font-bold">₹{data?.amount?.toLocaleString("en-IN")}</strong>
-                  </span>
-                  <span className="text-emerald-400 flex items-center gap-1 font-mono text-[10px]">
-                    <Check size={12} className="stroke-[3]" /> Verified
-                  </span>
-                </div>
-              </div>
-
-              {/* Right Column: Digital Entry Pass / QR */}
-              <div className="md:col-span-5 flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5 text-center backdrop-blur-md">
-                <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.25em] text-violet-300 mb-2.5">
-                  DIGITAL ENTRY PASS
-                </p>
-
-                {qrCodeUrl && (
-                  <div className="rounded-2xl bg-white p-3 shadow-[0_15px_35px_rgba(0,0,0,0.8)] border border-white/20">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={qrCodeUrl}
-                      alt="Official Entry QR Code"
-                      className="h-28 w-28 sm:h-32 sm:w-32 md:h-36 md:w-36"
-                    />
-                    <p className="mt-1.5 text-center text-[9px] font-bold text-black/75 uppercase tracking-[0.22em]">
-                      PRESENT AT ENTRY
-                    </p>
+                    {/* Total Paid & Verification Status */}
+                    <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-xs text-white/60">
+                      <span>
+                        Total Paid: <strong className="font-mono text-white font-bold">₹{data?.amount?.toLocaleString("en-IN")}</strong>
+                      </span>
+                      <span className="text-emerald-400 flex items-center gap-1 font-mono text-[10px]">
+                        <Check size={12} className="stroke-[3]" /> Verified
+                      </span>
+                    </div>
                   </div>
-                )}
 
-                <div className="mt-2.5 flex items-center justify-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-violet-300/80">
-                  <QrCode size={12} />
-                  <span>Official Digital Entry Pass</span>
+                  {/* Right Column: Digital Entry Pass / QR */}
+                  <div className="md:col-span-5 flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5 text-center backdrop-blur-md">
+                    <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.25em] text-violet-300 mb-2.5">
+                      DIGITAL ENTRY PASS
+                    </p>
+
+                    {qrCodeUrl && (
+                      <div className="rounded-2xl bg-white p-3 shadow-[0_15px_35px_rgba(0,0,0,0.8)] border border-white/20">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={qrCodeUrl}
+                          alt="Official Entry QR Code"
+                          className="h-28 w-28 sm:h-32 sm:w-32 md:h-36 md:w-36"
+                        />
+                        <p className="mt-1.5 text-center text-[9px] font-bold text-black/75 uppercase tracking-[0.22em]">
+                          PRESENT AT ENTRY
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="mt-2.5 flex items-center justify-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-violet-300/80">
+                      <QrCode size={12} />
+                      <span>Official Digital Entry Pass</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Action Buttons: In ONE horizontal row on desktop, stacked on mobile */}
             <div className="relative z-10 mt-6 flex flex-col sm:flex-row items-center justify-center gap-3.5 w-full max-w-lg mx-auto">

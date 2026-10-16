@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
   let body: {
     participantId?: string;
     participantEventId?: string;
+    participantAccommodationId?: string;
     resumeToken?: string;
   };
 
@@ -42,8 +43,10 @@ export async function POST(request: NextRequest) {
     typeof body.participantId === "string" ? body.participantId.trim().toUpperCase() : "";
   const participantEventId =
     typeof body.participantEventId === "string" ? body.participantEventId.trim() : "";
+  const participantAccommodationId =
+    typeof body.participantAccommodationId === "string" ? body.participantAccommodationId.trim() : "";
 
-  if (!participantId || !participantEventId) {
+  if (!participantId || (!participantEventId && !participantAccommodationId)) {
     return errorResponse("Missing required fields.", 400);
   }
 
@@ -66,26 +69,69 @@ export async function POST(request: NextRequest) {
     return errorResponse("Payment recovery authorization required.", 401);
   }
 
-  // ─── 1. Load Participant Event & Owner ──────────────────
-  const { data: pe, error: peError } = await supabaseAdmin
-    .from("participant_events")
-    .select(`
-      id, payment_status, event_id, payment_amount,
-      participants!inner(participant_id, id, email),
-      events!inner(payment_type)
-    `)
-    .eq("id", participantEventId)
-    .maybeSingle();
+  // ─── 1. Load Item & Owner ──────────────────────────────
+  let participantData: { id: string; participant_id: string; email: string } | null = null;
+  let amount = 0;
+  let itemEventId: string | null = null;
 
-  if (peError || !pe) {
-    return errorResponse("Registration not found.", 404);
+  if (participantEventId) {
+    const { data: pe, error: peError } = await supabaseAdmin
+      .from("participant_events")
+      .select(`
+        id, payment_status, event_id, payment_amount,
+        participants!inner(participant_id, id, email),
+        events!inner(payment_type)
+      `)
+      .eq("id", participantEventId)
+      .maybeSingle();
+
+    if (peError || !pe) {
+      return errorResponse("Registration not found.", 404);
+    }
+
+    const rawParticipant = pe.participants;
+    participantData = Array.isArray(rawParticipant) ? rawParticipant[0] : rawParticipant;
+
+    if (!participantData || participantData.participant_id !== participantId) {
+      return errorResponse("Unauthorized. Registration does not belong to this participant.", 403);
+    }
+
+    if (pe.payment_status === "paid") {
+      return errorResponse("Payment is already completed.", 400);
+    }
+
+    amount = Number(pe.payment_amount) || 0;
+    itemEventId = pe.event_id;
+  } else if (participantAccommodationId) {
+    const { data: pa, error: paError } = await supabaseAdmin
+      .from("participant_accommodations")
+      .select(`
+        id, status, amount, payment_order_id,
+        participants!inner(participant_id, id, email)
+      `)
+      .eq("id", participantAccommodationId)
+      .maybeSingle();
+
+    if (paError || !pa) {
+      return errorResponse("Accommodation booking not found.", 404);
+    }
+
+    const rawParticipant = pa.participants;
+    participantData = Array.isArray(rawParticipant) ? rawParticipant[0] : rawParticipant;
+
+    if (!participantData || participantData.participant_id !== participantId) {
+      return errorResponse("Unauthorized. Booking does not belong to this participant.", 403);
+    }
+
+    if (pa.status === "paid") {
+      return errorResponse("Payment is already completed.", 400);
+    }
+
+    amount = Number(pa.amount) || 0;
   }
 
-  const rawParticipant = pe.participants;
-  const participantData = Array.isArray(rawParticipant) ? rawParticipant[0] : rawParticipant;
-
-  if (!participantData || participantData.participant_id !== participantId) {
-    return errorResponse("Unauthorized. Registration does not belong to this participant.", 403);
+  if (!participantData) {
+    return errorResponse("Participant not found.", 404);
   }
 
   // ─── 2. Authorize via Session or Resume Token ───────────
@@ -122,28 +168,28 @@ export async function POST(request: NextRequest) {
     return errorResponse("Unauthorized access to this registration.", 403);
   }
 
-  // ─── 3. Verify Payment Status & Amount ──────────────────
-  if (pe.payment_status === "paid") {
-    return errorResponse("Payment is already completed.", 400);
-  }
-
-  const amount = pe.payment_amount || 0;
   if (amount <= 0) {
-    return errorResponse("No payment required for this event.", 400);
+    return errorResponse("No payment required for this item.", 400);
   }
 
   // ─── 4. Look For Existing Pending Payment Order ─────────
-  const { data: existingItem } = await supabaseAdmin
+  let itemQuery = supabaseAdmin
     .from("payment_order_items")
     .select(`
       payment_order_id,
       participant_id,
       payment_orders!inner(id, status, payer_participant_id)
     `)
-    .eq("participant_event_id", participantEventId)
     .eq("payment_orders.status", "pending")
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+
+  if (participantEventId) {
+    itemQuery = itemQuery.eq("participant_event_id", participantEventId);
+  } else {
+    itemQuery = itemQuery.eq("participant_accommodation_id", participantAccommodationId);
+  }
+
+  const { data: existingItem } = await itemQuery.maybeSingle();
 
   if (existingItem?.payment_order_id) {
     const paymentOrderData = Array.isArray(existingItem.payment_orders)
@@ -197,19 +243,35 @@ export async function POST(request: NextRequest) {
   }
 
   // ─── 6. Create Payment Order Item ───────────────────────
+  const orderItemPayload: Record<string, unknown> = {
+    payment_order_id: newOrder.id,
+    participant_id: participantData.id,
+    amount: amount,
+  };
+
+  if (participantEventId) {
+    orderItemPayload.participant_event_id = participantEventId;
+    orderItemPayload.event_id = itemEventId;
+    orderItemPayload.item_type = "event";
+  } else {
+    orderItemPayload.participant_accommodation_id = participantAccommodationId;
+    orderItemPayload.item_type = "accommodation";
+  }
+
   const { error: itemError } = await supabaseAdmin
     .from("payment_order_items")
-    .insert({
-      payment_order_id: newOrder.id,
-      participant_id: participantData.id,
-      participant_event_id: participantEventId,
-      event_id: pe.event_id,
-      amount: amount,
-    });
+    .insert(orderItemPayload);
 
   if (itemError) {
     console.error("Order item create error:", itemError);
     return errorResponse("Could not link payment order.", 500);
+  }
+
+  if (participantAccommodationId) {
+    await supabaseAdmin
+      .from("participant_accommodations")
+      .update({ payment_order_id: newOrder.id, updated_at: new Date().toISOString() })
+      .eq("id", participantAccommodationId);
   }
 
   return NextResponse.json(
