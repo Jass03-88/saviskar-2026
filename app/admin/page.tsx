@@ -36,6 +36,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import { parseAdminCategories } from "@/lib/admin/scope";
+import { generateRegistrationsCsv } from "@/lib/admin/csv-export";
 
 /* =========================================================
    TYPES
@@ -1519,121 +1520,7 @@ export default function AdminPage() {
   ======================================================= */
 
   function exportCsv() {
-    const rows = [
-      [
-        "Participant ID",
-        "Name",
-        "College",
-        "Email",
-        "Phone",
-        "Event",
-        "Category",
-        "Team",
-        "Registration Status",
-        "Payment Status",
-        "Payment Amount",
-        "Payment ID",
-        "Main Checked In",
-        "Main Checked In At",
-        "Event Checked In",
-        "Event Checked In At",
-        "Accommodation Plan",
-        "Accommodation Status",
-        "Accommodation Amount",
-        "Hostel",
-        "Room Number",
-        "Registration Group ID",
-        "Registered At",
-      ],
-      ...filteredRegistrations.map(
-        (item) => [
-          item.participant
-            .participant_id,
-
-          item.participant.name,
-
-          item.participant.college ??
-          "",
-
-          role === "master" ? item.participant.email : maskEmail(item.participant.email),
-
-          role === "master" ? (item.participant.phone ?? "") : maskPhone(item.participant.phone),
-
-          item.event?.name ??
-          item.registration
-            .event_id,
-
-          item.event?.category ??
-          "",
-
-          item.registration
-            .team_name ??
-          "Individual",
-
-          item.registration
-            .registration_status ??
-          "",
-
-          item.registration
-            .payment_status ??
-          "",
-
-          item.registration
-            .payment_amount ??
-          0,
-
-          item.registration
-            .payment_id ??
-          "",
-
-          item.registration
-            .main_checked_in
-            ? "Yes"
-            : "No",
-
-          formatDate(
-            item.registration
-              .main_checked_in_at
-          ),
-
-          item.registration
-            .checked_in
-            ? "Yes"
-            : "No",
-
-          formatDate(
-            item.registration
-              .checked_in_at
-          ),
-
-          item.accommodation?.plan_name ?? "None",
-
-          item.accommodation?.status ?? "None",
-
-          item.accommodation?.amount ?? 0,
-
-          item.accommodation?.hostel_name ?? "Unassigned",
-
-          item.accommodation?.room_number ?? "Unassigned",
-
-          (item.registration as any).registration_group_id ?? "",
-
-          formatDate(
-            item.registration
-              .created_at
-          ),
-        ]
-      ),
-    ];
-
-    const csv =
-      rows
-        .map((row) =>
-          row
-            .map(escapeCsv)
-            .join(",")
-        )
-        .join("\r\n");
+    const csv = generateRegistrationsCsv(filteredRegistrations);
 
     const blob =
       new Blob([csv], {

@@ -1411,7 +1411,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
         acc.participants?.participant_id || "",
         `"${(acc.participants?.name || "").replace(/"/g, '""')}"`,
         acc.participants?.is_faculty ? "Faculty" : "Participant",
-        `"${(data.role === "master" ? acc.participants?.email || "" : maskEmail(acc.participants?.email || "")).replace(/"/g, '""')}"`,
+        `"${(acc.participants?.email || "").replace(/"/g, '""')}"`,
         acc.participants?.gender || "",
         `"${(acc.participants?.state || "").replace(/"/g, '""')}"`,
         `"${(plan?.name || "").replace(/"/g, '""')}"`,

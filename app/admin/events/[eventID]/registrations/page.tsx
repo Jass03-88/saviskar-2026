@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { generateEventRegistrationsCsv } from "@/lib/admin/csv-export";
 import {
   RefreshCw,
   Users,
@@ -851,126 +852,7 @@ export default function EventRegistrationsPage() {
   // ---------------------------------------------------------
 
   function exportCSV() {
-    const rows = [
-      [
-        "Participant ID",
-        "Name",
-        "Event",
-        "College",
-        "Email",
-        "Phone",
-        "Team",
-        "Registration Group ID",
-        "Registration Status",
-        "Payment Status",
-        "Payment Amount",
-        "Payment ID",
-        "Event Checked In",
-        "Event Checked In At",
-        "Main Checked In",
-        "Main Checked In At",
-        "Registered At",
-      ],
-
-      ...filteredRegistrations.map(
-        (item) => [
-          escapeCsv(
-            item.participant
-              .participant_id
-          ),
-          escapeCsv(
-            item.participant.name
-          ),
-          escapeCsv(
-            item.event?.name ??
-              item.registration
-                .event_id
-          ),
-          escapeCsv(
-            item.participant.college ??
-              ""
-          ),
-          escapeCsv(
-            role === "master"
-              ? item.participant.email
-              : maskEmail(item.participant.email)
-          ),
-          escapeCsv(
-            role === "master"
-              ? (item.participant.phone ?? "")
-              : maskPhone(item.participant.phone)
-          ),
-          escapeCsv(
-            item.registration
-              .team_name ??
-              "Individual"
-          ),
-          escapeCsv(
-            item.registration
-              .registration_group_id ??
-              ""
-          ),
-          escapeCsv(
-            item.registration
-              .registration_status ??
-              ""
-          ),
-          escapeCsv(
-            item.registration
-              .payment_status ??
-              ""
-          ),
-          escapeCsv(
-            item.registration
-              .payment_amount ?? 0
-          ),
-          escapeCsv(
-            item.registration
-              .payment_id ?? ""
-          ),
-          escapeCsv(
-            item.registration
-              .checked_in
-              ? "Yes"
-              : "No"
-          ),
-          escapeCsv(
-            item.registration
-              .checked_in_at
-              ? formatDate(
-                  item.registration
-                    .checked_in_at
-                )
-              : ""
-          ),
-          escapeCsv(
-            item.registration
-              .main_checked_in
-              ? "Yes"
-              : "No"
-          ),
-          escapeCsv(
-            item.registration
-              .main_checked_in_at
-              ? formatDate(
-                  item.registration
-                    .main_checked_in_at
-                )
-              : ""
-          ),
-          escapeCsv(
-            formatDate(
-              item.registration
-                .created_at
-            )
-          ),
-        ]
-      ),
-    ];
-
-    const csv = rows
-      .map((row) => row.join(","))
-      .join("\r\n");
+    const csv = generateEventRegistrationsCsv(filteredRegistrations);
 
     const blob = new Blob(
       [csv],
