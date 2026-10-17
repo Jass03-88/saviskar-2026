@@ -38,6 +38,7 @@ import TeamAccommodationModal from "./TeamAccommodationModal";
 import AddAccommodationModal from "./AddAccommodationModal";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import { ImageUploader } from "@/components/ui/image-uploader";
+import { calculateStayDates } from "@/lib/accommodation-dates";
 
 export function formatAccommodationDate(
   duration: number,
@@ -119,29 +120,11 @@ export function isPlanRangeConflicting(
   extraDays: string | undefined,
   accommodations: Array<{ startDate?: string; endDate?: string; status?: string }>
 ): { hasConflict: boolean; isFullyBooked: boolean } {
-  let start = "2026-10-28";
-  let end = "2026-10-30";
-
-  if (planSlug === "1_day") {
-    start = selectedDate || "2026-10-28";
-    const d = new Date(start);
-    d.setDate(d.getDate() + 1);
-    end = d.toISOString().split("T")[0];
-  } else if (planSlug === "2_days") {
-    start = "2026-10-28";
-    end = "2026-10-30";
-  } else if (planSlug === "3_days") {
-    if (selectedDate === "2026-10-27" || extraDays === "before_27") {
-      start = "2026-10-27";
-      end = "2026-10-30";
-    } else {
-      start = "2026-10-28";
-      end = "2026-10-31";
-    }
-  } else if (planSlug === "4_days") {
-    start = "2026-10-27";
-    end = "2026-10-31";
-  }
+  const { startDate: start, endDate: end } = calculateStayDates(
+    planSlug,
+    selectedDate,
+    extraDays
+  );
 
   const nights: string[] = [];
   const cur = new Date(start);

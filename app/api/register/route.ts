@@ -709,11 +709,13 @@ export async function POST(
       }
 
       let selectedDate = "2026-10-28";
-      if (rawDate === "2026-10-27" || rawDate?.includes("27")) {
+      if (rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+        selectedDate = rawDate;
+      } else if (rawDate === "27" || rawDate?.includes("27")) {
         selectedDate = "2026-10-27";
-      } else if (rawDate === "2026-10-29" || rawDate === "29" || rawDate?.includes("29")) {
+      } else if (rawDate === "29" || rawDate?.includes("29")) {
         selectedDate = "2026-10-29";
-      } else if (rawDate === "2026-10-30" || rawDate?.includes("30")) {
+      } else if (rawDate === "30" || rawDate?.includes("30")) {
         selectedDate = "2026-10-30";
       }
 
@@ -724,7 +726,7 @@ export async function POST(
           selectedDate = "2026-10-27";
         } else if (rawExtraDays === "after_30") {
           effectivePlanSlug = "3_days";
-          selectedDate = "2026-10-30";
+          selectedDate = "2026-10-28";
         } else if (rawExtraDays === "both") {
           effectivePlanSlug = "4_days";
           selectedDate = "2026-10-27";
@@ -733,8 +735,10 @@ export async function POST(
         if (rawExtraDays === "before_27" || selectedDate === "2026-10-27") {
           selectedDate = "2026-10-27";
         } else {
-          selectedDate = "2026-10-30";
+          selectedDate = "2026-10-28";
         }
+      } else if (accPlanSlug === "4_days") {
+        selectedDate = "2026-10-27";
       }
 
       const { startDate, endDate } = calculateStayDates(
@@ -779,7 +783,7 @@ export async function POST(
       rpcAccommodations.push({
         email: accEmail,
         plan_slug: effectivePlanSlug,
-        selected_date: selectedDate,
+        selected_date: startDate,
         extra_days: rawExtraDays || undefined,
       });
     }
