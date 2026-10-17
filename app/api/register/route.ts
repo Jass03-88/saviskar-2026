@@ -5,6 +5,7 @@ import { checkRateLimitAsync, getClientIp } from "@/lib/rate-limit";
 import { generatePaymentResumeUrl } from "@/lib/payments/resume-token";
 import { getRegistrationSession } from "@/lib/auth/session";
 import { SITE_ACCESS } from "@/lib/config/site-access";
+import { calculateStayDates } from "@/lib/accommodation-dates";
 
 type MemberInput = {
   name?: unknown;
@@ -580,6 +581,9 @@ export async function POST(
   const rpcEvents =
     events.map(
       (event) => ({
+        eventId:
+          event.eventId,
+
         event_id:
           event.eventId,
 
@@ -677,7 +681,15 @@ export async function POST(
       return errorResponse("Too many accommodation selections.", 400);
     }
 
-    const seenEmails = new Set<string>();
+    // Map each delegate email to their list of accepted stays in this payload
+    const participantStays = new Map<
+      string,
+      Array<{
+        startDate: string;
+        endDate: string;
+        planSlug: string;
+      }>
+    >();
 
     for (const rawAcc of body.accommodations) {
       const acc = (rawAcc ?? {}) as AccommodationRegistrationInput;
@@ -722,15 +734,51 @@ export async function POST(
         }
       }
 
-      if (!seenEmails.has(accEmail)) {
-        seenEmails.add(accEmail);
-        rpcAccommodations.push({
-          email: accEmail,
-          plan_slug: effectivePlanSlug,
-          selected_date: selectedDate,
-          extra_days: rawExtraDays || undefined,
-        });
+      const { startDate, endDate } = calculateStayDates(
+        effectivePlanSlug,
+        selectedDate,
+        rawExtraDays
+      );
+
+      const existingStays = participantStays.get(accEmail) || [];
+
+      // Check against previously accepted stays for this delegate in this payload
+      let isDuplicateRepresentation = false;
+      for (const existing of existingStays) {
+        // Case 1: Exact duplicate representation of the same stay (e.g. teammate repeated across events)
+        if (existing.startDate === startDate && existing.endDate === endDate) {
+          isDuplicateRepresentation = true;
+          break;
+        }
+
+        // Case 2: Overlapping stay interval [start, end)
+        if (startDate < existing.endDate && endDate > existing.startDate) {
+          return errorResponse(
+            `Accommodation stays for delegate ${accEmail} overlap (${startDate} to ${endDate} conflicts with ${existing.startDate} to ${existing.endDate}). Please select non-overlapping dates.`,
+            400
+          );
+        }
       }
+
+      // If this is a duplicate entry for an identical stay for this teammate, skip cleanly
+      if (isDuplicateRepresentation) {
+        continue;
+      }
+
+      // Record this distinct, non-overlapping stay for this delegate
+      existingStays.push({
+        startDate,
+        endDate,
+        planSlug: effectivePlanSlug,
+      });
+      participantStays.set(accEmail, existingStays);
+
+      rpcAccommodations.push({
+        email: accEmail,
+        plan_slug: effectivePlanSlug,
+        selected_date: selectedDate,
+        extra_days: rawExtraDays || undefined,
+      });
     }
   }
 
@@ -1001,6 +1049,8 @@ export async function POST(
       40
     );
 
+  const returnedPaymentOrderId = results[0]?.payment_order_id;
+
   if (
     !returnedParticipantId
   ) {
@@ -1104,53 +1154,67 @@ export async function POST(
         .maybeSingle();
 
       if (accParticipant?.id) {
-        let startDate = "2026-10-28";
-        let endDate = "2026-10-30";
-        let durationDays = 2;
+        const { startDate, endDate, durationDays } = calculateStayDates(
+          accItem.plan_slug,
+          accItem.selected_date,
+          accItem.extra_days
+        );
 
-        if (accItem.plan_slug === "1_day" || accItem.plan_slug === "1_day_29") {
-          durationDays = 1;
-          if (accItem.selected_date === "2026-10-27") {
-            startDate = "2026-10-27";
-            endDate = "2026-10-28";
-          } else if (accItem.selected_date === "2026-10-29") {
-            startDate = "2026-10-29";
-            endDate = "2026-10-30";
-          } else if (accItem.selected_date === "2026-10-30") {
-            startDate = "2026-10-30";
-            endDate = "2026-10-31";
+        const updatePayload = {
+          start_date: startDate,
+          end_date: endDate,
+          duration_days: durationDays,
+        };
+
+        if (returnedPaymentOrderId) {
+          const { data: participantOrderAccs } = await supabaseAdmin
+            .from("participant_accommodations")
+            .select("id, start_date")
+            .eq("participant_id", accParticipant.id)
+            .eq("payment_order_id", returnedPaymentOrderId);
+
+          if (participantOrderAccs && participantOrderAccs.length > 0) {
+            if (participantOrderAccs.length === 1) {
+              await supabaseAdmin
+                .from("participant_accommodations")
+                .update(updatePayload)
+                .eq("id", participantOrderAccs[0].id);
+            } else {
+              const targetAcc =
+                participantOrderAccs.find(
+                  (a) =>
+                    a.start_date === startDate ||
+                    a.start_date === accItem.selected_date
+                ) || participantOrderAccs[0];
+              await supabaseAdmin
+                .from("participant_accommodations")
+                .update(updatePayload)
+                .eq("id", targetAcc.id);
+            }
           } else {
-            startDate = "2026-10-28";
-            endDate = "2026-10-29";
+            await supabaseAdmin
+              .from("participant_accommodations")
+              .update(updatePayload)
+              .eq("participant_id", accParticipant.id)
+              .eq("payment_order_id", returnedPaymentOrderId);
           }
-        } else if (accItem.plan_slug === "2_days") {
-          durationDays = 2;
-          startDate = "2026-10-28";
-          endDate = "2026-10-30";
-        } else if (accItem.plan_slug === "3_days") {
-          durationDays = 3;
-          if (accItem.selected_date === "2026-10-27" || accItem.extra_days === "before_27") {
-            startDate = "2026-10-27";
-            endDate = "2026-10-30";
-          } else {
-            startDate = "2026-10-28";
-            endDate = "2026-10-31";
+        } else {
+          const { data: latestAcc } = await supabaseAdmin
+            .from("participant_accommodations")
+            .select("id")
+            .eq("participant_id", accParticipant.id)
+            .in("status", ["pending", "unpaid"])
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (latestAcc?.id) {
+            await supabaseAdmin
+              .from("participant_accommodations")
+              .update(updatePayload)
+              .eq("id", latestAcc.id);
           }
-        } else if (accItem.plan_slug === "4_days") {
-          durationDays = 4;
-          startDate = "2026-10-27";
-          endDate = "2026-10-31";
         }
-
-        await supabaseAdmin
-          .from("participant_accommodations")
-          .update({
-            start_date: startDate,
-            end_date: endDate,
-            duration_days: durationDays,
-          })
-          .eq("participant_id", accParticipant.id)
-          .in("status", ["pending", "unpaid"]);
       }
     }
   }
@@ -1295,7 +1359,6 @@ export async function POST(
   };
 
   let paymentOrder: PaymentOrderInfo | null = null;
-  const returnedPaymentOrderId = results[0]?.payment_order_id;
 
   if (returnedPaymentOrderId) {
     const { data: orderData, error: orderLookupError } = await supabaseAdmin

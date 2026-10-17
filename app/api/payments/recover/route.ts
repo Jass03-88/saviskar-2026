@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
     const { data: pa, error: paError } = await supabaseAdmin
       .from("participant_accommodations")
       .select(`
-        id, status, amount, payment_order_id,
+        id, status, amount, payment_order_id, start_date, end_date,
         participants!inner(participant_id, id, email)
       `)
       .eq("id", participantAccommodationId)
@@ -125,6 +125,31 @@ export async function POST(request: NextRequest) {
 
     if (pa.status === "paid") {
       return errorResponse("Payment is already completed.", 400);
+    }
+
+    if (pa.status === "cancelled") {
+      return errorResponse("This accommodation booking has been cancelled and cannot be paid.", 400);
+    }
+
+    // Payment-Integrity Safeguard: Reject recovery if another confirmed booking already claimed these dates
+    if (pa.start_date && pa.end_date) {
+      const { data: conflict } = await supabaseAdmin
+        .from("participant_accommodations")
+        .select("id")
+        .eq("participant_id", participantData.id)
+        .neq("id", pa.id)
+        .eq("status", "paid")
+        .lt("start_date", pa.end_date)
+        .gt("end_date", pa.start_date)
+        .limit(1)
+        .maybeSingle();
+
+      if (conflict) {
+        return errorResponse(
+          "These accommodation dates are already covered by another confirmed booking.",
+          400
+        );
+      }
     }
 
     amount = Number(pa.amount) || 0;

@@ -38,6 +38,19 @@ type ResumeOrderData = {
   amount: number;
   currency: string;
   message?: string;
+  accommodationConflict?: boolean;
+  accommodationConflictNotice?: {
+    headline: string;
+    message: string;
+    supportEmail: string;
+    supportPhone: string;
+    affectedStay?: {
+      planName: string;
+      startDate: string;
+      endDate: string;
+      amount: number;
+    };
+  } | null;
   participant?: {
     participantId: string;
     name: string;
@@ -437,6 +450,61 @@ function PaymentResumeContent() {
                   </span>
                 </div>
               )}
+
+              {/* Accommodation Conflict Alert Banner */}
+              {data?.accommodationConflict && data?.accommodationConflictNotice && (
+                <div className="mt-5 w-full max-w-2xl rounded-2xl border border-amber-500/40 bg-amber-950/40 p-4 sm:p-5 text-left backdrop-blur-md shadow-[0_0_35px_rgba(245,158,11,0.2)]">
+                  <div className="flex items-start gap-3.5">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      <AlertCircle size={22} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-md bg-amber-500/20 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300 border border-amber-500/30">
+                          Action Required
+                        </span>
+                        <h3 className="text-sm sm:text-base font-semibold text-white">
+                          {data.accommodationConflictNotice.headline}
+                        </h3>
+                      </div>
+                      <p className="mt-1.5 text-xs sm:text-sm leading-relaxed text-zinc-300">
+                        {data.accommodationConflictNotice.message}
+                      </p>
+
+                      {data.accommodationConflictNotice.affectedStay && (
+                        <div className="mt-3 rounded-xl border border-white/10 bg-black/50 p-3 text-xs">
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-amber-300/80 block mb-1">
+                            Unconfirmed Stay Details
+                          </span>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-300 font-mono text-xs">
+                            <span>
+                              Plan: <strong className="text-white">{data.accommodationConflictNotice.affectedStay.planName}</strong>
+                            </span>
+                            <span>
+                              Dates: <strong className="text-white">{data.accommodationConflictNotice.affectedStay.startDate} to {data.accommodationConflictNotice.affectedStay.endDate}</strong>
+                            </span>
+                            <span>
+                              Fee: <strong className="text-white">₹{data.accommodationConflictNotice.affectedStay.amount.toLocaleString("en-IN")}</strong>
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-3 pt-3 border-t border-amber-500/20 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
+                        <div>
+                          Assistance: <a href={`mailto:${data.accommodationConflictNotice.supportEmail}`} className="text-amber-300 underline font-mono">{data.accommodationConflictNotice.supportEmail}</a>
+                          {data.accommodationConflictNotice.supportPhone && (
+                            <> or call <span className="text-white font-mono">{data.accommodationConflictNotice.supportPhone}</span></>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-zinc-500 italic">
+                          * Alternate room allocation or refund is subject to administrative review.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Desktop Two-Column Section: Left (Registered Competitions & Accommodation) | Right (Digital Pass / QR) */}
@@ -449,6 +517,8 @@ function PaymentResumeContent() {
               const displayAccommodations =
                 data?.registeredAccommodations && data.registeredAccommodations.length > 0
                   ? data.registeredAccommodations
+                  : data?.accommodationConflict
+                  ? []
                   : (data?.items ?? [])
                       .filter((i) => i.itemType === "accommodation")
                       .map((i) => ({

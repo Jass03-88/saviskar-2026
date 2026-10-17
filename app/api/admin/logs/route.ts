@@ -49,11 +49,18 @@ export async function GET(request: NextRequest) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  const { data: logs, count, error: logsError } = await supabaseAdmin
+  const actionType = searchParams.get("action_type");
+  let logsQuery = supabaseAdmin
     .from("admin_audit_logs")
     .select("id, admin_id, action_type, target_id, details, created_at", {
       count: "exact",
-    })
+    });
+
+  if (actionType) {
+    logsQuery = logsQuery.eq("action_type", actionType);
+  }
+
+  const { data: logs, count, error: logsError } = await logsQuery
     .order("created_at", { ascending: false })
     .range(from, to);
 
@@ -85,7 +92,11 @@ export async function GET(request: NextRequest) {
 
   const enrichedLogs = logs?.map((log) => ({
     ...log,
-    admin_email: emailMap.get(log.admin_id) || "Unknown Admin",
+    admin_email: log.admin_id
+      ? emailMap.get(log.admin_id) || "Unknown Admin"
+      : log.action_type === "ACCOMMODATION_PAYMENT_OVERLAP_CONFLICT"
+      ? "System (Payment Settlement Conflict)"
+      : "System Automated Action",
   }));
 
   const total = count ?? 0;

@@ -1,6 +1,30 @@
 import { Resend } from "resend";
 import QRCode from "qrcode";
 
+/**
+ * RECIPIENT SAFEGUARD POLICY:
+ * 1. Production Mode (Default): When ENABLE_TEST_RECIPIENT_GUARD is not "true",
+ *    emails are delivered normally to legitimate participant addresses.
+ *    A generic development variable (like APPROVED_TEST_EMAIL alone) will NOT activate
+ *    test mode in production.
+ * 2. Testing Mode: When ENABLE_TEST_RECIPIENT_GUARD="true" (or in non-production when
+ *    APPROVED_TEST_EMAIL is provided), outbound dispatches are fail-closed and strictly
+ *    restricted to the hardcoded approved test address.
+ */
+const HARDCODED_PERMITTED_TEST_EMAIL = "jashan.cgcu@gmail.com";
+
+export function isTestRecipientGuardActive(): boolean {
+  if (process.env.ENABLE_TEST_RECIPIENT_GUARD === "true") {
+    return true;
+  }
+  // In production, require the explicit ENABLE_TEST_RECIPIENT_GUARD="true" flag;
+  // a generic/stray variable must never accidentally trigger test mode in production.
+  if (process.env.NODE_ENV === "production") {
+    return false;
+  }
+  return !!process.env.APPROVED_TEST_EMAIL;
+}
+
 export type TeamMember = {
   participantId: string;
   name: string;
@@ -106,6 +130,22 @@ export async function sendRegistrationEmail(
       recipients: [],
       error: "Sender email is not configured.",
     };
+  }
+
+  const guardActive = isTestRecipientGuardActive();
+  if (guardActive) {
+    const configuredTestEmail = process.env.APPROVED_TEST_EMAIL?.trim().toLowerCase();
+    if (configuredTestEmail !== HARDCODED_PERMITTED_TEST_EMAIL) {
+      console.warn(
+        "[SAFEGUARD BLOCKED] Outbound email suppressed: test recipient safeguard is active, but APPROVED_TEST_EMAIL is missing or does not match authorized address."
+      );
+      return {
+        success: false,
+        emailsSent: 0,
+        recipients: [],
+        error: "Outbound email delivery suppressed: test recipient safeguard is active and unconfigured or unauthorized.",
+      };
+    }
   }
 
   const {
@@ -257,7 +297,16 @@ export async function sendRegistrationEmail(
   console.log(`[REGISTER EMAIL] uniqueRecipients count: ${uniqueRecipients.length}`);
 
   for (const recipient of uniqueRecipients) {
-    console.log(`[REGISTER EMAIL] processing recipient: ${recipient.email}`);
+    const normalizedRecipient = recipient.email.trim().toLowerCase();
+    if (guardActive && normalizedRecipient !== HARDCODED_PERMITTED_TEST_EMAIL) {
+      console.warn(
+        `[SAFEGUARD BLOCKED] Outbound email suppressed: recipient ${normalizedRecipient} does not match authorized test address.`
+      );
+      continue;
+    }
+
+    const destinationEmail = guardActive ? HARDCODED_PERMITTED_TEST_EMAIL : recipient.email.trim();
+    console.log(`[REGISTER EMAIL] processing recipient: ${destinationEmail}`);
     const safeRecipientName = escapeHtml(recipient.name);
     const safeRecipientEmail = escapeHtml(recipient.email);
     const safeRecipientPhone = escapeHtml(recipient.phone);
@@ -994,7 +1043,17 @@ export async function sendRegistrationEmail(
     `;
 
     try {
-      console.log(`[REGISTER EMAIL] about to call Resend.emails.send() for: ${recipient.email}`);
+      if (guardActive) {
+        if (
+          (process.env.APPROVED_TEST_EMAIL || "").trim().toLowerCase() !== HARDCODED_PERMITTED_TEST_EMAIL ||
+          normalizedRecipient !== HARDCODED_PERMITTED_TEST_EMAIL
+        ) {
+          console.warn("[SAFEGUARD BLOCKED] Outbound send aborted immediately before Resend SDK call.");
+          continue;
+        }
+      }
+
+      console.log(`[REGISTER EMAIL] about to call Resend.emails.send() for recipient: ${destinationEmail}`);
       const subjectLine = receiptPdf 
         ? `Payment Confirmed — Saviskar 2026 | Receipt ${recipient.participantId}`
         : `You're Registered — Saviskar 2026 | ${recipient.participantId}`;
@@ -1025,17 +1084,27 @@ export async function sendRegistrationEmail(
 
       let { data, error } = await resend.emails.send({
         from: fromEmail,
-        to: [recipient.email],
+        to: [destinationEmail],
         subject: subjectLine,
         html: emailHtml,
         ...(attachments ? { attachments } : {}),
       });
 
       if (error && (error as { statusCode?: number; message?: string }).statusCode === 403 && String((error as { message?: string }).message || "").includes("domain is not verified")) {
-        console.warn(`[REGISTER EMAIL] Domain not verified in Resend. Retrying with onboarding fallback for ${recipient.email}...`);
+        if (guardActive) {
+          if (
+            (process.env.APPROVED_TEST_EMAIL || "").trim().toLowerCase() !== HARDCODED_PERMITTED_TEST_EMAIL ||
+            normalizedRecipient !== HARDCODED_PERMITTED_TEST_EMAIL
+          ) {
+            console.warn("[SAFEGUARD BLOCKED] Outbound retry aborted immediately before Resend SDK call.");
+            continue;
+          }
+        }
+
+        console.warn(`[REGISTER EMAIL] Domain not verified in Resend. Retrying with onboarding fallback...`);
         const fallbackRes = await resend.emails.send({
           from: "Saviskar 2026 <onboarding@resend.dev>",
-          to: [recipient.email],
+          to: [destinationEmail],
           subject: subjectLine,
           html: emailHtml,
           ...(attachments ? { attachments } : {}),
