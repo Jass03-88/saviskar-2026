@@ -106,7 +106,9 @@ export async function GET(request: Request) {
           phone,
           gender,
           state,
-          faculty_incharges ( id )
+          faculty_incharges ( id ),
+          participant_events ( id ),
+          participant_event_members ( id )
         )
       `, { count: "exact" })
       .order("created_at", { ascending: false })
@@ -163,7 +165,9 @@ export async function GET(request: Request) {
         checked_out, 
         room_id,
         participants (
-          faculty_incharges ( id )
+          faculty_incharges ( id ),
+          participant_events ( id ),
+          participant_event_members ( id )
         )
       `);
 
@@ -191,9 +195,10 @@ export async function GET(request: Request) {
           else if (s.checked_in) checkedIn++;
           
           const p = s.participants as any;
-          const is_faculty = Array.isArray(p) 
-            ? p.length > 0 && p[0].faculty_incharges && p[0].faculty_incharges.length > 0 
-            : p?.faculty_incharges && p.faculty_incharges.length > 0;
+          const pObj = Array.isArray(p) ? p[0] : p;
+          const facultyCount = pObj?.faculty_incharges?.length ?? 0;
+          const eventCount = (pObj?.participant_events?.length ?? 0) + (pObj?.participant_event_members?.length ?? 0);
+          const is_faculty = facultyCount > 0 && eventCount === 0;
             
           if (is_faculty) activeFaculty++;
           else activeParticipants++;
@@ -210,9 +215,14 @@ export async function GET(request: Request) {
     const occupiedCapacity = activeAllocations?.length ?? 0;
 
     const processedAccommodations = (accommodations ?? []).map((acc: any) => {
-      const is_faculty = acc.participants?.faculty_incharges && acc.participants.faculty_incharges.length > 0;
+      const p = acc.participants;
+      const facultyCount = p?.faculty_incharges?.length ?? 0;
+      const eventCount = (p?.participant_events?.length ?? 0) + (p?.participant_event_members?.length ?? 0);
+      const is_faculty = facultyCount > 0 && eventCount === 0;
       if (acc.participants) {
         delete acc.participants.faculty_incharges;
+        delete acc.participants.participant_events;
+        delete acc.participants.participant_event_members;
         acc.participants.is_faculty = is_faculty;
       }
       return acc;

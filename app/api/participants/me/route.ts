@@ -115,6 +115,8 @@ export async function GET(request: NextRequest) {
       college,
       email,
       phone,
+      gender,
+      state,
       participant_events (
         id,
         event_id,
@@ -169,12 +171,26 @@ export async function GET(request: NextRequest) {
         amount,
         currency,
         status,
+        room_id,
+        hostel_id,
+        checked_in,
+        checked_in_at,
+        checked_out,
+        checked_out_at,
         accommodation_plans (
           id,
           name,
           slug,
           duration,
           price
+        ),
+        hostels (
+          id,
+          name
+        ),
+        hostel_rooms (
+          id,
+          room_number
         )
       )
     `
@@ -255,6 +271,25 @@ export async function GET(request: NextRequest) {
       paymentAmount: number | null;
       registrationStatus: string | null;
       checkedIn: boolean;
+      teamMembers?: Array<{
+        id: string;
+        name: string;
+        email: string;
+        phone: string;
+        isTeamLeader: boolean;
+        participantId: string | null;
+        college: string | null;
+        accommodations: Array<{
+          id: string;
+          planName: string;
+          planSlug: string;
+          startDate: string;
+          endDate: string;
+          durationDays: number;
+          amount: number;
+          status: string;
+        }>;
+      }>;
     }
   >();
 
@@ -312,6 +347,113 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // 3. Process team members for team events
+  const teamParticipantEventIds = Array.from(eventsByParticipantEventId.keys());
+  if (teamParticipantEventIds.length > 0) {
+    let memberQuery: any = supabaseAdmin
+      .from("participant_event_members")
+      .select(`
+        id,
+        name,
+        email,
+        phone,
+        is_team_leader,
+        participant_event_id,
+        participant_id,
+        participants (
+          id,
+          participant_id,
+          college
+        )
+      `);
+
+    if (typeof memberQuery?.in === "function") {
+      memberQuery = memberQuery.in("participant_event_id", teamParticipantEventIds);
+    }
+    if (typeof memberQuery?.order === "function") {
+      memberQuery = memberQuery.order("is_team_leader", { ascending: false });
+    }
+
+    const { data: teamMembersData } = (await memberQuery) ?? { data: [] };
+
+    const memberParticipantUuids = Array.from(
+      new Set(
+        (teamMembersData ?? [])
+          .map((m: any) => m.participant_id || m.participants?.id)
+          .filter(Boolean)
+      )
+    );
+
+    const memberAccsByParticipantId = new Map<string, any[]>();
+    if (memberParticipantUuids.length > 0) {
+      let accQuery: any = supabaseAdmin
+        .from("participant_accommodations")
+        .select(`
+          id,
+          participant_id,
+          start_date,
+          end_date,
+          duration_days,
+          amount,
+          currency,
+          status,
+          accommodation_plans (
+            name,
+            slug
+          )
+        `);
+
+      if (typeof accQuery?.in === "function") {
+        accQuery = accQuery.in("participant_id", memberParticipantUuids);
+      }
+      if (typeof accQuery?.neq === "function") {
+        accQuery = accQuery.neq("status", "cancelled");
+      }
+
+      const { data: memberAccs } = (await accQuery) ?? { data: [] };
+
+      if (memberAccs) {
+        for (const mAcc of memberAccs) {
+          const list = memberAccsByParticipantId.get(mAcc.participant_id) || [];
+          const rawPlan = Array.isArray(mAcc.accommodation_plans)
+            ? mAcc.accommodation_plans[0]
+            : mAcc.accommodation_plans;
+          list.push({
+            id: mAcc.id,
+            planName: rawPlan?.name || "Accommodation",
+            planSlug: rawPlan?.slug || "",
+            startDate: mAcc.start_date,
+            endDate: mAcc.end_date,
+            durationDays: mAcc.duration_days,
+            amount: Number(mAcc.amount) || 0,
+            status: mAcc.status,
+          });
+          memberAccsByParticipantId.set(mAcc.participant_id, list);
+        }
+      }
+    }
+
+    if (teamMembersData) {
+      for (const m of teamMembersData as any[]) {
+        const ev = eventsByParticipantEventId.get(m.participant_event_id);
+        if (ev) {
+          if (!ev.teamMembers) ev.teamMembers = [];
+          const pUuid = m.participant_id || m.participants?.id;
+          ev.teamMembers.push({
+            id: m.id,
+            name: m.name,
+            email: m.email,
+            phone: m.phone ? maskPhone(m.phone) : "",
+            isTeamLeader: m.is_team_leader === true,
+            participantId: m.participants?.participant_id || null,
+            college: m.participants?.college || null,
+            accommodations: memberAccsByParticipantId.get(pUuid) || [],
+          });
+        }
+      }
+    }
+  }
+
   // ─── Format Accommodations ──────────────────────────────
   type RawAccRecord = {
     id: string;
@@ -321,10 +463,18 @@ export async function GET(request: NextRequest) {
     amount: number;
     currency: string | null;
     status: string;
+    room_id?: string | null;
+    hostel_id?: string | null;
+    checked_in?: boolean | null;
+    checked_in_at?: string | null;
+    checked_out?: boolean | null;
+    checked_out_at?: string | null;
     accommodation_plans:
       | { name: string; slug: string; duration?: number; price?: number }
       | { name: string; slug: string; duration?: number; price?: number }[]
       | null;
+    hostels?: { id: string; name: string } | { id: string; name: string }[] | null;
+    hostel_rooms?: { id: string; room_number: string } | { id: string; room_number: string }[] | null;
   };
 
   const rawAccs = (data.participant_accommodations as RawAccRecord[] | null) ?? [];
@@ -334,6 +484,8 @@ export async function GET(request: NextRequest) {
       const rawPlan = Array.isArray(acc.accommodation_plans)
         ? acc.accommodation_plans[0]
         : acc.accommodation_plans;
+      const rawHostel = Array.isArray(acc.hostels) ? acc.hostels[0] : acc.hostels;
+      const rawRoom = Array.isArray(acc.hostel_rooms) ? acc.hostel_rooms[0] : acc.hostel_rooms;
       return {
         id: acc.id,
         planName: rawPlan?.name ?? "Accommodation",
@@ -344,6 +496,13 @@ export async function GET(request: NextRequest) {
         amount: Number(acc.amount) || 0,
         currency: acc.currency || "INR",
         status: acc.status,
+        allocationStatus: acc.room_id ? "allocated" : "awaiting_allocation",
+        hostelName: rawHostel?.name || null,
+        roomNumber: rawRoom?.room_number || null,
+        checkedIn: Boolean(acc.checked_in),
+        checkedInAt: acc.checked_in_at || null,
+        checkedOut: Boolean(acc.checked_out),
+        checkedOutAt: acc.checked_out_at || null,
       };
     });
 
@@ -501,6 +660,8 @@ export async function GET(request: NextRequest) {
       college: data.college,
       email: data.email,
       phone: data.phone,
+      gender: data.gender ?? null,
+      state: data.state ?? null,
     },
     events: Array.from(eventsByParticipantEventId.values()),
     accommodations,
