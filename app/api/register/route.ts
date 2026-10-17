@@ -6,6 +6,7 @@ import { generatePaymentResumeUrl } from "@/lib/payments/resume-token";
 import { getRegistrationSession } from "@/lib/auth/session";
 import { SITE_ACCESS } from "@/lib/config/site-access";
 import { calculateStayDates } from "@/lib/accommodation-dates";
+import { formatAccommodationOverlapError } from "@/lib/accommodation-expiration";
 
 type MemberInput = {
   name?: unknown;
@@ -87,12 +88,14 @@ function cleanPhone(value: unknown) {
 
 function errorResponse(
   message: string,
-  status: number
+  status: number,
+  code?: string
 ) {
   return NextResponse.json(
     {
       success: false,
       error: message,
+      ...(code ? { code } : {}),
     },
     {
       status,
@@ -861,8 +864,24 @@ export async function POST(
     if (code === "SVK06") {
       return errorResponse("Please enter your team name.", 400);
     }
-    if (code === "SVK07" || code === "SVK08" || code === "SVK09" || code === "SVK10" || code === "SVK11") {
+    if (code === "SVK11") {
+      const formatted = formatAccommodationOverlapError(rpcError);
+      return errorResponse(formatted.message || message, 400, formatted.code);
+    }
+    if (code === "SVK07" || code === "SVK08" || code === "SVK09" || code === "SVK10") {
       return errorResponse(message, 400);
+    }
+
+    if (
+      code === "23P01" ||
+      message.includes("participant_accommodations_no_overlap") ||
+      message.includes("exclusion constraint")
+    ) {
+      return errorResponse(
+        "The selected accommodation dates conflict with an existing booking or active checkout in progress. Please choose different dates.",
+        400,
+        "ACCOMMODATION_OVERLAP_CONFLICT"
+      );
     }
 
     // 2. Backward Compatibility Fallbacks (Text Matching)

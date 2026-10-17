@@ -72,6 +72,7 @@ type Participant = {
   id_card_storage_path?: string | null;
   created_at: string;
   accommodation?: AccommodationDetail | null;
+  accommodations?: AccommodationDetail[] | null;
 };
 
 type ParticipantEvent = {
@@ -116,6 +117,7 @@ type RegistrationMember = {
     id_card_storage_path?: string | null;
   } | null;
   accommodation?: AccommodationDetail | null;
+  accommodations?: AccommodationDetail[] | null;
 };
 
 type Registration = {
@@ -144,6 +146,7 @@ type Registration = {
     updated_at: string;
   } | null;
   accommodation?: AccommodationDetail | null;
+  accommodations?: AccommodationDetail[] | null;
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
@@ -2824,10 +2827,29 @@ export default function AdminPage() {
       ===================================================== */}
 
       {selectedParticipant && (() => {
-        const selectedParticipantAccommodation =
-          selectedParticipant.accommodation ??
-          selectedParticipantEvents.find((item) => item.accommodation)?.accommodation ??
-          null;
+        const selectedParticipantAccommodations: AccommodationDetail[] = (() => {
+          if (Array.isArray(selectedParticipant.accommodations) && selectedParticipant.accommodations.length > 0) {
+            return selectedParticipant.accommodations;
+          }
+          const accs: AccommodationDetail[] = [];
+          if (selectedParticipant.accommodation) {
+            accs.push(selectedParticipant.accommodation);
+          }
+          for (const reg of selectedParticipantEvents) {
+            if (Array.isArray(reg.accommodations)) {
+              for (const a of reg.accommodations) {
+                if (!accs.some((existing) => existing.id === a.id)) {
+                  accs.push(a);
+                }
+              }
+            } else if (reg.accommodation && !accs.some((existing) => existing.id === reg.accommodation?.id)) {
+              accs.push(reg.accommodation);
+            }
+          }
+          return accs;
+        })();
+
+        const selectedParticipantAccommodation = selectedParticipantAccommodations[0] ?? null;
 
         return (
           <div className="fixed inset-0 z-[120] overflow-hidden" data-lenis-prevent="true">
@@ -3170,91 +3192,110 @@ export default function AdminPage() {
               <div className="mt-7">
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-black/30">
-                        Campus Accommodation
+                        Campus Accommodation ({selectedParticipantAccommodations.length})
                       </p>
-                      {selectedParticipantAccommodation && (
+                      {selectedParticipantAccommodations.length > 0 && (
                         <span
                           className={`rounded-full px-2.5 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
-                            selectedParticipantAccommodation.status === "paid"
+                            selectedParticipantAccommodations.every((a) => a.status === "paid")
                               ? "border-green-200 bg-green-50 text-green-700"
+                              : selectedParticipantAccommodations.some((a) => a.status === "paid")
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
                               : "border-amber-200 bg-amber-50 text-amber-700"
                           }`}
                         >
-                          {selectedParticipantAccommodation.status === "paid"
-                            ? "Paid"
+                          {selectedParticipantAccommodations.every((a) => a.status === "paid")
+                            ? "All Paid"
+                            : selectedParticipantAccommodations.some((a) => a.status === "paid")
+                            ? "Partially Paid"
                             : "Payment Pending"}
                         </span>
                       )}
                     </div>
 
-                    {selectedParticipantAccommodation ? (
-                      <div className="rounded-[24px] border border-black/10 bg-white p-5 text-black space-y-4">
-                        <div className="flex items-center justify-between pb-3 border-b border-black/5">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 border border-violet-100">
-                              <Bed size={18} />
+                    {selectedParticipantAccommodations.length > 0 ? (
+                      <div className="space-y-3">
+                        {selectedParticipantAccommodations.map((acc, accIdx) => (
+                          <div key={acc.id || accIdx} className="rounded-[24px] border border-black/10 bg-white p-5 text-black space-y-4">
+                            <div className="flex items-center justify-between pb-3 border-b border-black/5">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-50 text-violet-700 border border-violet-100">
+                                  <Bed size={18} />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm font-semibold text-black">
+                                      {acc.plan_name || "Campus Stay Pass"}
+                                    </p>
+                                    <span
+                                      className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
+                                        acc.status === "paid"
+                                          ? "border-green-200 bg-green-50 text-green-700"
+                                          : "border-amber-200 bg-amber-50 text-amber-700"
+                                      }`}
+                                    >
+                                      {acc.status === "paid" ? "Paid" : "Pending"}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-black/40">
+                                    {acc.duration_days
+                                      ? `${acc.duration_days} Day${
+                                          acc.duration_days > 1 ? "s" : ""
+                                        } Pass`
+                                      : "Standard Stay"}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-base font-bold text-black">
+                                  ₹{(acc.amount || 0).toLocaleString()}
+                                </p>
+                                <p className="text-[9px] uppercase tracking-wider text-black/40 font-semibold">
+                                  Accommodation Fee
+                                </p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-sm font-semibold text-black">
-                                {selectedParticipantAccommodation.plan_name || "Campus Stay Pass"}
-                              </p>
-                              <p className="text-[10px] text-black/40">
-                                {selectedParticipantAccommodation.duration_days
-                                  ? `${selectedParticipantAccommodation.duration_days} Day${
-                                      selectedParticipantAccommodation.duration_days > 1 ? "s" : ""
-                                    } Pass`
-                                  : "Standard Stay"}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-base font-bold text-black">
-                              ₹{(selectedParticipantAccommodation.amount || 0).toLocaleString()}
-                            </p>
-                            <p className="text-[9px] uppercase tracking-wider text-black/40 font-semibold">
-                              Accommodation Fee
-                            </p>
-                          </div>
-                        </div>
 
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <SmallDetail
-                            label="Check-in Date"
-                            value={formatDate(selectedParticipantAccommodation.start_date)}
-                          />
-                          <SmallDetail
-                            label="Check-out Date"
-                            value={formatDate(selectedParticipantAccommodation.end_date)}
-                          />
-                          <SmallDetail
-                            label="Hostel"
-                            value={selectedParticipantAccommodation.hostel_name || "To be allocated"}
-                          />
-                          <SmallDetail
-                            label="Room / Bed"
-                            value={selectedParticipantAccommodation.room_number || "To be allocated"}
-                          />
-                          <SmallDetail
-                            label="Hostel Check-in"
-                            value={
-                              selectedParticipantAccommodation.checked_in
-                                ? (selectedParticipantAccommodation.checked_in_at
-                                    ? formatDate(selectedParticipantAccommodation.checked_in_at)
-                                    : "Checked in")
-                                : "Pending"
-                            }
-                          />
-                          <SmallDetail
-                            label="Hostel Check-out"
-                            value={
-                              selectedParticipantAccommodation.checked_out
-                                ? (selectedParticipantAccommodation.checked_out_at
-                                    ? formatDate(selectedParticipantAccommodation.checked_out_at)
-                                    : "Checked out")
-                                : "Pending"
-                            }
-                          />
-                        </div>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <SmallDetail
+                                label="Check-in Date"
+                                value={formatDate(acc.start_date)}
+                              />
+                              <SmallDetail
+                                label="Check-out Date"
+                                value={formatDate(acc.end_date)}
+                              />
+                              <SmallDetail
+                                label="Hostel"
+                                value={acc.hostel_name || "To be allocated"}
+                              />
+                              <SmallDetail
+                                label="Room / Bed"
+                                value={acc.room_number || "To be allocated"}
+                              />
+                              <SmallDetail
+                                label="Hostel Check-in"
+                                value={
+                                  acc.checked_in
+                                    ? (acc.checked_in_at
+                                        ? formatDate(acc.checked_in_at)
+                                        : "Checked in")
+                                    : "Pending"
+                                }
+                              />
+                              <SmallDetail
+                                label="Hostel Check-out"
+                                value={
+                                  acc.checked_out
+                                    ? (acc.checked_out_at
+                                        ? formatDate(acc.checked_out_at)
+                                        : "Checked out")
+                                    : "Pending"
+                                }
+                              />
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ) : (
                       <div className="rounded-[24px] border border-black/10 bg-black/5 p-4 text-black/40 text-xs font-medium text-center">

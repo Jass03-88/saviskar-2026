@@ -33,6 +33,9 @@ import {
 import QRCode from "qrcode";
 import { supabase } from "@/lib/supabase";
 import TermsConditionsModal from "./TermsConditionsModal";
+import RegistrationDetailPanel from "./RegistrationDetailPanel";
+import TeamAccommodationModal from "./TeamAccommodationModal";
+import AddAccommodationModal from "./AddAccommodationModal";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import { ImageUploader } from "@/components/ui/image-uploader";
 
@@ -238,6 +241,25 @@ export type ParticipantLookupEvent = {
   teamName: string | null;
   checkedIn: boolean;
   checkedInAt: string | null;
+  teamMembers?: Array<{
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    isTeamLeader: boolean;
+    participantId: string | null;
+    college: string | null;
+    accommodations: Array<{
+      id: string;
+      planName: string;
+      planSlug: string;
+      startDate: string;
+      endDate: string;
+      durationDays: number;
+      amount: number;
+      status: string;
+    }>;
+  }>;
 };
 
 export type ParticipantLookupAccommodation = {
@@ -253,6 +275,13 @@ export type ParticipantLookupAccommodation = {
   currency?: string;
   status: string;
   assignedEmail?: string;
+  allocationStatus?: string | null;
+  hostelName?: string | null;
+  roomNumber?: string | null;
+  checkedIn?: boolean;
+  checkedInAt?: string | null;
+  checkedOut?: boolean;
+  checkedOutAt?: string | null;
 };
 
 export type ConfirmedRegistrationData = {
@@ -418,6 +447,15 @@ export default function RegistrationForm({
   const isSaveOnlyRef = useRef(false);
   const [termsModalOpen, setTermsModalOpen] = useState(false);
   const activeLookupRequestRef = useRef(0);
+
+  /*
+   * ACCOMMODATION & REGISTRATION DETAIL MODAL STATES
+   */
+  const [selectedDetailEvent, setSelectedDetailEvent] = useState<ParticipantLookupEvent | null>(null);
+  const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false);
+  const [isAddAccommodationModalOpen, setIsAddAccommodationModalOpen] = useState(false);
+  const [isTeamAccommodationModalOpen, setIsTeamAccommodationModalOpen] = useState(false);
+  const [activeTeamEventForAccommodation, setActiveTeamEventForAccommodation] = useState<ParticipantLookupEvent | null>(null);
 
   /*
    * LOAD EVENTS
@@ -2061,6 +2099,43 @@ export default function RegistrationForm({
   }
 
   /*
+   * REGISTRATION DETAIL & ACCOMMODATION MODAL HANDLERS
+   */
+  const handleOpenDetailPanel = useCallback((event: ParticipantLookupEvent) => {
+    setSelectedDetailEvent(event);
+    setIsDetailPanelOpen(true);
+  }, []);
+
+  const handleOpenAddAccommodation = useCallback(() => {
+    setIsDetailPanelOpen(false);
+    setIsAddAccommodationModalOpen(true);
+  }, []);
+
+  const handleOpenTeamAccommodation = useCallback(
+    (event?: ParticipantLookupEvent) => {
+      setIsDetailPanelOpen(false);
+      const targetEvent =
+        event ||
+        selectedDetailEvent ||
+        participantLookupEvents.find(
+          (e) => e.registrationType === "team" && e.isTeamLeader
+        ) ||
+        null;
+      setActiveTeamEventForAccommodation(targetEvent);
+      setIsTeamAccommodationModalOpen(true);
+    },
+    [selectedDetailEvent, participantLookupEvents]
+  );
+
+  const handleModalPayment = useCallback(
+    async (orderId: string, pId?: string) => {
+      const targetPid = pId || participantLookup?.participantId || participantId || "";
+      await initiatePaymentCheckout(orderId, targetPid);
+    },
+    [participantLookup, participantId]
+  );
+
+  /*
    * PAYMENT PROCESSING SCREEN
    */
   if (paymentProcessing) {
@@ -2620,7 +2695,8 @@ export default function RegistrationForm({
                         return (
                           <div
                             key={item.participantEventId || item.eventId}
-                            className={`flex flex-col justify-between gap-3 rounded-xl border p-4 transition-all ${
+                            onClick={() => handleOpenDetailPanel(item)}
+                            className={`flex flex-col justify-between gap-3 rounded-xl border p-4 transition-all cursor-pointer hover:border-violet-500/50 hover:bg-white/[0.04] ${
                               isPending && !isCancelled
                                 ? "border-amber-500/30 bg-amber-950/20"
                                 : isCancelled
@@ -2693,7 +2769,10 @@ export default function RegistrationForm({
                               <button
                                 type="button"
                                 disabled={paymentProcessing}
-                                onClick={() => handlePaymentRecovery(item)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePaymentRecovery(item);
+                                }}
                                 className="mt-1 inline-flex items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-1.5 text-xs font-semibold text-black transition-all hover:bg-amber-100 hover:scale-[1.01] shadow-[0_0_15px_rgba(251,191,36,0.2)] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                               >
                                 {paymentProcessing ? (
@@ -2709,6 +2788,16 @@ export default function RegistrationForm({
                                 )}
                               </button>
                             )}
+
+                            {/* Detail Drawer Hint */}
+                            <div className="mt-1 flex items-center justify-between border-t border-white/5 pt-2 text-[10px] text-violet-300/80">
+                              <span className="flex items-center gap-1 font-mono">
+                                {item.registrationType === "team" || item.teamName
+                                  ? "View Roster & Team Stay Options"
+                                  : "View Registration Details"}
+                              </span>
+                              <ArrowRight size={11} className="opacity-60" />
+                            </div>
                           </div>
                         );
                       })}
@@ -2724,7 +2813,17 @@ export default function RegistrationForm({
                         Your Accommodation ({participantLookupAccommodations.length})
                       </p>
                     </div>
-                    <span className="font-mono text-[10px] text-white/40">Campus Stay Verified</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleOpenAddAccommodation}
+                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-mono font-semibold uppercase tracking-wider text-emerald-300 hover:bg-emerald-500/20 transition-all cursor-pointer"
+                      >
+                        <Plus size={11} />
+                        <span>Add Stay</span>
+                      </button>
+                      <span className="font-mono text-[10px] text-white/40 hidden sm:inline">Campus Stay Verified</span>
+                    </div>
                   </div>
 
                   {participantLookupLoading && participantLookupAccommodations.length === 0 ? (
@@ -2736,8 +2835,18 @@ export default function RegistrationForm({
                     </div>
                   ) : participantLookupAccommodations.length === 0 ? (
                     <div className="rounded-xl border border-white/5 bg-white/[0.015] px-4 py-3 text-xs text-white/40 flex items-center justify-between">
-                      <span>No accommodation booked</span>
-                      <span className="text-[11px] text-white/30">Campus stay optional</span>
+                      <div>
+                        <span>No accommodation booked</span>
+                        <span className="block text-[11px] text-white/30">Campus stay optional (₹400/night)</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleOpenAddAccommodation}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 transition-all cursor-pointer"
+                      >
+                        <Plus size={13} />
+                        <span>Book Campus Stay</span>
+                      </button>
                     </div>
                   ) : (
                     <div className="grid gap-2.5 sm:grid-cols-2">
@@ -5324,6 +5433,117 @@ export default function RegistrationForm({
             isOpen={termsModalOpen}
             onClose={() => setTermsModalOpen(false)}
           />
+
+          {/* Registration Detail Panel */}
+          {selectedDetailEvent && participantLookup && (
+            <RegistrationDetailPanel
+              isOpen={isDetailPanelOpen}
+              onClose={() => setIsDetailPanelOpen(false)}
+              participant={{
+                participantId: participantLookup.participantId,
+                name: participantLookup.name,
+                college: participantLookup.college,
+                email: participantLookup.email,
+                phone: participantLookup.phone,
+                gender: (participantLookup as any).gender,
+                state: (participantLookup as any).state,
+              }}
+              event={{
+                participantEventId: selectedDetailEvent.participantEventId,
+                eventId: selectedDetailEvent.eventId,
+                eventName: selectedDetailEvent.eventName,
+                category: selectedDetailEvent.category || null,
+                registrationType: selectedDetailEvent.registrationType || (selectedDetailEvent.teamName ? "team" : "individual"),
+                teamName: selectedDetailEvent.teamName || null,
+                isTeamLeader: Boolean(selectedDetailEvent.isTeamLeader),
+                paymentStatus: selectedDetailEvent.paymentStatus || null,
+                paymentAmount: selectedDetailEvent.paymentAmount || null,
+                registrationStatus: selectedDetailEvent.registrationStatus || null,
+                checkedIn: Boolean(selectedDetailEvent.checkedIn),
+                teamMembers: selectedDetailEvent.teamMembers,
+              }}
+              allEvents={participantLookupEvents.map((e) => ({
+                participantEventId: e.participantEventId,
+                eventId: e.eventId,
+                eventName: e.eventName,
+                category: e.category || null,
+                registrationType: e.registrationType || (e.teamName ? "team" : "individual"),
+                teamName: e.teamName || null,
+                isTeamLeader: Boolean(e.isTeamLeader),
+                paymentStatus: e.paymentStatus || null,
+                paymentAmount: e.paymentAmount || null,
+                registrationStatus: e.registrationStatus || null,
+                checkedIn: Boolean(e.checkedIn),
+                teamMembers: e.teamMembers,
+              }))}
+              accommodations={participantLookupAccommodations.map((a) => ({
+                id: a.id || a.participantAccommodationId,
+                planName: a.planName,
+                planSlug: a.planSlug,
+                startDate: a.startDate,
+                endDate: a.endDate,
+                durationDays: a.durationDays,
+                amount: a.amount || a.price || 0,
+                currency: a.currency || "INR",
+                status: a.status,
+                allocationStatus: a.allocationStatus || undefined,
+                hostelName: a.hostelName || undefined,
+                roomNumber: a.roomNumber || undefined,
+                checkedIn: a.checkedIn,
+                checkedInAt: (a as any).checkedInAt || undefined,
+                checkedOut: a.checkedOut,
+                checkedOutAt: (a as any).checkedOutAt || undefined,
+              }))}
+              onOpenAddAccommodation={handleOpenAddAccommodation}
+              onOpenTeamAccommodation={() => handleOpenTeamAccommodation(selectedDetailEvent)}
+              onPaymentRecovery={(ev) => {
+                const found = participantLookupEvents.find((e) => e.participantEventId === ev.participantEventId);
+                if (found) handlePaymentRecovery(found);
+              }}
+            />
+          )}
+
+          {/* Team Accommodation Modal */}
+          {isTeamAccommodationModalOpen && activeTeamEventForAccommodation && (
+            <TeamAccommodationModal
+              isOpen={isTeamAccommodationModalOpen}
+              onClose={() => setIsTeamAccommodationModalOpen(false)}
+              participantEventId={activeTeamEventForAccommodation.participantEventId}
+              teamName={activeTeamEventForAccommodation.teamName || "Team"}
+              eventName={activeTeamEventForAccommodation.eventName}
+              members={(activeTeamEventForAccommodation.teamMembers || []).map((m) => ({
+                id: m.id,
+                name: m.name,
+                email: m.email,
+                phone: m.phone,
+                isTeamLeader: m.isTeamLeader,
+                participantId: m.participantId,
+                college: m.college,
+                accommodations: m.accommodations,
+              }))}
+              onProceedToPayment={handleModalPayment}
+            />
+          )}
+
+          {/* Individual Add Accommodation Stay Modal */}
+          {isAddAccommodationModalOpen && (
+            <AddAccommodationModal
+              isOpen={isAddAccommodationModalOpen}
+              onClose={() => setIsAddAccommodationModalOpen(false)}
+              participantEmail={normalizedSessionEmail || existingParticipantEmail || participantLookup?.email || ""}
+              participantName={participantLookup?.name || "Participant"}
+              existingStays={participantLookupAccommodations.map((a) => ({
+                id: a.id || a.participantAccommodationId,
+                planName: a.planName,
+                startDate: a.startDate,
+                endDate: a.endDate,
+                durationDays: a.durationDays,
+                amount: a.amount || a.price || 0,
+                status: a.status,
+              }))}
+              onProceedToPayment={handleModalPayment}
+            />
+          )}
         </div>
       </div>
     </section>
