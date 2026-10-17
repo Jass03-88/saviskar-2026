@@ -49,6 +49,14 @@ export type CsvRegistrationItem = {
     room_number?: string | null;
     [key: string]: unknown;
   } | null;
+  accommodations?: Array<{
+    plan_name?: string | null;
+    status?: string | null;
+    amount?: number | null;
+    hostel_name?: string | null;
+    room_number?: string | null;
+    [key: string]: unknown;
+  }> | null;
   members?: Array<{
     name: string;
     email?: string | null;
@@ -114,6 +122,32 @@ export const REGISTRATION_CSV_HEADERS: string[] = [
 ];
 
 export function buildRegistrationCsvRow(item: CsvRegistrationItem): (string | number)[] {
+  const accList = item.accommodations && item.accommodations.length > 0
+    ? item.accommodations
+    : item.accommodation
+      ? [item.accommodation]
+      : [];
+
+  const accPlanName = accList.length > 0
+    ? accList.map((a) => a.plan_name || "Accommodation").join("; ")
+    : (item.accommodation?.plan_name ?? "None");
+
+  const accStatus = accList.length > 0
+    ? accList.map((a) => a.status || "None").join("; ")
+    : (item.accommodation?.status ?? "None");
+
+  const accAmount = accList.length > 0
+    ? accList.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+    : (item.accommodation?.amount ?? 0);
+
+  const accHostel = accList.length > 0
+    ? accList.map((a) => a.hostel_name || "Unassigned").join("; ")
+    : (item.accommodation?.hostel_name ?? "Unassigned");
+
+  const accRoom = accList.length > 0
+    ? accList.map((a) => a.room_number || "Unassigned").join("; ")
+    : (item.accommodation?.room_number ?? "Unassigned");
+
   return [
     item.participant.participant_id,
     item.participant.name,
@@ -131,11 +165,11 @@ export function buildRegistrationCsvRow(item: CsvRegistrationItem): (string | nu
     formatDate(item.registration.main_checked_in_at),
     item.registration.checked_in ? "Yes" : "No",
     formatDate(item.registration.checked_in_at),
-    item.accommodation?.plan_name ?? "None",
-    item.accommodation?.status ?? "None",
-    item.accommodation?.amount ?? 0,
-    item.accommodation?.hostel_name ?? "Unassigned",
-    item.accommodation?.room_number ?? "Unassigned",
+    accPlanName,
+    accStatus,
+    accAmount,
+    accHostel,
+    accRoom,
     (item.registration as Record<string, unknown>).registration_group_id as string ?? "",
     formatDate(item.registration.created_at),
   ];

@@ -65,6 +65,7 @@ type Member = {
     id_card_storage_path?: string | null;
   } | null;
   accommodation?: any;
+  accommodations?: any[];
 };
 
 type RawMember = {
@@ -541,29 +542,39 @@ export async function GET(request: Request) {
   });
 
   const accommodationsByParticipantId = new Map<string, any>();
-  for (const acc of rawAccommodations) {
-    if (acc.participant_id && !accommodationsByParticipantId.has(acc.participant_id)) {
-      const plan = Array.isArray(acc.accommodation_plans) ? acc.accommodation_plans[0] : acc.accommodation_plans;
-      const hostel = Array.isArray(acc.hostels) ? acc.hostels[0] : acc.hostels;
-      const room = Array.isArray(acc.hostel_rooms) ? acc.hostel_rooms[0] : acc.hostel_rooms;
+  const allAccommodationsByParticipantId = new Map<string, any[]>();
 
-      accommodationsByParticipantId.set(acc.participant_id, {
-        id: acc.id,
-        plan_name: plan?.name || (acc.duration_days ? `${acc.duration_days}-Day Accommodation` : "Accommodation"),
-        start_date: acc.start_date,
-        end_date: acc.end_date,
-        duration_days: acc.duration_days,
-        amount: Number(acc.amount) || Number(plan?.price) || 0,
-        currency: acc.currency || "INR",
-        status: acc.status,
-        hostel_name: hostel?.name ?? null,
-        room_number: room?.room_number ?? null,
-        checked_in: !!acc.checked_in,
-        checked_in_at: acc.checked_in_at ?? null,
-        checked_out: !!acc.checked_out,
-        checked_out_at: acc.checked_out_at ?? null,
-      });
+  for (const acc of rawAccommodations) {
+    if (!acc.participant_id) continue;
+
+    const plan = Array.isArray(acc.accommodation_plans) ? acc.accommodation_plans[0] : acc.accommodation_plans;
+    const hostel = Array.isArray(acc.hostels) ? acc.hostels[0] : acc.hostels;
+    const room = Array.isArray(acc.hostel_rooms) ? acc.hostel_rooms[0] : acc.hostel_rooms;
+
+    const formattedAcc = {
+      id: acc.id,
+      plan_name: plan?.name || (acc.duration_days ? `${acc.duration_days}-Day Accommodation` : "Accommodation"),
+      start_date: acc.start_date,
+      end_date: acc.end_date,
+      duration_days: acc.duration_days,
+      amount: Number(acc.amount) || Number(plan?.price) || 0,
+      currency: acc.currency || "INR",
+      status: acc.status,
+      hostel_name: hostel?.name ?? null,
+      room_number: room?.room_number ?? null,
+      checked_in: !!acc.checked_in,
+      checked_in_at: acc.checked_in_at ?? null,
+      checked_out: !!acc.checked_out,
+      checked_out_at: acc.checked_out_at ?? null,
+    };
+
+    if (!accommodationsByParticipantId.has(acc.participant_id)) {
+      accommodationsByParticipantId.set(acc.participant_id, formattedAcc);
     }
+
+    const existingList = allAccommodationsByParticipantId.get(acc.participant_id) ?? [];
+    existingList.push(formattedAcc);
+    allAccommodationsByParticipantId.set(acc.participant_id, existingList);
   }
 
   let accommodationStats = {
@@ -615,10 +626,14 @@ export async function GET(request: Request) {
     const memberAcc = member.participant_id
       ? accommodationsByParticipantId.get(member.participant_id) ?? null
       : null;
+    const memberAccs = member.participant_id
+      ? allAccommodationsByParticipantId.get(member.participant_id) ?? []
+      : [];
 
     current.push({
       ...member,
       accommodation: memberAcc,
+      accommodations: memberAccs,
     });
 
     membersByParticipantEventId.set(
@@ -670,12 +685,18 @@ export async function GET(request: Request) {
             registration.participant_id
           ) ?? null;
 
+        const participantAccs =
+          allAccommodationsByParticipantId.get(
+            registration.participant_id
+          ) ?? [];
+
         return participant
           ? [
             {
               participant: {
                 ...participant,
                 accommodation: acc,
+                accommodations: participantAccs,
               },
               registration,
               event:
@@ -695,6 +716,7 @@ export async function GET(request: Request) {
                   registration.id
                 ) ?? null,
               accommodation: acc,
+              accommodations: participantAccs,
             },
           ]
           : [];

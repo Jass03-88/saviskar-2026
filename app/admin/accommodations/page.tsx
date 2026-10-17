@@ -2382,6 +2382,100 @@ function LifecycleReport({ data }: { data: DashboardData }) {
   );
 }
 
+function PaymentConflictsSection() {
+  const [conflicts, setConflicts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/admin/accommodations/conflicts")
+      .then((res) => res.json())
+      .then((d) => {
+        if (d.success) {
+          setConflicts(d.conflicts || []);
+        }
+      })
+      .catch((err) => console.error("Error loading payment conflicts:", err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return <div className="text-xs text-black/40 py-2">Checking for settlement conflicts...</div>;
+  }
+
+  if (conflicts.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-8 rounded-2xl border border-amber-200 bg-amber-50/70 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
+          <h3 className="text-sm font-bold uppercase tracking-wider text-amber-900">
+            Payment Settlement Overlap Conflicts ({conflicts.length})
+          </h3>
+        </div>
+        <span className="text-[10px] font-mono uppercase bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded font-bold">
+          Manual Action Required
+        </span>
+      </div>
+      <p className="text-xs text-amber-800/90 mb-4 leading-relaxed">
+        The following payment orders were captured on the payment gateway, but their accommodation booking dates conflicted with an existing booking. Money was received, but no accommodation was confirmed. Staff must independently verify the original requested dates, existing accommodation, payment amount, and refund status via the PayU merchant dashboard before taking action.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs bg-white rounded-xl overflow-hidden border border-amber-200/80 shadow-sm">
+          <thead>
+            <tr className="bg-amber-100/50 text-amber-900 border-b border-amber-200 font-semibold">
+              <th className="py-2.5 px-3">Participant</th>
+              <th className="py-2.5 px-3">Order Ref / Amount</th>
+              <th className="py-2.5 px-3">Requested Stay</th>
+              <th className="py-2.5 px-3">Status</th>
+              <th className="py-2.5 px-3">Logged At</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-amber-100">
+            {conflicts.map((c) => (
+              <tr key={c.id} className="hover:bg-amber-50/50">
+                <td className="py-2.5 px-3">
+                  <div className="font-semibold text-black">{c.participant.name}</div>
+                  <div className="text-[10px] font-mono text-black/60">{c.participant.participantId} &bull; {c.participant.phone || c.participant.email}</div>
+                </td>
+                <td className="py-2.5 px-3">
+                  <div className="font-mono text-black font-medium">{c.paymentOrder.orderReference}</div>
+                  <div className="text-[10px] text-emerald-700 font-semibold">₹{c.paymentOrder.amount} ({c.paymentOrder.status})</div>
+                </td>
+                <td className="py-2.5 px-3">
+                  <div className="font-medium text-black">{c.accommodation.planName}</div>
+                  <div className="text-[10px] font-mono text-black/60">{c.accommodation.startDate} to {c.accommodation.endDate}</div>
+                </td>
+                <td className="py-2.5 px-3">
+                  <span className="inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
+                    {c.resolutionStatus ? c.resolutionStatus.replace(/_/g, " ") : "REQUIRES MANUAL VERIFICATION"}
+                  </span>
+                  {c.separateStay && (
+                    <div className="text-[10px] text-zinc-700 font-medium mt-1">
+                      Existing Booking: {c.separateStay.planName} ({c.separateStay.startDate} to {c.separateStay.endDate})
+                      {c.separateStay.roomNumber ? ` • Room ${c.separateStay.roomNumber}` : " • Unallocated"}
+                    </div>
+                  )}
+                  {c.resolutionNotes && (
+                    <div className="text-[10px] text-zinc-600 mt-0.5 max-w-[240px] leading-tight">
+                      {c.resolutionNotes}
+                    </div>
+                  )}
+                </td>
+                <td className="py-2.5 px-3 text-[10px] font-mono text-black/60">
+                  {new Date(c.conflictDetectedAt).toLocaleString("en-IN")}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ExceptionsReport({ data }: { data: DashboardData }) {
   const exceptions: any[] = [];
   
@@ -2412,6 +2506,8 @@ function ExceptionsReport({ data }: { data: DashboardData }) {
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-sm border border-black/5">
+      <PaymentConflictsSection />
+
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-semibold text-black">Exceptions & Reconciliation</h2>
         <button onClick={handleExport} className="px-4 py-2 rounded-full border border-black/20 text-sm hover:bg-black/5 transition text-black font-medium">Export CSV</button>

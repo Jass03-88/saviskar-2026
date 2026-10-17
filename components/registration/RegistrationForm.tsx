@@ -98,6 +98,66 @@ export function resolveAccommodationSelection(
   return { planSlug: baseSlug, selectedDate: selectedDate || "2026-10-28", extraDays: extraDays || "none" };
 }
 
+export function isDateBookedByParticipant(
+  dateStr: string,
+  accommodations: Array<{ startDate?: string; endDate?: string; status?: string }>
+): boolean {
+  return accommodations.some((acc) => {
+    if (!acc.startDate || !acc.endDate) return false;
+    const status = (acc.status || "").toLowerCase();
+    if (status === "cancelled" || status === "failed") return false;
+    return dateStr >= acc.startDate && dateStr < acc.endDate;
+  });
+}
+
+export function isPlanRangeConflicting(
+  planSlug: string,
+  selectedDate: string | undefined,
+  extraDays: string | undefined,
+  accommodations: Array<{ startDate?: string; endDate?: string; status?: string }>
+): { hasConflict: boolean; isFullyBooked: boolean } {
+  let start = "2026-10-28";
+  let end = "2026-10-30";
+
+  if (planSlug === "1_day") {
+    start = selectedDate || "2026-10-28";
+    const d = new Date(start);
+    d.setDate(d.getDate() + 1);
+    end = d.toISOString().split("T")[0];
+  } else if (planSlug === "2_days") {
+    start = "2026-10-28";
+    end = "2026-10-30";
+  } else if (planSlug === "3_days") {
+    if (selectedDate === "2026-10-27" || extraDays === "before_27") {
+      start = "2026-10-27";
+      end = "2026-10-30";
+    } else {
+      start = "2026-10-28";
+      end = "2026-10-31";
+    }
+  } else if (planSlug === "4_days") {
+    start = "2026-10-27";
+    end = "2026-10-31";
+  }
+
+  const nights: string[] = [];
+  const cur = new Date(start);
+  const finish = new Date(end);
+  while (cur < finish) {
+    nights.push(cur.toISOString().split("T")[0]);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const bookedNights = nights.filter((night) =>
+    isDateBookedByParticipant(night, accommodations)
+  );
+
+  return {
+    hasConflict: bookedNights.length > 0,
+    isFullyBooked: bookedNights.length === nights.length && nights.length > 0,
+  };
+}
+
 type EventOption = {
   id: string;
   name: string;
@@ -163,15 +223,15 @@ type RegistrationResponse = {
   }>;
 };
 
-type ParticipantLookupEvent = {
+export type ParticipantLookupEvent = {
   participantEventId: string;
   eventId: string;
   eventName: string;
-  category?: string;
-  registrationType?: string;
+  category?: string | null;
+  registrationType?: string | null;
   isTeamLeader?: boolean;
   registrationStatus: string | null;
-  paymentType?: string;
+  paymentType?: string | null;
   paymentStatus: string | null;
   paymentAmount: number | null;
   paymentId: string | null;
@@ -181,6 +241,7 @@ type ParticipantLookupEvent = {
 };
 
 export type ParticipantLookupAccommodation = {
+  id?: string;
   participantAccommodationId: string;
   planSlug: string;
   planName: string;
@@ -188,6 +249,8 @@ export type ParticipantLookupAccommodation = {
   endDate: string;
   durationDays: number;
   price: number;
+  amount?: number;
+  currency?: string;
   status: string;
   assignedEmail?: string;
 };
@@ -199,12 +262,12 @@ export type ConfirmedRegistrationData = {
   college?: string;
   events: Array<{
     name: string;
-    category?: string;
-    registrationType?: string;
+    category?: string | null;
+    registrationType?: string | null;
     teamName?: string | null;
     isTeamLeader?: boolean;
     fee: number;
-    paymentType?: string;
+    paymentType?: string | null;
     paymentStatus?: string;
   }>;
   accommodations: Array<{
@@ -329,6 +392,7 @@ export default function RegistrationForm({
       setParticipantLookup(null);
       setParticipantLookupEvents([]);
       setParticipantLookupAccommodations([]);
+      setParticipantLookupError(null);
       setSelectedEventIds([]);
       setEventState({});
       setMainAccommodationSlug("");
@@ -336,6 +400,7 @@ export default function RegistrationForm({
   }, [normalizedSessionEmail, existingParticipantEmail]);
 
   const [participantLookupLoading, setParticipantLookupLoading] = useState(false);
+  const [participantLookupError, setParticipantLookupError] = useState<string | null>(null);
   const [participantLookup, setParticipantLookup] = useState<
     ParticipantLookupResponse["participant"] | null
   >(null);
@@ -526,14 +591,69 @@ export default function RegistrationForm({
       accommodations: ParticipantLookupAccommodation[] = []
     ) => {
       if (!participant || typeof participant !== "object") return;
-      const safeEvents = Array.isArray(events) ? events : [];
-      const safeAccommodations = Array.isArray(accommodations) ? accommodations : [];
+
+      // Deduplicate and normalize registered events
+      const safeEvents = Array.from(
+        new Map(
+          (Array.isArray(events) ? events : [])
+            .filter((e) => e && (e.participantEventId || e.eventId))
+            .map((e) => {
+              const pId = e.participantEventId || e.eventId;
+              return [
+                pId,
+                {
+                  ...e,
+                  participantEventId: pId,
+                  eventId: e.eventId || pId,
+                  eventName: e.eventName || "Competition",
+                  category: e.category || null,
+                  registrationType: e.registrationType || (e.teamName ? "team" : "individual"),
+                  teamName: e.teamName || null,
+                  isTeamLeader: e.isTeamLeader ?? Boolean(e.teamName),
+                  paymentStatus: e.paymentStatus || null,
+                  paymentAmount:
+                    typeof e.paymentAmount === "number"
+                      ? e.paymentAmount
+                      : Number(e.paymentAmount) || 0,
+                  registrationStatus: e.registrationStatus || "confirmed",
+                  checkedIn: Boolean(e.checkedIn),
+                },
+              ];
+            })
+        ).values()
+      );
+
+      // Deduplicate and normalize registered accommodations
+      const safeAccommodations = Array.from(
+        new Map(
+          (Array.isArray(accommodations) ? accommodations : [])
+            .filter((a) => a && (a.id || a.participantAccommodationId))
+            .map((a) => {
+              const id = a.id || a.participantAccommodationId || "";
+              const price = typeof a.price === "number" ? a.price : (Number(a.amount) || 0);
+              const amount = typeof a.amount === "number" ? a.amount : (Number(a.price) || 0);
+              return [
+                id,
+                {
+                  ...a,
+                  id,
+                  participantAccommodationId: id,
+                  price,
+                  amount,
+                  currency: a.currency || "INR",
+                  status: a.status || "confirmed",
+                },
+              ];
+            })
+        ).values()
+      );
 
       setExistingParticipantId(participant.participantId || "");
       setExistingParticipantEmail(normalizedSessionEmail || participant.email || "");
       setParticipantLookup(participant);
       setParticipantLookupEvents(safeEvents);
       setParticipantLookupAccommodations(safeAccommodations);
+      setParticipantLookupError(null);
 
       // Never keep an event selected if the participant is already registered for it with an active/confirmed registration.
       const registeredIds = new Set(
@@ -568,59 +688,80 @@ export default function RegistrationForm({
   );
 
   /*
-   * AUTO-FETCH PARTICIPANT FOR VERIFIED SESSION
+   * REUSABLE PARTICIPANT HISTORY FETCHER FOR VERIFIED SESSION
    */
-  useEffect(() => {
-    let isMounted = true;
+  const fetchParticipantHistory = useCallback(async () => {
+    if (!normalizedSessionEmail) return;
 
-    async function autoFetchParticipant() {
-      if (!normalizedSessionEmail) return;
+    const requestId = ++activeLookupRequestRef.current;
 
-      const requestId = ++activeLookupRequestRef.current;
+    try {
+      setParticipantLookupLoading(true);
+      setParticipantLookupError(null);
+      const response = await fetch("/api/participants/me", {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      });
 
-      try {
-        setParticipantLookupLoading(true);
-        const response = await fetch("/api/participants/me", {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-          },
-        });
-
-        if (!response.ok) return;
-
-        const result = (await response.json()) as {
-          success?: boolean;
-          found?: boolean;
-          participant?: ParticipantLookupResponse["participant"];
-          events?: ParticipantLookupEvent[];
-          accommodations?: ParticipantLookupAccommodation[];
-        };
-
-        if (!isMounted || requestId !== activeLookupRequestRef.current) return;
-
-        if (result.success && result.found && result.participant) {
-          applyParticipantData(
-            result.participant,
-            result.events ?? [],
-            result.accommodations ?? []
-          );
+      if (!response.ok) {
+        if (response.status === 401) {
+          setParticipantLookup(null);
+          setParticipantLookupEvents([]);
+          setParticipantLookupAccommodations([]);
+          return;
         }
-      } catch (err) {
-        console.error("Auto participant lookup failed:", err);
-      } finally {
-        if (isMounted && requestId === activeLookupRequestRef.current) {
-          setParticipantLookupLoading(false);
-        }
+        throw new Error(`Participant lookup returned status ${response.status}`);
+      }
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        found?: boolean;
+        error?: string;
+        participant?: ParticipantLookupResponse["participant"];
+        events?: ParticipantLookupEvent[];
+        accommodations?: ParticipantLookupAccommodation[];
+      };
+
+      if (requestId !== activeLookupRequestRef.current) return;
+
+      if (!result.success && result.error) {
+        throw new Error(result.error);
+      }
+
+      if (result.success && result.found && result.participant) {
+        applyParticipantData(
+          result.participant,
+          result.events ?? [],
+          result.accommodations ?? []
+        );
+      } else if (result.success && result.found === false) {
+        setParticipantLookup(null);
+        setParticipantLookupEvents([]);
+        setParticipantLookupAccommodations([]);
+      }
+    } catch (err) {
+      console.error("Auto participant lookup failed:", err);
+      if (requestId === activeLookupRequestRef.current) {
+        setParticipantLookupError(
+          err instanceof Error ? err.message : "Unable to retrieve registration history."
+        );
+      }
+    } finally {
+      if (requestId === activeLookupRequestRef.current) {
+        setParticipantLookupLoading(false);
       }
     }
+  }, [normalizedSessionEmail, applyParticipantData]);
 
-    void autoFetchParticipant();
+  useEffect(() => {
+    void fetchParticipantHistory();
 
     function onFocus() {
       if (document.visibilityState === "visible") {
-        void autoFetchParticipant();
+        void fetchParticipantHistory();
       }
     }
 
@@ -628,11 +769,10 @@ export default function RegistrationForm({
     document.addEventListener("visibilitychange", onFocus);
 
     return () => {
-      isMounted = false;
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [normalizedSessionEmail, applyParticipantData]);
+  }, [fetchParticipantHistory]);
 
   async function findParticipant() {
     const cleanId = existingParticipantId.trim().toUpperCase();
@@ -737,7 +877,13 @@ export default function RegistrationForm({
   const confirmedEvents = useMemo(
     () =>
       participantLookupEvents.filter(
-        (item) => item.paymentStatus === "paid" || !item.paymentStatus || item.paymentStatus === "free"
+        (item) =>
+          item.registrationStatus !== "cancelled" &&
+          (item.paymentStatus === "paid" ||
+            item.paymentStatus === "free" ||
+            item.paymentStatus === "not_required" ||
+            !item.paymentStatus ||
+            (item.paymentAmount || 0) === 0)
       ),
     [participantLookupEvents]
   );
@@ -745,7 +891,10 @@ export default function RegistrationForm({
   const pendingEvents = useMemo(
     () =>
       participantLookupEvents.filter(
-        (item) => item.paymentStatus === "pending" && (item.paymentAmount || 0) > 0
+        (item) =>
+          item.registrationStatus !== "cancelled" &&
+          item.paymentStatus === "pending" &&
+          (item.paymentAmount || 0) > 0
       ),
     [participantLookupEvents]
   );
@@ -753,7 +902,12 @@ export default function RegistrationForm({
   const confirmedAccommodations = useMemo(
     () =>
       participantLookupAccommodations.filter(
-        (item) => item.status === "confirmed" || item.status === "approved" || item.price === 0
+        (item) =>
+          item.status === "confirmed" ||
+          item.status === "approved" ||
+          item.status === "paid" ||
+          item.price === 0 ||
+          item.amount === 0
       ),
     [participantLookupAccommodations]
   );
@@ -761,10 +915,30 @@ export default function RegistrationForm({
   const pendingAccommodations = useMemo(
     () =>
       participantLookupAccommodations.filter(
-        (item) => item.status === "pending" && (item.price || 0) > 0
+        (item) =>
+          (item.status === "pending" || item.status === "unpaid") &&
+          ((item.price || item.amount || 0) > 0)
       ),
     [participantLookupAccommodations]
   );
+
+  useEffect(() => {
+    if (mainAccommodationSlug === "1_day" && confirmedAccommodations.length > 0) {
+      const dates: Array<"2026-10-27" | "2026-10-28" | "2026-10-29" | "2026-10-30"> = [
+        "2026-10-28",
+        "2026-10-29",
+        "2026-10-27",
+        "2026-10-30",
+      ];
+      const currentIsBooked = isDateBookedByParticipant(mainAccommodationDate, confirmedAccommodations);
+      if (currentIsBooked) {
+        const nextAvailable = dates.find((d) => !isDateBookedByParticipant(d, confirmedAccommodations));
+        if (nextAvailable) {
+          setMainAccommodationDate(nextAvailable);
+        }
+      }
+    }
+  }, [mainAccommodationSlug, confirmedAccommodations, mainAccommodationDate]);
 
   async function handleSaveAndLogout() {
     if (!onSignOut) return;
@@ -1496,6 +1670,7 @@ export default function RegistrationForm({
         if (lookupRes.ok) {
           const lData = (await lookupRes.json()) as ParticipantLookupResponse;
           if (lData.success && lData.participant) {
+            applyParticipantData(lData.participant, lData.events ?? [], lData.accommodations ?? []);
             setConfirmedRegistrationData({
               participantId: lData.participant.participantId,
               name: lData.participant.name,
@@ -1667,6 +1842,7 @@ export default function RegistrationForm({
               if (enrichRes.ok) {
                 const enrData = (await enrichRes.json()) as ParticipantLookupResponse;
                 if (enrData.success && enrData.participant) {
+                  applyParticipantData(enrData.participant, enrData.events ?? [], enrData.accommodations ?? []);
                   setConfirmedRegistrationData({
                     participantId: enrData.participant.participantId,
                     name: enrData.participant.name,
@@ -2364,10 +2540,38 @@ export default function RegistrationForm({
                         {copiedId ? "Copied!" : "Copy"}
                       </button>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void fetchParticipantHistory()}
+                      disabled={participantLookupLoading}
+                      title="Refresh registration history"
+                      className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-xs text-white/70 hover:text-white hover:bg-white/[0.08] transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={participantLookupLoading ? "animate-spin text-emerald-400" : ""} />
+                      <span className="hidden xs:inline">{participantLookupLoading ? "Syncing..." : "Sync"}</span>
+                    </button>
                   </div>
                 </div>
 
-                {/* ERROR BANNER IN CART HUB */}
+                {/* RECOVERABLE ERROR BANNER */}
+                {participantLookupError && (
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-950/20 px-4 py-3 text-xs text-red-300">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle size={15} className="shrink-0 text-red-400" />
+                      <span>{participantLookupError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void fetchParticipantHistory()}
+                      className="rounded-lg bg-red-500/20 border border-red-500/40 px-3 py-1 text-xs font-semibold text-red-200 hover:bg-red-500/30 transition-colors cursor-pointer"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {/* FORM ERROR BANNER */}
                 {errorMessage && (
                   <div className="flex items-center gap-2.5 rounded-xl border border-red-500/30 bg-red-950/30 px-5 py-3 text-sm text-red-300">
                     <AlertCircle size={15} className="shrink-0" />
@@ -2375,178 +2579,261 @@ export default function RegistrationForm({
                   </div>
                 )}
 
-                {/* SECTION 1: CONFIRMED COMPETITIONS (PAID / FREE) */}
-                {confirmedEvents.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
+                {/* SECTION 1: COMPETITION REGISTRATIONS */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400/90">
-                        Confirmed Competitions ({confirmedEvents.length})
+                        Your Registrations ({participantLookupEvents.length})
                       </p>
-                      <span className="font-mono text-[10px] text-white/40">Verified Access</span>
                     </div>
-
-                    <div className="grid gap-2.5 sm:grid-cols-2">
-                      {confirmedEvents.map((item) => (
-                        <div
-                          key={item.participantEventId}
-                          className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-950/20 px-4 py-3"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-medium text-sm text-white truncate">{item.eventName}</p>
-                            <p className="text-[10px] text-white/50 font-mono">
-                              {item.paymentAmount ? `₹${item.paymentAmount} Paid` : "Free Entry"}
-                            </p>
-                          </div>
-                          <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider text-emerald-300">
-                            {item.paymentStatus === "paid" ? "PAID" : "CONFIRMED"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                    <span className="font-mono text-[10px] text-white/40">Verified Competitions</span>
                   </div>
-                )}
 
-                {/* SECTION: CONFIRMED ACCOMMODATIONS */}
-                {confirmedAccommodations.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
+                  {participantLookupLoading && participantLookupEvents.length === 0 ? (
+                    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5 text-center animate-pulse">
+                      <div className="flex items-center justify-center gap-2 text-xs text-white/60">
+                        <RefreshCw size={13} className="animate-spin text-emerald-400" />
+                        <span>Loading your registered competitions...</span>
+                      </div>
+                    </div>
+                  ) : participantLookupEvents.length === 0 ? (
+                    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5 text-center">
+                      <p className="text-sm font-medium text-white/80">No competitions registered yet</p>
+                      <p className="text-xs text-white/40 mt-1">
+                        Browse the competitive realms below to register for individual or team events.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-2.5 sm:grid-cols-2">
+                      {participantLookupEvents.map((item) => {
+                        const isCancelled = item.registrationStatus?.toLowerCase() === "cancelled";
+                        const isPaid = item.paymentStatus?.toLowerCase() === "paid";
+                        const isFree =
+                          item.paymentStatus?.toLowerCase() === "free" ||
+                          item.paymentStatus?.toLowerCase() === "not_required" ||
+                          !item.paymentStatus ||
+                          (item.paymentAmount || 0) === 0;
+                        const isPending = item.paymentStatus?.toLowerCase() === "pending";
+                        const isFailed = item.paymentStatus?.toLowerCase() === "failed";
+
+                        return (
+                          <div
+                            key={item.participantEventId || item.eventId}
+                            className={`flex flex-col justify-between gap-3 rounded-xl border p-4 transition-all ${
+                              isPending && !isCancelled
+                                ? "border-amber-500/30 bg-amber-950/20"
+                                : isCancelled
+                                ? "border-white/10 bg-white/[0.02] opacity-75"
+                                : "border-emerald-500/20 bg-emerald-950/20"
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-start justify-between gap-2">
+                                <h4 className="font-medium text-sm text-white">
+                                  {item.eventName}
+                                </h4>
+                                <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                                  {/* Registration Status Pill */}
+                                  <span
+                                    className={`rounded-full px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider border ${
+                                      isCancelled
+                                        ? "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                                        : item.registrationStatus?.toLowerCase() === "pending"
+                                        ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                                        : "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                                    }`}
+                                  >
+                                    {item.registrationStatus || "CONFIRMED"}
+                                  </span>
+                                  {/* Payment Status Pill */}
+                                  <span
+                                    className={`rounded-full px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider border ${
+                                      isPaid
+                                        ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300"
+                                        : isPending
+                                        ? "bg-amber-500/20 border-amber-500/30 text-amber-300"
+                                        : isFailed
+                                        ? "bg-rose-500/20 border-rose-500/30 text-rose-300"
+                                        : "bg-cyan-500/20 border-cyan-500/30 text-cyan-300"
+                                    }`}
+                                  >
+                                    {isPaid ? "PAID" : isPending ? "UNPAID" : isFailed ? "FAILED" : "FREE"}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/60">
+                                {item.category && (
+                                  <span className="font-mono text-violet-300/90 font-medium">
+                                    {item.category}
+                                  </span>
+                                )}
+                                {item.category && <span className="text-white/20">•</span>}
+                                <span className="font-mono text-white/50">
+                                  {item.teamName
+                                    ? `Team "${item.teamName}" (${item.isTeamLeader ? "Leader" : "Member"})`
+                                    : item.registrationType === "team"
+                                    ? item.isTeamLeader
+                                      ? "Team Leader"
+                                      : "Team Member"
+                                    : "Individual Entry"}
+                                </span>
+                                <span className="text-white/20">•</span>
+                                <span className="font-mono font-medium text-emerald-400">
+                                  {item.paymentAmount && item.paymentAmount > 0
+                                    ? `₹${item.paymentAmount}`
+                                    : "Free"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Complete Payment Button for Pending Competition */}
+                            {!isCancelled && isPending && (item.paymentAmount || 0) > 0 && (
+                              <button
+                                type="button"
+                                disabled={paymentProcessing}
+                                onClick={() => handlePaymentRecovery(item)}
+                                className="mt-1 inline-flex items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-1.5 text-xs font-semibold text-black transition-all hover:bg-amber-100 hover:scale-[1.01] shadow-[0_0_15px_rgba(251,191,36,0.2)] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                              >
+                                {paymentProcessing ? (
+                                  <>
+                                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+                                    <span>Connecting Gateway...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>Pay Now (₹{item.paymentAmount})</span>
+                                    <ArrowRight size={13} />
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* SECTION 2: ACCOMMODATION BOOKINGS */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
                       <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-400/90">
-                        Confirmed Accommodation ({confirmedAccommodations.length})
+                        Your Accommodation ({participantLookupAccommodations.length})
                       </p>
-                      <span className="font-mono text-[10px] text-white/40">Campus Stay Verified</span>
                     </div>
+                    <span className="font-mono text-[10px] text-white/40">Campus Stay Verified</span>
+                  </div>
 
+                  {participantLookupLoading && participantLookupAccommodations.length === 0 ? (
+                    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-center animate-pulse">
+                      <div className="flex items-center justify-center gap-2 text-xs text-white/60">
+                        <RefreshCw size={13} className="animate-spin text-emerald-400" />
+                        <span>Loading accommodation bookings...</span>
+                      </div>
+                    </div>
+                  ) : participantLookupAccommodations.length === 0 ? (
+                    <div className="rounded-xl border border-white/5 bg-white/[0.015] px-4 py-3 text-xs text-white/40 flex items-center justify-between">
+                      <span>No accommodation booked</span>
+                      <span className="text-[11px] text-white/30">Campus stay optional</span>
+                    </div>
+                  ) : (
                     <div className="grid gap-2.5 sm:grid-cols-2">
-                      {confirmedAccommodations.map((acc) => (
-                        <div
-                          key={acc.participantAccommodationId}
-                          className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-950/20 px-4 py-3"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-medium text-sm text-white truncate">{acc.planName}</p>
-                            <p className="text-[10px] text-white/50 font-mono">
-                              {acc.startDate === acc.endDate ? acc.startDate : `${acc.startDate} to ${acc.endDate}`} ({acc.durationDays}d)
-                              {acc.price > 0 ? ` · ₹${acc.price} Paid` : " · Free"}
-                            </p>
-                          </div>
-                          <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider text-emerald-300">
-                            CONFIRMED
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                      {participantLookupAccommodations.map((acc) => {
+                        const isCancelled = acc.status?.toLowerCase() === "cancelled";
+                        const isPaid = acc.status?.toLowerCase() === "paid";
+                        const isConfirmed =
+                          isPaid ||
+                          acc.status?.toLowerCase() === "confirmed" ||
+                          acc.status?.toLowerCase() === "approved";
+                        const isPending =
+                          acc.status?.toLowerCase() === "pending" ||
+                          acc.status?.toLowerCase() === "unpaid";
+                        const cost = acc.amount || acc.price || 0;
 
-                {/* SECTION 2: PENDING PAYMENT (SAVED, AWAITING PAYMENT) */}
-                {pendingEvents.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-                        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300">
-                          Pending Payment ({pendingEvents.length})
-                        </p>
-                      </div>
-                      <span className="font-mono text-[10px] text-amber-300/70">Saved in Account</span>
-                    </div>
-
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {pendingEvents.map((item) => (
-                        <div
-                          key={item.participantEventId}
-                          className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-950/20 p-4"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="font-medium text-sm text-white">{item.eventName}</p>
-                              <p className="text-xs font-mono text-amber-300/90 font-semibold mt-0.5">
-                                Fee: ₹{item.paymentAmount || 0}
-                              </p>
-                            </div>
-                            <span className="rounded-full bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider text-amber-300">
-                              PENDING
-                            </span>
-                          </div>
-
-                          <button
-                            type="button"
-                            disabled={paymentProcessing}
-                            onClick={() => handlePaymentRecovery(item)}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black transition-all hover:bg-amber-100 hover:scale-[1.01] shadow-[0_0_15px_rgba(251,191,36,0.2)] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                        return (
+                          <div
+                            key={acc.id || acc.participantAccommodationId}
+                            className={`flex flex-col justify-between gap-3 rounded-xl border p-4 transition-all ${
+                              isPending && !isCancelled
+                                ? "border-amber-500/30 bg-amber-950/20"
+                                : isCancelled
+                                ? "border-white/10 bg-white/[0.02] opacity-75"
+                                : "border-emerald-500/20 bg-emerald-950/20"
+                            }`}
                           >
-                            {paymentProcessing ? (
-                              <>
-                                <span className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
-                                <span>Connecting Gateway...</span>
-                              </>
-                            ) : (
-                              <>
-                                <span>Pay Now (₹{item.paymentAmount || 0})</span>
-                                <ArrowRight size={13} />
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* SECTION: PENDING ACCOMMODATION PAYMENT */}
-                {pendingAccommodations.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-                        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300">
-                          Pending Accommodation Payment ({pendingAccommodations.length})
-                        </p>
-                      </div>
-                      <span className="font-mono text-[10px] text-amber-300/70">Saved in Account</span>
-                    </div>
-
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {pendingAccommodations.map((acc) => (
-                        <div
-                          key={acc.participantAccommodationId}
-                          className="flex flex-col justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-950/20 p-4"
-                        >
-                          <div className="flex items-start justify-between gap-2">
                             <div>
-                              <p className="font-medium text-sm text-white">{acc.planName}</p>
-                              <p className="text-xs font-mono text-amber-300/90 font-semibold mt-0.5">
-                                Dates: {acc.startDate} · Fee: ₹{acc.price || 0}
-                              </p>
-                            </div>
-                            <span className="rounded-full bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider text-amber-300">
-                              PENDING
-                            </span>
-                          </div>
+                              <div className="flex items-start justify-between gap-2">
+                                <h4 className="font-medium text-sm text-white">
+                                  {acc.planName || "Accommodation"}
+                                </h4>
+                                <span
+                                  className={`rounded-full px-2.5 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider border ${
+                                    isPaid
+                                      ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300"
+                                      : isConfirmed
+                                      ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300"
+                                      : isPending
+                                      ? "bg-amber-500/20 border-amber-500/30 text-amber-300"
+                                      : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                                  }`}
+                                >
+                                  {isPaid
+                                    ? "PAID"
+                                    : isConfirmed
+                                    ? "CONFIRMED"
+                                    : isPending
+                                    ? "PENDING"
+                                    : acc.status?.toUpperCase() || "CONFIRMED"}
+                                </span>
+                              </div>
 
-                          <button
-                            type="button"
-                            disabled={paymentProcessing}
-                            onClick={() => handleAccommodationRecovery(acc)}
-                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black transition-all hover:bg-amber-100 hover:scale-[1.01] shadow-[0_0_15px_rgba(251,191,36,0.2)] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-                          >
-                            {paymentProcessing ? (
-                              <>
-                                <span className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
-                                <span>Connecting Gateway...</span>
-                              </>
-                            ) : (
-                              <>
-                                <span>Pay Now (₹{acc.price || 0})</span>
-                                <ArrowRight size={13} />
-                              </>
+                              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/60">
+                                <span className="font-mono">
+                                  {acc.startDate === acc.endDate
+                                    ? acc.startDate
+                                    : `${acc.startDate} to ${acc.endDate}`}
+                                </span>
+                                <span className="text-white/20">•</span>
+                                <span className="font-mono">
+                                  {acc.durationDays} Day{acc.durationDays > 1 ? "s" : ""}
+                                </span>
+                                <span className="text-white/20">•</span>
+                                <span className="font-mono font-medium text-emerald-400">
+                                  {cost > 0 ? `₹${cost}` : "Free"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Complete Payment Button for Pending Accommodation */}
+                            {!isCancelled && isPending && cost > 0 && (
+                              <button
+                                type="button"
+                                disabled={paymentProcessing}
+                                onClick={() => handleAccommodationRecovery(acc)}
+                                className="mt-1 inline-flex items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-1.5 text-xs font-semibold text-black transition-all hover:bg-amber-100 hover:scale-[1.01] shadow-[0_0_15px_rgba(251,191,36,0.2)] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                              >
+                                {paymentProcessing ? (
+                                  <>
+                                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-black/30 border-t-black" />
+                                    <span>Connecting Gateway...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>Pay Now (₹{cost})</span>
+                                    <ArrowRight size={13} />
+                                  </>
+                                )}
+                              </button>
                             )}
-                          </button>
-                        </div>
-                      ))}
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {/* SECTION 3: IN-SESSION SELECTIONS DRAFT */}
                 {selectedEventIds.length > 0 && (
@@ -3410,7 +3697,27 @@ export default function RegistrationForm({
                                             }}
                                             className="peer sr-only"
                                           />
-                                          <span className="font-medium text-white text-sm leading-tight">{plan.name}</span>
+                                          <div className="flex items-center justify-between gap-1">
+                                            <span className="font-medium text-white text-sm leading-tight">{plan.name}</span>
+                                            {(() => {
+                                              const planStatus = isPlanRangeConflicting(plan.slug, mainAccommodationDate, mainExtraDays, confirmedAccommodations);
+                                              if (planStatus.isFullyBooked) {
+                                                return (
+                                                  <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.5 text-[8px] font-mono font-bold uppercase text-emerald-300">
+                                                    Booked
+                                                  </span>
+                                                );
+                                              }
+                                              if (planStatus.hasConflict && plan.slug !== "1_day") {
+                                                return (
+                                                  <span className="rounded-full bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 text-[8px] font-mono font-bold uppercase text-amber-300">
+                                                    Overlap
+                                                  </span>
+                                                );
+                                              }
+                                              return null;
+                                            })()}
+                                          </div>
                                           <span className="font-mono text-xs font-semibold text-emerald-400">
                                             ₹{plan.price}
                                           </span>
@@ -3430,76 +3737,148 @@ export default function RegistrationForm({
                                           <Calendar size={13} className="text-violet-400" />
                                           <span>Choose Your 1-Day Accommodation Date:</span>
                                         </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                                          <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-xs transition-all ${mainAccommodationDate === "2026-10-27" ? "border-violet-400 bg-violet-500/20 text-white font-medium" : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20"}`}>
-                                            <input
-                                              type="radio"
-                                              name="mainAccommodationDate"
-                                              value="2026-10-27"
-                                              checked={mainAccommodationDate === "2026-10-27"}
-                                              onChange={() => setMainAccommodationDate("2026-10-27")}
-                                              className="sr-only"
-                                            />
-                                            <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${mainAccommodationDate === "2026-10-27" ? "border-violet-400 bg-violet-500" : "border-white/30"}`}>
-                                              {mainAccommodationDate === "2026-10-27" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                            </div>
-                                            <div>
-                                              <div className="text-xs font-medium">27th Oct (Day Before)</div>
-                                              <div className="text-[10px] text-white/50">Early arrival • Tue night</div>
-                                            </div>
-                                          </label>
-                                          <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-xs transition-all ${mainAccommodationDate === "2026-10-28" ? "border-violet-400 bg-violet-500/20 text-white font-medium" : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20"}`}>
-                                            <input
-                                              type="radio"
-                                              name="mainAccommodationDate"
-                                              value="2026-10-28"
-                                              checked={mainAccommodationDate === "2026-10-28"}
-                                              onChange={() => setMainAccommodationDate("2026-10-28")}
-                                              className="sr-only"
-                                            />
-                                            <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${mainAccommodationDate === "2026-10-28" ? "border-violet-400 bg-violet-500" : "border-white/30"}`}>
-                                              {mainAccommodationDate === "2026-10-28" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                            </div>
-                                            <div>
-                                              <div className="text-xs font-medium">28th Oct (Day 1)</div>
-                                              <div className="text-[10px] text-white/50">Fest Day 1 • Wed night</div>
-                                            </div>
-                                          </label>
-                                          <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-xs transition-all ${mainAccommodationDate === "2026-10-29" ? "border-violet-400 bg-violet-500/20 text-white font-medium" : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20"}`}>
-                                            <input
-                                              type="radio"
-                                              name="mainAccommodationDate"
-                                              value="2026-10-29"
-                                              checked={mainAccommodationDate === "2026-10-29"}
-                                              onChange={() => setMainAccommodationDate("2026-10-29")}
-                                              className="sr-only"
-                                            />
-                                            <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${mainAccommodationDate === "2026-10-29" ? "border-violet-400 bg-violet-500" : "border-white/30"}`}>
-                                              {mainAccommodationDate === "2026-10-29" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                            </div>
-                                            <div>
-                                              <div className="text-xs font-medium">29th Oct (Day 2)</div>
-                                              <div className="text-[10px] text-white/50">Fest Day 2 • Thu night</div>
-                                            </div>
-                                          </label>
-                                          <label className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer text-xs transition-all ${mainAccommodationDate === "2026-10-30" ? "border-violet-400 bg-violet-500/20 text-white font-medium" : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20"}`}>
-                                            <input
-                                              type="radio"
-                                              name="mainAccommodationDate"
-                                              value="2026-10-30"
-                                              checked={mainAccommodationDate === "2026-10-30"}
-                                              onChange={() => setMainAccommodationDate("2026-10-30")}
-                                              className="sr-only"
-                                            />
-                                            <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${mainAccommodationDate === "2026-10-30" ? "border-violet-400 bg-violet-500" : "border-white/30"}`}>
-                                              {mainAccommodationDate === "2026-10-30" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                            </div>
-                                            <div>
-                                              <div className="text-xs font-medium">30th Oct (Day After)</div>
-                                              <div className="text-[10px] text-white/50">Extended stay • Fri night</div>
-                                            </div>
-                                          </label>
-                                        </div>
+                                        {(() => {
+                                           const is27Booked = isDateBookedByParticipant("2026-10-27", confirmedAccommodations);
+                                           const is28Booked = isDateBookedByParticipant("2026-10-28", confirmedAccommodations);
+                                           const is29Booked = isDateBookedByParticipant("2026-10-29", confirmedAccommodations);
+                                           const is30Booked = isDateBookedByParticipant("2026-10-30", confirmedAccommodations);
+                                           return (
+                                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                                               <label className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs transition-all ${
+                                                 is27Booked
+                                                   ? "border-emerald-500/20 bg-emerald-950/10 text-white/50 cursor-not-allowed opacity-80"
+                                                   : mainAccommodationDate === "2026-10-27"
+                                                   ? "border-violet-400 bg-violet-500/20 text-white font-medium cursor-pointer"
+                                                   : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20 cursor-pointer"
+                                               }`}>
+                                                 <input
+                                                   type="radio"
+                                                   name="mainAccommodationDate"
+                                                   value="2026-10-27"
+                                                   disabled={is27Booked}
+                                                   checked={mainAccommodationDate === "2026-10-27"}
+                                                   onChange={() => setMainAccommodationDate("2026-10-27")}
+                                                   className="sr-only"
+                                                 />
+                                                 <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                                                   is27Booked ? "border-emerald-500/50 bg-emerald-500/20" : mainAccommodationDate === "2026-10-27" ? "border-violet-400 bg-violet-500" : "border-white/30"
+                                                 }`}>
+                                                   {is27Booked ? <Check size={10} className="text-emerald-400" /> : mainAccommodationDate === "2026-10-27" ? <div className="w-1.5 h-1.5 rounded-full bg-white" /> : null}
+                                                 </div>
+                                                 <div className="flex-1">
+                                                   <div className="flex items-center justify-between gap-1">
+                                                     <span className="text-xs font-medium">27th Oct (Day Before)</span>
+                                                     {is27Booked && (
+                                                       <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.2 text-[8px] font-mono font-bold uppercase text-emerald-300">
+                                                         Booked
+                                                       </span>
+                                                     )}
+                                                   </div>
+                                                   <div className="text-[10px] text-white/50">Early arrival • Tue night</div>
+                                                 </div>
+                                               </label>
+                                               <label className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs transition-all ${
+                                                 is28Booked
+                                                   ? "border-emerald-500/20 bg-emerald-950/10 text-white/50 cursor-not-allowed opacity-80"
+                                                   : mainAccommodationDate === "2026-10-28"
+                                                   ? "border-violet-400 bg-violet-500/20 text-white font-medium cursor-pointer"
+                                                   : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20 cursor-pointer"
+                                               }`}>
+                                                 <input
+                                                   type="radio"
+                                                   name="mainAccommodationDate"
+                                                   value="2026-10-28"
+                                                   disabled={is28Booked}
+                                                   checked={mainAccommodationDate === "2026-10-28"}
+                                                   onChange={() => setMainAccommodationDate("2026-10-28")}
+                                                   className="sr-only"
+                                                 />
+                                                 <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                                                   is28Booked ? "border-emerald-500/50 bg-emerald-500/20" : mainAccommodationDate === "2026-10-28" ? "border-violet-400 bg-violet-500" : "border-white/30"
+                                                 }`}>
+                                                   {is28Booked ? <Check size={10} className="text-emerald-400" /> : mainAccommodationDate === "2026-10-28" ? <div className="w-1.5 h-1.5 rounded-full bg-white" /> : null}
+                                                 </div>
+                                                 <div className="flex-1">
+                                                   <div className="flex items-center justify-between gap-1">
+                                                     <span className="text-xs font-medium">28th Oct (Day 1)</span>
+                                                     {is28Booked && (
+                                                       <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.2 text-[8px] font-mono font-bold uppercase text-emerald-300">
+                                                         Booked
+                                                       </span>
+                                                     )}
+                                                   </div>
+                                                   <div className="text-[10px] text-white/50">Fest Day 1 • Wed night</div>
+                                                 </div>
+                                               </label>
+                                               <label className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs transition-all ${
+                                                 is29Booked
+                                                   ? "border-emerald-500/20 bg-emerald-950/10 text-white/50 cursor-not-allowed opacity-80"
+                                                   : mainAccommodationDate === "2026-10-29"
+                                                   ? "border-violet-400 bg-violet-500/20 text-white font-medium cursor-pointer"
+                                                   : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20 cursor-pointer"
+                                               }`}>
+                                                 <input
+                                                   type="radio"
+                                                   name="mainAccommodationDate"
+                                                   value="2026-10-29"
+                                                   disabled={is29Booked}
+                                                   checked={mainAccommodationDate === "2026-10-29"}
+                                                   onChange={() => setMainAccommodationDate("2026-10-29")}
+                                                   className="sr-only"
+                                                 />
+                                                 <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                                                   is29Booked ? "border-emerald-500/50 bg-emerald-500/20" : mainAccommodationDate === "2026-10-29" ? "border-violet-400 bg-violet-500" : "border-white/30"
+                                                 }`}>
+                                                   {is29Booked ? <Check size={10} className="text-emerald-400" /> : mainAccommodationDate === "2026-10-29" ? <div className="w-1.5 h-1.5 rounded-full bg-white" /> : null}
+                                                 </div>
+                                                 <div className="flex-1">
+                                                   <div className="flex items-center justify-between gap-1">
+                                                     <span className="text-xs font-medium">29th Oct (Day 2)</span>
+                                                     {is29Booked && (
+                                                       <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.2 text-[8px] font-mono font-bold uppercase text-emerald-300">
+                                                         Booked
+                                                       </span>
+                                                     )}
+                                                   </div>
+                                                   <div className="text-[10px] text-white/50">Fest Day 2 • Thu night</div>
+                                                 </div>
+                                               </label>
+                                               <label className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs transition-all ${
+                                                 is30Booked
+                                                   ? "border-emerald-500/20 bg-emerald-950/10 text-white/50 cursor-not-allowed opacity-80"
+                                                   : mainAccommodationDate === "2026-10-30"
+                                                   ? "border-violet-400 bg-violet-500/20 text-white font-medium cursor-pointer"
+                                                   : "border-white/10 bg-white/[0.02] text-white/70 hover:border-white/20 cursor-pointer"
+                                               }`}>
+                                                 <input
+                                                   type="radio"
+                                                   name="mainAccommodationDate"
+                                                   value="2026-10-30"
+                                                   disabled={is30Booked}
+                                                   checked={mainAccommodationDate === "2026-10-30"}
+                                                   onChange={() => setMainAccommodationDate("2026-10-30")}
+                                                   className="sr-only"
+                                                 />
+                                                 <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                                                   is30Booked ? "border-emerald-500/50 bg-emerald-500/20" : mainAccommodationDate === "2026-10-30" ? "border-violet-400 bg-violet-500" : "border-white/30"
+                                                 }`}>
+                                                   {is30Booked ? <Check size={10} className="text-emerald-400" /> : mainAccommodationDate === "2026-10-30" ? <div className="w-1.5 h-1.5 rounded-full bg-white" /> : null}
+                                                 </div>
+                                                 <div className="flex-1">
+                                                   <div className="flex items-center justify-between gap-1">
+                                                     <span className="text-xs font-medium">30th Oct (Day After)</span>
+                                                     {is30Booked && (
+                                                       <span className="rounded-full bg-emerald-500/20 border border-emerald-500/30 px-1.5 py-0.2 text-[8px] font-mono font-bold uppercase text-emerald-300">
+                                                         Booked
+                                                       </span>
+                                                     )}
+                                                   </div>
+                                                   <div className="text-[10px] text-white/50">Extended stay • Fri night</div>
+                                                 </div>
+                                               </label>
+                                             </div>
+                                           );
+                                         })()}
                                       </div>
                                     )}
                                     {mainAccommodationSlug === "2_days" && (

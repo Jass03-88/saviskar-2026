@@ -193,9 +193,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.redirect(redirectUrl, 303);
   }
 
-  // Handle idempotent returns
+  // Handle idempotent returns & conflicts
   if (rpcData?.action === "already_paid" || rpcData?.action === "already_processed" || rpcData?.action === "already_refunded") {
     console.log(`[PAYU SUCCESS] Order ${gatewayOrderId} was already settled. Proceeding to resume URL.`);
+  } else if (rpcData?.action === "settled_with_accommodation_conflict") {
+    console.warn(`[PAYU SUCCESS] Order ${gatewayOrderId} settled with accommodation date conflict (${rpcData.conflicts_count} conflict(s)). Preserved audit trail and flagged for admin reconciliation.`);
   } else {
     console.log(`[PAYU SUCCESS] Order ${gatewayOrderId} settled successfully.`);
   }

@@ -8,6 +8,30 @@
 import { Resend } from "resend";
 import { getEmailSender } from "@/lib/email-sender";
 
+/**
+ * RECIPIENT SAFEGUARD POLICY:
+ * 1. Production Mode (Default): When ENABLE_TEST_RECIPIENT_GUARD is not "true",
+ *    OTP verification emails are delivered to the requesting user's email.
+ *    A generic development variable (like APPROVED_TEST_EMAIL alone) will NOT activate
+ *    test mode in production.
+ * 2. Testing Mode: When ENABLE_TEST_RECIPIENT_GUARD="true" (or in non-production when
+ *    APPROVED_TEST_EMAIL is provided), OTP delivery is fail-closed and strictly
+ *    restricted to the hardcoded approved test address.
+ */
+const HARDCODED_PERMITTED_TEST_EMAIL = "jashan.cgcu@gmail.com";
+
+export function isTestRecipientGuardActive(): boolean {
+  if (process.env.ENABLE_TEST_RECIPIENT_GUARD === "true") {
+    return true;
+  }
+  // In production, require the explicit ENABLE_TEST_RECIPIENT_GUARD="true" flag;
+  // a generic/stray variable must never accidentally trigger test mode in production.
+  if (process.env.NODE_ENV === "production") {
+    return false;
+  }
+  return !!process.env.APPROVED_TEST_EMAIL;
+}
+
 export type SendOtpEmailResult = {
   success: boolean;
   messageId?: string;
@@ -18,6 +42,25 @@ export async function sendOtpEmail(
   toEmail: string,
   otp: string
 ): Promise<SendOtpEmailResult> {
+  const normalizedToEmail = toEmail.trim().toLowerCase();
+  const guardActive = isTestRecipientGuardActive();
+
+  if (guardActive) {
+    const configuredTestEmail = process.env.APPROVED_TEST_EMAIL?.trim().toLowerCase();
+    if (
+      configuredTestEmail !== HARDCODED_PERMITTED_TEST_EMAIL ||
+      normalizedToEmail !== HARDCODED_PERMITTED_TEST_EMAIL
+    ) {
+      console.warn(
+        "[SAFEGUARD BLOCKED] Outbound OTP email suppressed: recipient does not match authorized staging test address."
+      );
+      return {
+        success: false,
+        error: "Verification code delivery suppressed: test recipient safeguard is active.",
+      };
+    }
+  }
+
   const senderResult = getEmailSender();
   if (!senderResult.success) {
     console.error(senderResult.internalLog);
@@ -137,9 +180,24 @@ export async function sendOtpEmail(
 </html>`;
 
   try {
+    if (guardActive) {
+      if (
+        (process.env.APPROVED_TEST_EMAIL || "").trim().toLowerCase() !== HARDCODED_PERMITTED_TEST_EMAIL ||
+        normalizedToEmail !== HARDCODED_PERMITTED_TEST_EMAIL
+      ) {
+        console.warn("[SAFEGUARD BLOCKED] Outbound OTP send aborted immediately before Resend SDK call.");
+        return {
+          success: false,
+          error: "Verification code delivery suppressed: test recipient safeguard is active.",
+        };
+      }
+    }
+
+    const destinationEmail = guardActive ? HARDCODED_PERMITTED_TEST_EMAIL : normalizedToEmail;
+    console.log(`[AUTH OTP] Dispatching verification code to recipient: ${destinationEmail}`);
     const { data, error } = await resend.emails.send({
       from: fromEmail,
-      to: [toEmail],
+      to: [destinationEmail],
       subject,
       html,
     });

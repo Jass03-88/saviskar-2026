@@ -270,6 +270,7 @@ export async function POST(
         paymentOrderId: paymentOrder.id,
         gatewayPaymentId: event.gatewayPaymentId,
         action: rpcData?.action,
+        conflictsCount: rpcData?.conflicts_count,
       }
     );
 

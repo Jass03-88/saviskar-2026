@@ -175,6 +175,7 @@ export async function GET(request: NextRequest) {
       ),
       participant_accommodations (
         id,
+        status,
         start_date,
         end_date,
         accommodation_plans (
@@ -365,6 +366,74 @@ export async function GET(request: NextRequest) {
     };
   });
 
+  // 10. Check for Authoritative Accommodation Overlap Conflicts
+  let accommodationConflict = false;
+  let accommodationConflictNotice: {
+    headline: string;
+    message: string;
+    supportEmail: string;
+    supportPhone: string | null;
+    affectedStay?: {
+      planName: string;
+      startDate: string;
+      endDate: string;
+      amount: number;
+    };
+  } | null = null;
+
+  if (paymentOrder.status === "paid") {
+    const accommodationItems = (orderItems || []).filter(
+      (item) => item.item_type === "accommodation"
+    );
+
+    if (accommodationItems.length > 0) {
+      // Find any accommodation item in this order whose associated record is cancelled
+      const unconfirmedAccItem = accommodationItems.find((item) => {
+        const rawAcc = item.participant_accommodations;
+        const acc = Array.isArray(rawAcc) ? rawAcc[0] : rawAcc;
+        return acc && acc.status === "cancelled";
+      });
+
+      if (unconfirmedAccItem) {
+        try {
+          // Authoritatively verify against conflict audit log to distinguish from ordinary cancellations
+          const { data: conflictLogs, error: logError } = await supabaseAdmin
+            .from("admin_audit_logs")
+            .select("id, action_type, details, created_at")
+            .eq("action_type", "ACCOMMODATION_PAYMENT_OVERLAP_CONFLICT")
+            .filter("details->>payment_order_id", "eq", paymentOrderId)
+            .limit(1);
+
+          if (!logError && conflictLogs && conflictLogs.length > 0) {
+            accommodationConflict = true;
+            const rawAcc = unconfirmedAccItem.participant_accommodations;
+            const acc = Array.isArray(rawAcc) ? rawAcc[0] : rawAcc;
+            const rawPlan = acc?.accommodation_plans;
+            const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
+
+            const logDetails = (conflictLogs[0].details || {}) as Record<string, any>;
+            const userParticipantId = payer?.participant_id || participantId;
+
+            accommodationConflictNotice = {
+              headline: "Accommodation Booking Unavailable",
+              message: `Your payment was received and verified, but the requested accommodation stay could not be confirmed because the dates are fully booked or conflict with an active booking. Your event registrations are confirmed. Please contact the Saviskar Helpdesk at support@saviskar.co.in with your Participant ID (${userParticipantId}) and Order Reference (${paymentOrder.order_reference}) for assistance with alternate accommodation or refund evaluation.`,
+              supportEmail: "support@saviskar.co.in",
+              supportPhone: null,
+              affectedStay: {
+                planName: plan?.name || "Accommodation Stay",
+                startDate: acc?.start_date || logDetails.start_date || "2026-10-28",
+                endDate: acc?.end_date || logDetails.end_date || "2026-10-29",
+                amount: Number(unconfirmedAccItem.amount) || Number(logDetails.amount) || 0,
+              },
+            };
+          }
+        } catch (e) {
+          console.error("Resume API: Error querying conflict logs:", e);
+        }
+      }
+    }
+  }
+
   return NextResponse.json(
     {
       success: true,
@@ -382,6 +451,8 @@ export async function GET(request: NextRequest) {
       items,
       registeredCompetitions,
       registeredAccommodations,
+      accommodationConflict,
+      accommodationConflictNotice,
       teamMembers: teamMembers.length > 0 ? teamMembers : undefined,
     },
     {
