@@ -73,7 +73,7 @@ export default function AddAccommodationModal({
         effDate = "2026-10-27";
       } else if (extraDays === "after_30") {
         effSlug = "3_days";
-        effDate = "2026-10-30";
+        effDate = "2026-10-28";
       } else if (extraDays === "both") {
         effSlug = "4_days";
         effDate = "2026-10-27";
@@ -82,8 +82,10 @@ export default function AddAccommodationModal({
       if (extraDays === "before_27" || selectedDate === "2026-10-27") {
         effDate = "2026-10-27";
       } else {
-        effDate = "2026-10-30";
+        effDate = "2026-10-28";
       }
+    } else if (planSlug === "4_days") {
+      effDate = "2026-10-27";
     }
 
     const dates = calculateStayDates(effSlug, effDate, extraDays);
@@ -136,7 +138,7 @@ export default function AddAccommodationModal({
             {
               email: participantEmail,
               planSlug,
-              selectedDate,
+              selectedDate: startDate,
               extraDays,
             },
           ],
@@ -262,8 +264,14 @@ export default function AddAccommodationModal({
               <select
                 value={planSlug}
                 onChange={(e) => {
-                  setPlanSlug(e.target.value);
+                  const newPlan = e.target.value;
+                  setPlanSlug(newPlan);
                   setExtraDays("none");
+                  if (newPlan === "4_days") {
+                    setSelectedDate("2026-10-27");
+                  } else {
+                    setSelectedDate("2026-10-28");
+                  }
                   setErrorMessage("");
                 }}
                 className="w-full rounded-xl border border-white/15 bg-zinc-900 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400 font-mono"
@@ -299,7 +307,13 @@ export default function AddAccommodationModal({
                 <select
                   value={extraDays}
                   onChange={(e) => {
-                    setExtraDays(e.target.value as any);
+                    const extra = e.target.value as any;
+                    setExtraDays(extra);
+                    if (extra === "before_27" || extra === "both") {
+                      setSelectedDate("2026-10-27");
+                    } else {
+                      setSelectedDate("2026-10-28");
+                    }
                     setErrorMessage("");
                   }}
                   className="w-full rounded-xl border border-white/15 bg-zinc-900 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400 font-mono"
@@ -315,7 +329,9 @@ export default function AddAccommodationModal({
                 <select
                   value={extraDays === "after_30" ? "after_30" : "before_27"}
                   onChange={(e) => {
-                    setExtraDays(e.target.value as any);
+                    const extra = e.target.value as any;
+                    setExtraDays(extra);
+                    setSelectedDate(extra === "before_27" ? "2026-10-27" : "2026-10-28");
                     setErrorMessage("");
                   }}
                   className="w-full rounded-xl border border-white/15 bg-zinc-900 px-4 py-3 text-sm text-white outline-none focus:border-emerald-400 font-mono"

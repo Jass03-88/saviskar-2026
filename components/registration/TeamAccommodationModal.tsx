@@ -133,7 +133,7 @@ export default function TeamAccommodationModal({
       if (!sel.selected) continue;
 
       let effectiveSlug = sel.planSlug;
-      let effectiveDate = sel.selectedDate;
+      let effectiveDate = sel.selectedDate || "2026-10-28";
 
       if (sel.planSlug === "2_days") {
         if (sel.extraDays === "before_27") {
@@ -141,17 +141,21 @@ export default function TeamAccommodationModal({
           effectiveDate = "2026-10-27";
         } else if (sel.extraDays === "after_30") {
           effectiveSlug = "3_days";
-          effectiveDate = "2026-10-30";
+          effectiveDate = "2026-10-28";
         } else if (sel.extraDays === "both") {
           effectiveSlug = "4_days";
           effectiveDate = "2026-10-27";
+        } else {
+          effectiveDate = sel.selectedDate || "2026-10-28";
         }
       } else if (sel.planSlug === "3_days") {
         if (sel.extraDays === "before_27" || sel.selectedDate === "2026-10-27") {
           effectiveDate = "2026-10-27";
         } else {
-          effectiveDate = "2026-10-30";
+          effectiveDate = "2026-10-28";
         }
+      } else if (sel.planSlug === "4_days") {
+        effectiveDate = "2026-10-27";
       }
 
       const { startDate, endDate, durationDays } = calculateStayDates(
@@ -219,7 +223,7 @@ export default function TeamAccommodationModal({
       const payloadBookings = calculatedItems.map((item) => ({
         email: item.member.email,
         planSlug: item.selection.planSlug,
-        selectedDate: item.selection.selectedDate,
+        selectedDate: item.startDate,
         extraDays: item.selection.extraDays,
       }));
 
@@ -434,12 +438,14 @@ export default function TeamAccommodationModal({
                             </label>
                             <select
                               value={sel.planSlug}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const newPlan = e.target.value;
                                 updateMemberSelection(m.email, {
-                                  planSlug: e.target.value,
+                                  planSlug: newPlan,
                                   extraDays: "none",
-                                })
-                              }
+                                  selectedDate: newPlan === "4_days" ? "2026-10-27" : "2026-10-28",
+                                });
+                              }}
                               className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2 text-xs text-white outline-none focus:border-violet-400 font-mono"
                             >
                               <option value="1_day">1 Day Pass — ₹499</option>
@@ -472,11 +478,17 @@ export default function TeamAccommodationModal({
                             {sel.planSlug === "2_days" && (
                               <select
                                 value={sel.extraDays}
-                                onChange={(e) =>
+                                onChange={(e) => {
+                                  const extra = e.target.value as any;
+                                  let date = "2026-10-28";
+                                  if (extra === "before_27" || extra === "both") {
+                                    date = "2026-10-27";
+                                  }
                                   updateMemberSelection(m.email, {
-                                    extraDays: e.target.value as any,
-                                  })
-                                }
+                                    extraDays: extra,
+                                    selectedDate: date,
+                                  });
+                                }}
                                 className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2 text-xs text-white outline-none focus:border-violet-400 font-mono"
                               >
                                 <option value="none">28–29 Oct (Standard 2 Days) — ₹999</option>
@@ -489,11 +501,13 @@ export default function TeamAccommodationModal({
                             {sel.planSlug === "3_days" && (
                               <select
                                 value={sel.extraDays === "after_30" ? "after_30" : "before_27"}
-                                onChange={(e) =>
+                                onChange={(e) => {
+                                  const extra = e.target.value as any;
                                   updateMemberSelection(m.email, {
-                                    extraDays: e.target.value as any,
-                                  })
-                                }
+                                    extraDays: extra,
+                                    selectedDate: extra === "before_27" ? "2026-10-27" : "2026-10-28",
+                                  });
+                                }}
                                 className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2 text-xs text-white outline-none focus:border-violet-400 font-mono"
                               >
                                 <option value="before_27">27–29 Oct (Starts 27th Oct)</option>
