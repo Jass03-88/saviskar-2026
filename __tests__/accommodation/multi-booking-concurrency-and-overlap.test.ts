@@ -5,7 +5,7 @@ import {
   isDateBookedByParticipant,
   isPlanRangeConflicting,
 } from "@/components/registration/RegistrationForm";
-import { buildRegistrationCsvRow, CsvRegistrationItem } from "@/lib/admin/csv-export";
+import { buildRegistrationCsvRow, CsvRegistrationItem, REGISTRATION_CSV_HEADERS } from "@/lib/admin/csv-export";
 
 describe("SAVISKAR 2026: Multi-Booking Concurrency, Overlap Safeguards & Payment Integrity", () => {
   const rootDir = process.cwd();
@@ -230,16 +230,17 @@ describe("SAVISKAR 2026: Multi-Booking Concurrency, Overlap Safeguards & Payment
       };
 
       const row = buildRegistrationCsvRow(mockItem);
-      // Accommodation Plan is index 16
-      expect(row[16]).toBe("1-Day (28 Oct); 1-Day (29 Oct)");
-      // Accommodation Status is index 17
-      expect(row[17]).toBe("paid; paid");
-      // Accommodation Total Amount is index 18 (sum of 499 + 499 = 998)
-      expect(row[18]).toBe(998);
-      // Hostel is index 19
-      expect(row[19]).toBe("Hostel A; Hostel A");
-      // Room Number is index 20
-      expect(row[20]).toBe("101; 102");
+      const accPlanIdx = REGISTRATION_CSV_HEADERS.indexOf("Accommodation Type");
+      const accStatusIdx = REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Status");
+      const accAmountIdx = REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Amount");
+      const hostelIdx = REGISTRATION_CSV_HEADERS.indexOf("Hostel");
+      const roomIdx = REGISTRATION_CSV_HEADERS.indexOf("Room Number");
+
+      expect(row[accPlanIdx]).toBe("1-Day (28 Oct); 1-Day (29 Oct)");
+      expect(row[accStatusIdx]).toBe("paid; paid");
+      expect(row[accAmountIdx]).toBe(998);
+      expect(row[hostelIdx]).toBe("Hostel A; Hostel A");
+      expect(row[roomIdx]).toBe("101; 102");
     });
   });
 

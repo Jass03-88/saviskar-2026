@@ -58,10 +58,14 @@ type Member = {
   phone: string | null;
   is_team_leader: boolean | null;
   participant_id: string | null;
+  gender?: string | null;
+  state?: string | null;
   id_card_storage_path?: string | null;
   participants: {
     participant_id: string;
     college: string | null;
+    gender?: string | null;
+    state?: string | null;
     id_card_storage_path?: string | null;
   } | null;
   accommodation?: any;
@@ -80,11 +84,15 @@ type RawMember = {
     | {
         participant_id?: string | null;
         college?: string | null;
+        gender?: string | null;
+        state?: string | null;
         id_card_storage_path?: string | null;
       }
     | {
         participant_id?: string | null;
         college?: string | null;
+        gender?: string | null;
+        state?: string | null;
         id_card_storage_path?: string | null;
       }[]
     | null;
@@ -319,7 +327,7 @@ export async function GET(request: Request) {
       supabaseAdmin
         .from("participant_event_members")
         .select(
-          "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college, id_card_storage_path)"
+          "id, participant_event_id, name, email, phone, is_team_leader, participant_id, participants(participant_id, college, gender, state, id_card_storage_path)"
         )
         .in("participant_event_id", chunk)
     ),
@@ -355,6 +363,7 @@ export async function GET(request: Request) {
           amount,
           currency,
           status,
+          payment_order_id,
           hostel_id,
           room_id,
           checked_in,
@@ -364,7 +373,8 @@ export async function GET(request: Request) {
           created_at,
           accommodation_plans ( id, name, price ),
           hostels ( id, name ),
-          hostel_rooms ( id, room_number )
+          hostel_rooms ( id, room_number ),
+          payment_orders ( id, order_reference, gateway_payment_id, status )
         `)
         .in("participant_id", chunk)
     ),
@@ -432,6 +442,8 @@ export async function GET(request: Request) {
           member.is_team_leader,
         participant_id:
           member.participant_id,
+        gender: participant?.gender ? String(participant.gender) : null,
+        state: participant?.state ? String(participant.state) : null,
         id_card_storage_path: memberIdCardPath,
         participants: participant
           ? {
@@ -443,6 +455,8 @@ export async function GET(request: Request) {
                 participant.college
               )
               : null,
+            gender: participant.gender ? String(participant.gender) : null,
+            state: participant.state ? String(participant.state) : null,
             id_card_storage_path: memberIdCardPath,
           }
           : null,
@@ -512,6 +526,7 @@ export async function GET(request: Request) {
             amount,
             currency,
             status,
+            payment_order_id,
             hostel_id,
             room_id,
             checked_in,
@@ -521,7 +536,8 @@ export async function GET(request: Request) {
             created_at,
             accommodation_plans ( id, name, price ),
             hostels ( id, name ),
-            hostel_rooms ( id, room_number )
+            hostel_rooms ( id, room_number ),
+            payment_orders ( id, order_reference, gateway_payment_id, status )
           `)
           .in("participant_id", chunk)
       );
@@ -535,6 +551,33 @@ export async function GET(request: Request) {
     ...((accommodationsResult?.data ?? []) as any[]),
     ...memberAccommodations,
   ];
+
+  // Fallback: batch fetch any missing payment orders for accommodations
+  const missingPoIds = Array.from(
+    new Set(
+      rawAccommodations
+        .filter((a) => a.payment_order_id && !a.payment_orders)
+        .map((a) => a.payment_order_id as string)
+    )
+  );
+
+  let fallbackOrdersById = new Map<string, any>();
+  if (missingPoIds.length > 0) {
+    try {
+      const fallbackResult = await fetchInBatches<any>(missingPoIds, (chunk) =>
+        supabaseAdmin
+          .from("payment_orders")
+          .select("id, order_reference, gateway_payment_id, status")
+          .in("id", chunk)
+      );
+      if (fallbackResult.data) {
+        fallbackOrdersById = new Map(fallbackResult.data.map((po) => [po.id, po]));
+      }
+    } catch (e) {
+      console.warn("Fallback payment orders fetch warning:", e);
+    }
+  }
+
   rawAccommodations.sort((a, b) => {
     if (a.status === "paid" && b.status !== "paid") return -1;
     if (b.status === "paid" && a.status !== "paid") return 1;
@@ -550,6 +593,9 @@ export async function GET(request: Request) {
     const plan = Array.isArray(acc.accommodation_plans) ? acc.accommodation_plans[0] : acc.accommodation_plans;
     const hostel = Array.isArray(acc.hostels) ? acc.hostels[0] : acc.hostels;
     const room = Array.isArray(acc.hostel_rooms) ? acc.hostel_rooms[0] : acc.hostel_rooms;
+    const po = Array.isArray(acc.payment_orders)
+      ? acc.payment_orders[0]
+      : acc.payment_orders || (acc.payment_order_id ? fallbackOrdersById.get(acc.payment_order_id) : null);
 
     const formattedAcc = {
       id: acc.id,
@@ -566,6 +612,11 @@ export async function GET(request: Request) {
       checked_in_at: acc.checked_in_at ?? null,
       checked_out: !!acc.checked_out,
       checked_out_at: acc.checked_out_at ?? null,
+      payment_order_id: acc.payment_order_id ?? po?.id ?? null,
+      payment_order_reference: po?.order_reference ?? null,
+      gateway_payment_id: po?.gateway_payment_id ?? null,
+      payment_status: acc.status ?? po?.status ?? null,
+      payment_id: po?.gateway_payment_id || po?.order_reference || acc.payment_order_id || null,
     };
 
     if (!accommodationsByParticipantId.has(acc.participant_id)) {

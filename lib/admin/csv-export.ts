@@ -3,7 +3,8 @@
  *
  * Server/client-agnostic CSV serialization helpers for Saviskar 2026 Admin exports.
  * Generates unmasked, RFC-4180 compliant CSV strings containing complete participant
- * contact details (email and phone) for authorized administrative exports.
+ * contact details (email and phone), state, gender, and individual accommodation details
+ * for authorized administrative exports. Prepend UTF-8 BOM (\uFEFF) for Microsoft Excel.
  */
 
 export type CsvParticipant = {
@@ -13,6 +14,29 @@ export type CsvParticipant = {
   college?: string | null;
   email: string;
   phone?: string | null;
+  gender?: string | null;
+  state?: string | null;
+  accommodation?: CsvAccommodationDetail | null;
+  accommodations?: CsvAccommodationDetail[] | null;
+  [key: string]: unknown;
+};
+
+export type CsvAccommodationDetail = {
+  id?: string;
+  plan_name?: string | null;
+  duration_days?: number | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  status?: string | null;
+  amount?: number | null;
+  currency?: string | null;
+  hostel_name?: string | null;
+  room_number?: string | null;
+  payment_order_id?: string | null;
+  payment_order_reference?: string | null;
+  gateway_payment_id?: string | null;
+  payment_status?: string | null;
+  payment_id?: string | null;
   [key: string]: unknown;
 };
 
@@ -41,46 +65,56 @@ export type CsvRegistrationItem = {
     created_at?: string | null;
     [key: string]: unknown;
   };
-  accommodation?: {
-    plan_name?: string | null;
-    status?: string | null;
-    amount?: number | null;
-    hostel_name?: string | null;
-    room_number?: string | null;
-    [key: string]: unknown;
-  } | null;
-  accommodations?: Array<{
-    plan_name?: string | null;
-    status?: string | null;
-    amount?: number | null;
-    hostel_name?: string | null;
-    room_number?: string | null;
-    [key: string]: unknown;
-  }> | null;
+  accommodation?: CsvAccommodationDetail | null;
+  accommodations?: CsvAccommodationDetail[] | null;
   members?: Array<{
+    id?: string;
     name: string;
     email?: string | null;
     phone?: string | null;
     is_team_leader?: boolean | null;
+    participant_id?: string | null;
+    gender?: string | null;
+    state?: string | null;
     participants?: {
       participant_id?: string | null;
       college?: string | null;
+      gender?: string | null;
+      state?: string | null;
+      [key: string]: unknown;
     } | null;
+    accommodation?: CsvAccommodationDetail | null;
+    accommodations?: CsvAccommodationDetail[] | null;
     [key: string]: unknown;
   }>;
   [key: string]: unknown;
 };
 
+export const UTF8_BOM = "\uFEFF";
+
 export function escapeCsv(value: unknown): string {
-  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+  if (value === null || value === undefined) {
+    return '""';
+  }
+
+  let str = String(value);
+
+  // Prevent spreadsheet formula injection while preserving negative numbers and phone numbers like +91...
+  if (/^[=@\t\r]/.test(str)) {
+    str = "'" + str;
+  } else if (/^[+-][^0-9]/.test(str)) {
+    str = "'" + str;
+  }
+
+  return `"${str.replace(/"/g, '""')}"`;
 }
 
 export function formatDate(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "";
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return "—";
+  if (Number.isNaN(date.getTime())) return "";
 
   return date.toLocaleString("en-IN", {
     day: "2-digit",
@@ -92,159 +126,266 @@ export function formatDate(value: string | null | undefined): string {
 }
 
 /* =========================================================
-   1. MAIN DASHBOARD REGISTRATIONS CSV
+   1. MAIN DASHBOARD REGISTRATIONS CSV HEADERS
 ========================================================= */
 
 export const REGISTRATION_CSV_HEADERS: string[] = [
   "Participant ID",
-  "Name",
-  "College",
+  "Participant Name",
   "Email",
   "Phone",
-  "Event",
+  "State",
+  "Gender",
+  "Event Name",
   "Category",
-  "Team",
+  "Team Type",
   "Registration Status",
   "Payment Status",
   "Payment Amount",
   "Payment ID",
-  "Main Checked In",
-  "Main Checked In At",
-  "Event Checked In",
-  "Event Checked In At",
-  "Accommodation Plan",
-  "Accommodation Status",
-  "Accommodation Amount",
+  "Accommodation Required",
+  "Accommodation Type",
+  "Accommodation Duration",
+  "Accommodation Start Date",
+  "Accommodation End Date",
+  "Accommodation Payment Status",
+  "Accommodation Payment Amount",
+  "Accommodation Payment ID",
+  "Checked In",
+  "Check-in Time",
+  "College",
+  "Team Name",
   "Hostel",
   "Room Number",
+  "Main Checked In",
+  "Main Checked In At",
   "Registration Group ID",
   "Registered At",
 ];
 
-export function buildRegistrationCsvRow(item: CsvRegistrationItem): (string | number)[] {
-  const accList = item.accommodations && item.accommodations.length > 0
-    ? item.accommodations
-    : item.accommodation
-      ? [item.accommodation]
-      : [];
+/* =========================================================
+   2. EVENT-SPECIFIC REGISTRATIONS CSV HEADERS
+========================================================= */
 
-  const accPlanName = accList.length > 0
-    ? accList.map((a) => a.plan_name || "Accommodation").join("; ")
-    : (item.accommodation?.plan_name ?? "None");
+export const EVENT_REGISTRATION_CSV_HEADERS: string[] = [
+  ...REGISTRATION_CSV_HEADERS,
+];
 
-  const accStatus = accList.length > 0
-    ? accList.map((a) => a.status || "None").join("; ")
-    : (item.accommodation?.status ?? "None");
+/* =========================================================
+   ROW BUILDERS
+========================================================= */
 
-  const accAmount = accList.length > 0
+export function buildSingleParticipantRow(
+  item: CsvRegistrationItem,
+  participant: CsvParticipant,
+  isLeaderOrIndividual: boolean
+): (string | number)[] {
+  const isPrimary =
+    isLeaderOrIndividual ||
+    participant === item.participant ||
+    (!participant.id ||
+      participant.id === item.participant.id ||
+      participant.participant_id === item.participant.participant_id);
+
+  const accList = (
+    (participant.accommodations && participant.accommodations.length > 0)
+      ? participant.accommodations
+      : participant.accommodation
+        ? [participant.accommodation]
+        : (isPrimary && item.accommodations && item.accommodations.length > 0)
+          ? item.accommodations
+          : (isPrimary && item.accommodation)
+            ? [item.accommodation]
+            : []
+  ) as CsvAccommodationDetail[];
+
+  const hasAcc = accList.length > 0;
+
+  const accRequired = hasAcc ? "Yes" : "No";
+
+  const accType = hasAcc
+    ? accList
+        .map((a) => a.plan_name || (a.duration_days ? `${a.duration_days}-Day Accommodation` : "Accommodation"))
+        .join("; ")
+    : "";
+
+  const accDuration = hasAcc
+    ? accList
+        .map((a) => (typeof a.duration_days === "number" ? `${a.duration_days} Day${a.duration_days > 1 ? "s" : ""}` : ""))
+        .filter(Boolean)
+        .join("; ")
+    : "";
+
+  const accStartDate = hasAcc
+    ? accList.map((a) => a.start_date || "").filter(Boolean).join("; ")
+    : "";
+
+  const accEndDate = hasAcc
+    ? accList.map((a) => a.end_date || "").filter(Boolean).join("; ")
+    : "";
+
+  const accPaymentStatus = hasAcc
+    ? accList.map((a) => a.payment_status || a.status || "unpaid").join("; ")
+    : "";
+
+  const accPaymentAmount = hasAcc
     ? accList.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
-    : (item.accommodation?.amount ?? 0);
+    : "";
 
-  const accHostel = accList.length > 0
+  const accPaymentId = hasAcc
+    ? accList
+        .map((a) => a.payment_id || a.gateway_payment_id || a.payment_order_reference || a.payment_order_id || "")
+        .filter(Boolean)
+        .join("; ")
+    : "";
+
+  const accHostel = hasAcc
     ? accList.map((a) => a.hostel_name || "Unassigned").join("; ")
-    : (item.accommodation?.hostel_name ?? "Unassigned");
+    : "";
 
-  const accRoom = accList.length > 0
+  const accRoom = hasAcc
     ? accList.map((a) => a.room_number || "Unassigned").join("; ")
-    : (item.accommodation?.room_number ?? "Unassigned");
+    : "";
+
+  const teamType = item.registration.team_name ? "Team" : "Individual";
+  const teamName = item.registration.team_name ?? "";
 
   return [
-    item.participant.participant_id,
-    item.participant.name,
-    item.participant.college ?? "",
-    item.participant.email ?? "",
-    item.participant.phone ?? "",
-    item.event?.name ?? item.registration.event_id,
+    participant.participant_id ?? "",
+    participant.name ?? "",
+    participant.email ?? "",
+    participant.phone ?? "",
+    participant.state ?? "",
+    participant.gender ?? "",
+    item.event?.name ?? item.registration.event_id ?? "",
     item.event?.category ?? "",
-    item.registration.team_name ?? "Individual",
+    teamType,
     item.registration.registration_status ?? "",
     item.registration.payment_status ?? "",
     item.registration.payment_amount ?? 0,
     item.registration.payment_id ?? "",
-    item.registration.main_checked_in ? "Yes" : "No",
-    formatDate(item.registration.main_checked_in_at),
+    accRequired,
+    accType,
+    accDuration,
+    accStartDate,
+    accEndDate,
+    accPaymentStatus,
+    accPaymentAmount,
+    accPaymentId,
     item.registration.checked_in ? "Yes" : "No",
     formatDate(item.registration.checked_in_at),
-    accPlanName,
-    accStatus,
-    accAmount,
+    participant.college ?? "",
+    teamName,
     accHostel,
     accRoom,
+    item.registration.main_checked_in ? "Yes" : "No",
+    formatDate(item.registration.main_checked_in_at),
     (item.registration as Record<string, unknown>).registration_group_id as string ?? "",
     formatDate(item.registration.created_at),
   ];
 }
 
+export function buildRegistrationCsvRows(item: CsvRegistrationItem): (string | number)[][] {
+  if (item.members && item.members.length > 0) {
+    const hasExplicitLeaderInMembers = item.members.some(
+      (m) =>
+        m.is_team_leader === true ||
+        (m.participant_id && m.participant_id === item.participant.id) ||
+        (m.participants?.participant_id &&
+          m.participants.participant_id === item.participant.participant_id)
+    );
+
+    const rows: (string | number)[][] = [];
+
+    // If the registering participant (team leader) is not in item.members, emit them first
+    if (!hasExplicitLeaderInMembers) {
+      rows.push(buildSingleParticipantRow(item, item.participant, true));
+    }
+
+    for (const member of item.members) {
+      const isLeader = Boolean(
+        member.is_team_leader === true ||
+        (member.participant_id && member.participant_id === item.participant.id) ||
+        (member.participants?.participant_id &&
+          member.participants.participant_id === item.participant.participant_id)
+      );
+
+      const memberParticipant: CsvParticipant = isLeader
+        ? {
+            ...item.participant,
+            id: member.participant_id || item.participant.id,
+            participant_id:
+              member.participants?.participant_id || item.participant.participant_id,
+            name: member.name || item.participant.name,
+            email: member.email || item.participant.email,
+            phone: member.phone || item.participant.phone,
+            college: member.participants?.college || item.participant.college,
+            gender: member.gender || member.participants?.gender || item.participant.gender || null,
+            state: member.state || member.participants?.state || item.participant.state || null,
+            accommodation: member.accommodation || item.participant.accommodation || item.accommodation,
+            accommodations:
+              (member.accommodations && member.accommodations.length > 0)
+                ? member.accommodations
+                : (item.participant.accommodations && item.participant.accommodations.length > 0)
+                  ? item.participant.accommodations
+                  : item.accommodations,
+          }
+        : {
+            id: member.participant_id || member.id,
+            participant_id:
+              member.participants?.participant_id || member.participant_id || "",
+            name: member.name,
+            email: member.email || "",
+            phone: member.phone || "",
+            college: member.participants?.college || item.participant.college || "",
+            gender: member.gender || member.participants?.gender || null,
+            state: member.state || member.participants?.state || null,
+            accommodation: member.accommodation ?? null,
+            accommodations: member.accommodations ?? null,
+          };
+
+      rows.push(buildSingleParticipantRow(item, memberParticipant, isLeader));
+    }
+
+    return rows;
+  }
+
+  // Individual registration or team without member records
+  return [buildSingleParticipantRow(item, item.participant, true)];
+}
+
+export function buildRegistrationCsvRow(item: CsvRegistrationItem): (string | number)[] {
+  return buildSingleParticipantRow(item, item.participant, true);
+}
+
+export function buildEventRegistrationCsvRow(item: CsvRegistrationItem): (string | number)[] {
+  return buildSingleParticipantRow(item, item.participant, true);
+}
+
 export function generateRegistrationsCsv(items: CsvRegistrationItem[]): string {
   const rows = [
     REGISTRATION_CSV_HEADERS,
-    ...items.map(buildRegistrationCsvRow),
+    ...items.flatMap(buildRegistrationCsvRows),
   ];
 
-  return rows
-    .map((row) => row.map(escapeCsv).join(","))
-    .join("\r\n");
-}
-
-/* =========================================================
-   2. EVENT-SPECIFIC REGISTRATIONS CSV
-========================================================= */
-
-export const EVENT_REGISTRATION_CSV_HEADERS: string[] = [
-  "Participant ID",
-  "Name",
-  "Event",
-  "College",
-  "Email",
-  "Phone",
-  "Team",
-  "Registration Group ID",
-  "Registration Status",
-  "Payment Status",
-  "Payment Amount",
-  "Payment ID",
-  "Event Checked In",
-  "Event Checked In At",
-  "Main Checked In",
-  "Main Checked In At",
-  "Registered At",
-];
-
-export function buildEventRegistrationCsvRow(item: CsvRegistrationItem): string[] {
-  return [
-    escapeCsv(item.participant.participant_id),
-    escapeCsv(item.participant.name),
-    escapeCsv(item.event?.name ?? item.registration.event_id),
-    escapeCsv(item.participant.college ?? ""),
-    escapeCsv(item.participant.email ?? ""),
-    escapeCsv(item.participant.phone ?? ""),
-    escapeCsv(item.registration.team_name ?? "Individual"),
-    escapeCsv(item.registration.registration_group_id ?? ""),
-    escapeCsv(item.registration.registration_status ?? ""),
-    escapeCsv(item.registration.payment_status ?? ""),
-    escapeCsv(item.registration.payment_amount ?? 0),
-    escapeCsv(item.registration.payment_id ?? ""),
-    escapeCsv(item.registration.checked_in ? "Yes" : "No"),
-    escapeCsv(
-      item.registration.checked_in_at
-        ? formatDate(item.registration.checked_in_at)
-        : ""
-    ),
-    escapeCsv(item.registration.main_checked_in ? "Yes" : "No"),
-    escapeCsv(
-      item.registration.main_checked_in_at
-        ? formatDate(item.registration.main_checked_in_at)
-        : ""
-    ),
-    escapeCsv(formatDate(item.registration.created_at)),
-  ];
+  return (
+    UTF8_BOM +
+    rows
+      .map((row) => row.map(escapeCsv).join(","))
+      .join("\r\n")
+  );
 }
 
 export function generateEventRegistrationsCsv(items: CsvRegistrationItem[]): string {
   const rows = [
     EVENT_REGISTRATION_CSV_HEADERS,
-    ...items.map(buildEventRegistrationCsvRow),
+    ...items.flatMap(buildRegistrationCsvRows),
   ];
 
-  return rows.map((row) => row.join(",")).join("\r\n");
+  return (
+    UTF8_BOM +
+    rows
+      .map((row) => row.map(escapeCsv).join(","))
+      .join("\r\n")
+  );
 }

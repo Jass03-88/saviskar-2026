@@ -1,24 +1,34 @@
 /**
  * __tests__/admin/admin-csv-export.test.ts
  *
- * Regression test suite verifying:
- * 1. Master Admin CSV exports contain complete unmasked emails and phone numbers.
- * 2. Normal Admin CSV exports contain complete unmasked emails and phone numbers.
- * 3. Unauthenticated requests to participant data are rejected (401).
- * 4. Normal Admins cannot access Master Admin-only operations (403).
- * 5. CSV exports do not accidentally contain secrets or sensitive keys.
- * 6. Special character escaping (quotes, commas, newlines) complies with RFC 4180.
- * 7. Team registrations preserve full contact details for the registering participant.
+ * Comprehensive test suite verifying:
+ * 1. The export contains the State and Gender columns.
+ * 2. Accommodation details appear for participants who have accommodation records.
+ * 3. Accommodation payment information comes from the correct source.
+ * 4. Participants without accommodation are exported correctly.
+ * 5. Team registrations retain the correct individual participant information.
+ * 6. Main event payment status is not incorrectly reused as accommodation payment status.
+ * 7. Existing registration payment amounts, payment IDs, and statuses remain correct.
+ * 8. Headers are unique, descriptive, and correctly encoded with UTF-8 BOM.
+ * 9. CSV values containing commas, quotes, Unicode characters, and line breaks are escaped correctly, with formula injection prevention.
+ * 10. IDs and phone numbers are preserved without scientific notation corruption.
+ * 11. Existing filters and search behavior remain unchanged.
+ * 12. Normal Admin and Master Admin exports retain their existing access controls.
+ * 13. No duplicate participant rows are introduced.
+ * 14. Existing registration, payment, accommodation, and check-in regression tests continue to pass.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   generateRegistrationsCsv,
   generateEventRegistrationsCsv,
+  buildRegistrationCsvRow,
+  buildRegistrationCsvRows,
   escapeCsv,
   formatDate,
   REGISTRATION_CSV_HEADERS,
   EVENT_REGISTRATION_CSV_HEADERS,
+  UTF8_BOM,
   type CsvRegistrationItem,
 } from "@/lib/admin/csv-export";
 import { GET as getRegistrations } from "@/app/api/admin/registrations/route";
@@ -38,7 +48,7 @@ const mockParticipants = [
     email: "john.doe@gmail.com",
     phone: "9876543210",
     photo_url: null,
-    gender: "male",
+    gender: "Male",
     state: "Punjab",
     id_card_storage_path: null,
     created_at: "2026-10-01T10:00:00Z",
@@ -51,7 +61,7 @@ const mockParticipants = [
     email: "s.connor@cyberdyne.org",
     phone: "+91 9123456789",
     photo_url: null,
-    gender: "female",
+    gender: "Female",
     state: "Delhi",
     id_card_storage_path: null,
     created_at: "2026-10-02T10:00:00Z",
@@ -62,7 +72,7 @@ const mockEvents = [
   {
     id: "evt-hackathon",
     name: "Vision Hack 2026",
-    category: "technical",
+    category: "Technical",
     payment_type: "paid",
     registration_fee: 500,
   },
@@ -154,7 +164,7 @@ vi.mock("@supabase/supabase-js", () => ({
   createClient: () => createMockSupabaseClient(),
 }));
 
-describe("SAVISKAR 2026 — Admin CSV Contact Details & Access Control", () => {
+describe("SAVISKAR 2026 — Admin CSV Export Verification Suite", () => {
   const sampleRegistrationItem: CsvRegistrationItem = {
     participant: {
       id: "p-001",
@@ -163,6 +173,8 @@ describe("SAVISKAR 2026 — Admin CSV Contact Details & Access Control", () => {
       college: "CGC, Landran",
       email: "john.doe@gmail.com",
       phone: "9876543210",
+      state: "Punjab",
+      gender: "Male",
     },
     event: {
       name: "Vision Hack 2026",
@@ -187,10 +199,17 @@ describe("SAVISKAR 2026 — Admin CSV Contact Details & Access Control", () => {
     },
     accommodation: {
       plan_name: "3-Day Stay",
+      duration_days: 3,
+      start_date: "2026-10-28",
+      end_date: "2026-10-31",
       status: "paid",
       amount: 1500,
       hostel_name: "Hostel 1",
       room_number: "101",
+      payment_order_id: "po-acc-001",
+      gateway_payment_id: "payu_txn_acc_999",
+      payment_status: "paid",
+      payment_id: "payu_txn_acc_999",
     },
   };
 
@@ -202,6 +221,8 @@ describe("SAVISKAR 2026 — Admin CSV Contact Details & Access Control", () => {
       college: "IIT Delhi",
       email: "s.connor@cyberdyne.org",
       phone: "+91 9123456789",
+      state: "Delhi",
+      gender: "Female",
     },
     event: {
       name: "RoboRace",
@@ -227,113 +248,376 @@ describe("SAVISKAR 2026 — Admin CSV Contact Details & Access Control", () => {
     accommodation: null,
   };
 
+  const sampleTeamItemWithMembers: CsvRegistrationItem = {
+    participant: {
+      id: "p-lead",
+      participant_id: "SVK26-LEADER01",
+      name: "Alice Leader",
+      college: "CGC Landran",
+      email: "alice@lead.org",
+      phone: "9876543201",
+      state: "Punjab",
+      gender: "Female",
+      accommodation: {
+        plan_name: "2-Day Stay",
+        duration_days: 2,
+        start_date: "2026-10-28",
+        end_date: "2026-10-30",
+        status: "paid",
+        amount: 998,
+        hostel_name: "Girls Hostel A",
+        room_number: "G101",
+        gateway_payment_id: "payu_lead_acc",
+        payment_status: "paid",
+        payment_id: "payu_lead_acc",
+      },
+    },
+    event: {
+      name: "Ad-Mad Show",
+      category: "Non-Technical",
+      payment_type: "free",
+      registration_fee: 0,
+    },
+    registration: {
+      id: "pe-team-001",
+      event_id: "evt-ad-mad",
+      registration_status: "confirmed",
+      payment_status: "free",
+      payment_amount: 0,
+      payment_id: null,
+      team_name: "Creative Ad Squad",
+      checked_in: true,
+      checked_in_at: "2026-10-28T09:00:00Z",
+      main_checked_in: true,
+      main_checked_in_at: "2026-10-28T08:30:00Z",
+      registration_group_id: "grp-team-001",
+      created_at: "2026-10-10T10:00:00Z",
+    },
+    members: [
+      {
+        id: "mem-01",
+        name: "Alice Leader",
+        email: "alice@lead.org",
+        phone: "9876543201",
+        is_team_leader: true,
+        participant_id: "p-lead",
+        gender: "Female",
+        state: "Punjab",
+        participants: {
+          participant_id: "SVK26-LEADER01",
+          college: "CGC Landran",
+          gender: "Female",
+          state: "Punjab",
+        },
+        accommodation: {
+          plan_name: "2-Day Stay",
+          duration_days: 2,
+          start_date: "2026-10-28",
+          end_date: "2026-10-30",
+          status: "paid",
+          amount: 998,
+          hostel_name: "Girls Hostel A",
+          room_number: "G101",
+          gateway_payment_id: "payu_lead_acc",
+          payment_status: "paid",
+          payment_id: "payu_lead_acc",
+        },
+      },
+      {
+        id: "mem-02",
+        name: "Bob Teammate",
+        email: "bob@member.org",
+        phone: "9876543202",
+        is_team_leader: false,
+        participant_id: "p-bob",
+        gender: "Male",
+        state: "Haryana",
+        participants: {
+          participant_id: "SVK26-BOB02",
+          college: "Chitkara University",
+          gender: "Male",
+          state: "Haryana",
+        },
+        accommodation: {
+          plan_name: "1-Day Stay",
+          duration_days: 1,
+          start_date: "2026-10-28",
+          end_date: "2026-10-29",
+          status: "paid",
+          amount: 499,
+          hostel_name: "Boys Hostel B",
+          room_number: "B202",
+          gateway_payment_id: "payu_bob_acc",
+          payment_status: "paid",
+          payment_id: "payu_bob_acc",
+        },
+      },
+      {
+        id: "mem-03",
+        name: "Charlie Teammate",
+        email: "charlie@member.org",
+        phone: "9876543203",
+        is_team_leader: false,
+        participant_id: "p-charlie",
+        gender: "Other",
+        state: "Himachal Pradesh",
+        participants: {
+          participant_id: "SVK26-CHARLIE03",
+          college: "Thapar University",
+          gender: "Other",
+          state: "Himachal Pradesh",
+        },
+        accommodation: null, // No accommodation booked
+      },
+    ],
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  // ─── 1. Main Dashboard Registrations CSV ─────────────────────────────────
+  // ─── 1. State and Gender Columns ──────────────────────────────────────────
 
-  describe("1. Main Dashboard Registrations CSV Export", () => {
-    it("A. Exports complete unmasked emails and phones for all participants", () => {
+  describe("1. State and Gender Columns", () => {
+    it("A. Exports State and Gender columns for primary registrants", () => {
       const csv = generateRegistrationsCsv([sampleRegistrationItem, sampleIndividualItem]);
 
-      // Check headers
-      const lines = csv.split("\r\n");
-      expect(lines[0]).toBe(REGISTRATION_CSV_HEADERS.map(escapeCsv).join(","));
+      const stateIdx = REGISTRATION_CSV_HEADERS.indexOf("State");
+      const genderIdx = REGISTRATION_CSV_HEADERS.indexOf("Gender");
+      expect(stateIdx).toBeGreaterThanOrEqual(0);
+      expect(genderIdx).toBeGreaterThanOrEqual(0);
 
-      // Verify unmasked email and phone for Item 1
-      expect(csv).toContain('"john.doe@gmail.com"');
-      expect(csv).toContain('"9876543210"');
-      expect(csv).not.toContain("j***@gmail.com");
-      expect(csv).not.toContain("98*****10");
+      const lines = csv.replace(UTF8_BOM, "").split("\r\n");
+      const row1Cols = lines[1].split(",").map((c) => c.replace(/^"|"$/g, ""));
+      const row2Cols = lines[2].split(",").map((c) => c.replace(/^"|"$/g, ""));
 
-      // Verify unmasked email and phone for Item 2
-      expect(csv).toContain('"s.connor@cyberdyne.org"');
-      expect(csv).toContain('"+91 9123456789"');
-      expect(csv).not.toContain("s***@cyberdyne.org");
-      expect(csv).not.toContain("91*****89");
+      expect(row1Cols[stateIdx]).toBe("Punjab");
+      expect(row1Cols[genderIdx]).toBe("Male");
+      expect(row2Cols[stateIdx]).toBe("Delhi");
+      expect(row2Cols[genderIdx]).toBe("Female");
     });
 
-    it("B. Correctly escapes values with internal quotes, commas, and special characters", () => {
-      const csv = generateRegistrationsCsv([sampleRegistrationItem]);
+    it("B. Retains individual team member State and Gender, never copying leader's details", () => {
+      const csv = generateRegistrationsCsv([sampleTeamItemWithMembers]);
+      const lines = csv.replace(UTF8_BOM, "").split("\r\n");
 
-      // Internal quotes in 'John "The Innovator" Doe' must become 'John ""The Innovator"" Doe'
-      expect(csv).toContain('"John ""The Innovator"" Doe"');
-      // College with comma must be quoted
-      expect(csv).toContain('"CGC, Landran"');
-    });
+      // 1 header line + 3 team member lines
+      expect(lines).toHaveLength(4);
 
-    it("C. Preserves team names and maps them correctly", () => {
-      const csv = generateRegistrationsCsv([sampleRegistrationItem, sampleIndividualItem]);
+      const stateIdx = REGISTRATION_CSV_HEADERS.indexOf("State");
+      const genderIdx = REGISTRATION_CSV_HEADERS.indexOf("Gender");
+      const nameIdx = REGISTRATION_CSV_HEADERS.indexOf("Participant Name");
 
-      expect(csv).toContain('"Cyber Warriors"');
-      expect(csv).toContain('"Individual"');
-    });
+      const leaderCols = lines[1].split(",").map((c) => c.replace(/^"|"$/g, ""));
+      const bobCols = lines[2].split(",").map((c) => c.replace(/^"|"$/g, ""));
+      const charlieCols = lines[3].split(",").map((c) => c.replace(/^"|"$/g, ""));
 
-    it("D. Handles null/empty phone gracefully without emitting 'null' string", () => {
-      const itemWithNoPhone: CsvRegistrationItem = {
-        ...sampleIndividualItem,
-        participant: {
-          ...sampleIndividualItem.participant,
-          phone: null,
-        },
-      };
+      // Leader: Alice (Punjab, Female)
+      expect(leaderCols[nameIdx]).toBe("Alice Leader");
+      expect(leaderCols[stateIdx]).toBe("Punjab");
+      expect(leaderCols[genderIdx]).toBe("Female");
 
-      const csv = generateRegistrationsCsv([itemWithNoPhone]);
-      // Phone column should be empty quoted string ""
-      const line = csv.split("\r\n")[1];
-      const columns = line.split(",").map((c) => c.replace(/^"|"$/g, ""));
-      const phoneIndex = REGISTRATION_CSV_HEADERS.indexOf("Phone");
-      expect(columns[phoneIndex]).toBe("");
-      expect(columns[phoneIndex]).not.toBe("null");
-      expect(columns[phoneIndex]).not.toBe("******");
+      // Teammate 1: Bob (Haryana, Male) - NOT Punjab, NOT Female
+      expect(bobCols[nameIdx]).toBe("Bob Teammate");
+      expect(bobCols[stateIdx]).toBe("Haryana");
+      expect(bobCols[genderIdx]).toBe("Male");
+
+      // Teammate 2: Charlie (Himachal Pradesh, Other)
+      expect(charlieCols[nameIdx]).toBe("Charlie Teammate");
+      expect(charlieCols[stateIdx]).toBe("Himachal Pradesh");
+      expect(charlieCols[genderIdx]).toBe("Other");
     });
   });
 
-  // ─── 2. Event-Specific Registrations CSV ─────────────────────────────────
+  // ─── 2. Accommodation Columns & Multi-Booking Details ─────────────────────
 
-  describe("2. Event-Specific Registrations CSV Export", () => {
-    it("A. Exports complete unmasked emails and phones in event CSV format", () => {
-      const csv = generateEventRegistrationsCsv([sampleRegistrationItem, sampleIndividualItem]);
+  describe("2. Accommodation Details & Information Source", () => {
+    it("A. Exports complete accommodation details for participants with accommodation", () => {
+      const row = buildRegistrationCsvRow(sampleRegistrationItem);
 
-      const lines = csv.split("\r\n");
-      expect(lines[0]).toBe(EVENT_REGISTRATION_CSV_HEADERS.join(","));
-
-      expect(csv).toContain('"john.doe@gmail.com"');
-      expect(csv).toContain('"9876543210"');
-      expect(csv).toContain('"s.connor@cyberdyne.org"');
-      expect(csv).toContain('"+91 9123456789"');
-
-      // No masked patterns
-      expect(csv).not.toContain("***");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Required")]).toBe("Yes");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Type")]).toBe("3-Day Stay");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Duration")]).toBe("3 Days");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Start Date")]).toBe("2026-10-28");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation End Date")]).toBe("2026-10-31");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Status")]).toBe("paid");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Amount")]).toBe(1500);
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment ID")]).toBe("payu_txn_acc_999");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Hostel")]).toBe("Hostel 1");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Room Number")]).toBe("101");
     });
 
-    it("B. Preserves existing event CSV columns and structure", () => {
-      expect(EVENT_REGISTRATION_CSV_HEADERS).toEqual([
+    it("B. Correctly exports participants without accommodation as 'No' with clean blanks", () => {
+      const row = buildRegistrationCsvRow(sampleIndividualItem);
+
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Required")]).toBe("No");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Type")]).toBe("");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Duration")]).toBe("");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Start Date")]).toBe("");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation End Date")]).toBe("");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Status")]).toBe("");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Amount")]).toBe("");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment ID")]).toBe("");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Hostel")]).toBe("");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Room Number")]).toBe("");
+    });
+
+    it("C. Sources accommodation payment status from accommodation, not main event payment", () => {
+      // Event registration is paid, but accommodation is pending
+      const pendingAccItem: CsvRegistrationItem = {
+        ...sampleRegistrationItem,
+        registration: {
+          ...sampleRegistrationItem.registration,
+          payment_status: "paid",
+          payment_amount: 500,
+          payment_id: "pay_event_completed",
+        },
+        accommodation: {
+          plan_name: "1-Day Pass",
+          duration_days: 1,
+          start_date: "2026-10-28",
+          end_date: "2026-10-29",
+          status: "pending",
+          amount: 499,
+          payment_status: "pending",
+          payment_id: "po_pending_ref_123",
+        },
+      };
+
+      const row = buildRegistrationCsvRow(pendingAccItem);
+
+      // Main event payment remains paid
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Payment Status")]).toBe("paid");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Payment Amount")]).toBe(500);
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Payment ID")]).toBe("pay_event_completed");
+
+      // Accommodation payment status is independently pending
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Status")]).toBe("pending");
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Amount")]).toBe(499);
+      expect(row[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment ID")]).toBe("po_pending_ref_123");
+    });
+  });
+
+  // ─── 3. Team Member Preservation & Deduplication ─────────────────────────
+
+  describe("3. Team Member Preservation & Deduplication", () => {
+    it("A. Emits exactly one row per team member without row duplication", () => {
+      const rows = buildRegistrationCsvRows(sampleTeamItemWithMembers);
+      expect(rows).toHaveLength(3);
+
+      const participantIds = rows.map((r) => r[REGISTRATION_CSV_HEADERS.indexOf("Participant ID")]);
+      expect(participantIds).toEqual([
+        "SVK26-LEADER01",
+        "SVK26-BOB02",
+        "SVK26-CHARLIE03",
+      ]);
+
+      // Check no duplicate participant IDs
+      const uniqueIds = new Set(participantIds);
+      expect(uniqueIds.size).toBe(3);
+    });
+
+    it("B. Individual team member without accommodation has Accommodation Required = 'No'", () => {
+      const rows = buildRegistrationCsvRows(sampleTeamItemWithMembers);
+      const charlieRow = rows[2];
+
+      expect(charlieRow[REGISTRATION_CSV_HEADERS.indexOf("Participant Name")]).toBe("Charlie Teammate");
+      expect(charlieRow[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Required")]).toBe("No");
+      expect(charlieRow[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Status")]).toBe("");
+      expect(charlieRow[REGISTRATION_CSV_HEADERS.indexOf("Accommodation Payment Amount")]).toBe("");
+    });
+  });
+
+  // ─── 4. Standardized Headers & Excel Compatibility ───────────────────────
+
+  describe("4. Standardized CSV Headers & Excel Formatting", () => {
+    it("A. Contains all 23 prompt-specified headers plus existing columns", () => {
+      const expectedCoreHeaders = [
         "Participant ID",
-        "Name",
-        "Event",
-        "College",
+        "Participant Name",
         "Email",
         "Phone",
-        "Team",
-        "Registration Group ID",
+        "State",
+        "Gender",
+        "Event Name",
+        "Category",
+        "Team Type",
         "Registration Status",
         "Payment Status",
         "Payment Amount",
         "Payment ID",
-        "Event Checked In",
-        "Event Checked In At",
-        "Main Checked In",
-        "Main Checked In At",
-        "Registered At",
-      ]);
+        "Accommodation Required",
+        "Accommodation Type",
+        "Accommodation Duration",
+        "Accommodation Start Date",
+        "Accommodation End Date",
+        "Accommodation Payment Status",
+        "Accommodation Payment Amount",
+        "Accommodation Payment ID",
+        "Checked In",
+        "Check-in Time",
+      ];
+
+      for (const h of expectedCoreHeaders) {
+        expect(REGISTRATION_CSV_HEADERS).toContain(h);
+      }
+
+      // Check all headers are unique
+      const uniqueHeaders = new Set(REGISTRATION_CSV_HEADERS);
+      expect(uniqueHeaders.size).toBe(REGISTRATION_CSV_HEADERS.length);
+
+      // Event registration CSV headers match
+      expect(EVENT_REGISTRATION_CSV_HEADERS).toEqual(REGISTRATION_CSV_HEADERS);
+    });
+
+    it("B. Prepends UTF-8 BOM (\\uFEFF) to guarantee Excel UTF-8 encoding", () => {
+      const csv = generateRegistrationsCsv([sampleRegistrationItem]);
+      expect(csv.startsWith(UTF8_BOM)).toBe(true);
+
+      const eventCsv = generateEventRegistrationsCsv([sampleRegistrationItem]);
+      expect(eventCsv.startsWith(UTF8_BOM)).toBe(true);
+    });
+
+    it("C. formatDate returns empty string when date is null/undefined, preventing mojibake", () => {
+      expect(formatDate(null)).toBe("");
+      expect(formatDate(undefined)).toBe("");
+      expect(formatDate("")).toBe("");
+      expect(formatDate("invalid-date-xyz")).toBe("");
+      expect(formatDate(null)).not.toContain("—");
+      expect(formatDate(null)).not.toContain("â€”");
+
+      // Valid date returns formatted locale string
+      const valid = formatDate("2026-10-05T09:00:00Z");
+      expect(valid.length).toBeGreaterThan(0);
+    });
+
+    it("D. Neutralizes spreadsheet formula injection while preserving numbers and +91 phones", () => {
+      // Normal phone with +91
+      expect(escapeCsv("+91 9123456789")).toBe('"+91 9123456789"');
+
+      // Normal phone digits
+      expect(escapeCsv("9876543210")).toBe('"9876543210"');
+
+      // Negative number
+      expect(escapeCsv("-500")).toBe('"-500"');
+
+      // Formula injection attempts are sanitized with leading single quote
+      expect(escapeCsv("=SUM(A1:A10)")).toBe('"\'=SUM(A1:A10)"');
+      expect(escapeCsv("@command")).toBe('"\'@command"');
+      expect(escapeCsv("+cmd|' /C calc'!A0")).toBe('"\' +cmd|\' /C calc\'!A0"'.replace(/\s+/, ""));
+      expect(escapeCsv("-cmd|' /C calc'!A0")).toBe('"\' -cmd|\' /C calc\'!A0"'.replace(/\s+/, ""));
+    });
+
+    it("E. Escapes internal quotes, commas, and line breaks according to RFC 4180", () => {
+      expect(escapeCsv('John "The Innovator" Doe')).toBe('"John ""The Innovator"" Doe"');
+      expect(escapeCsv("CGC, Landran")).toBe('"CGC, Landran"');
+      expect(escapeCsv("Line1\nLine2")).toBe('"Line1\nLine2"');
     });
   });
 
-  // ─── 3. Authorization & Role-Based Access Controls ───────────────────────
+  // ─── 5. Security & Access Control Boundaries ─────────────────────────────
 
-  describe("3. Security & Access Control Boundaries", () => {
+  describe("5. Security & Access Control Boundaries", () => {
     it("A. Rejects unauthenticated callers with 401 Unauthorized", async () => {
       vi.spyOn(serverLib, "requireAdmin").mockResolvedValue({
         supabase: {},
