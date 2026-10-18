@@ -556,6 +556,31 @@ export async function POST(
   }
 
   // =====================================================
+  // 8B. VALIDATE TEAM MEMBERS
+  // =====================================================
+
+  for (const event of events) {
+    if (event.members.length > 0) {
+      const memberEmails = new Set<string>();
+      for (const member of event.members) {
+        if (!member.name || member.name.trim().length === 0) {
+          return errorResponse("Team member name is required.", 400, "VALIDATION_ERROR");
+        }
+        if (!member.email || !EMAIL_PATTERN.test(member.email)) {
+          return errorResponse(`Invalid email address for team member "${member.name || 'Member'}".`, 400, "VALIDATION_ERROR");
+        }
+        if (member.email.toLowerCase() === authenticatedEmail) {
+          return errorResponse("You cannot add yourself as a team member. You are already the team leader.", 400, "VALIDATION_ERROR");
+        }
+        if (memberEmails.has(member.email.toLowerCase())) {
+          return errorResponse(`Duplicate team member email address: ${member.email}. Each team member must have a unique email.`, 400, "VALIDATION_ERROR");
+        }
+        memberEmails.add(member.email.toLowerCase());
+      }
+    }
+  }
+
+  // =====================================================
   // 9. PREVENT DUPLICATE EVENTS
   // =====================================================
 
@@ -593,32 +618,43 @@ export async function POST(
         team:
           event.team,
 
+        isTeamHead:
+          event.isTeamHead,
+
         is_team_head:
           event.isTeamHead,
 
         members:
           event.members.map(
-            (member) => ({
-              name:
-                member.name,
-
-              college:
-                member.college,
-
-              email:
-                member.email,
-
-              phone:
-                member.phone,
-              gender:
-                member.gender,
-              state:
-                member.state,
-              id_card_storage_path:
+            (member) => {
+              const idCardPath =
                 (member.idCardStoragePath && !member.idCardStoragePath.startsWith(`${authenticatedEmail}/`)) 
                   ? null 
-                  : member.idCardStoragePath,
-            })
+                  : member.idCardStoragePath;
+              const memberCollege = member.college || college;
+
+              return {
+                name:
+                  member.name,
+
+                college:
+                  memberCollege,
+
+                email:
+                  member.email,
+
+                phone:
+                  member.phone,
+                gender:
+                  member.gender,
+                state:
+                  member.state,
+                idCardStoragePath:
+                  idCardPath,
+                id_card_storage_path:
+                  idCardPath,
+              };
+            }
           ),
       })
     );
@@ -836,8 +872,9 @@ export async function POST(
     );
 
   if (rpcError) {
+    const correlationId = `reg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     console.error(
-      "Multi-event registration RPC failed:",
+      `[REGISTER ERROR ${correlationId}] Multi-event registration RPC failed:`,
       {
         code:
           rpcError.code,
@@ -860,20 +897,20 @@ export async function POST(
 
     // 1. Structured Error Codes (SVK01 - SVK11)
     if (code === "SVK01" || code === "SVK02") {
-      return errorResponse("Invalid participant identification or email.", 400);
+      return errorResponse("Invalid participant identification or email.", 400, "INVALID_PARTICIPANT");
     }
     if (code === "SVK03" || code === "SVK04" || code === "SVK05") {
-      return errorResponse(message, 400);
+      return errorResponse(message, 400, "EVENT_ERROR");
     }
     if (code === "SVK06") {
-      return errorResponse("Please enter your team name.", 400);
+      return errorResponse("Please enter your team name.", 400, "TEAM_NAME_REQUIRED");
     }
     if (code === "SVK11") {
       const formatted = formatAccommodationOverlapError(rpcError);
       return errorResponse(formatted.message || message, 400, formatted.code);
     }
     if (code === "SVK07" || code === "SVK08" || code === "SVK09" || code === "SVK10") {
-      return errorResponse(message, 400);
+      return errorResponse(message, 400, "TEAM_SIZE_ERROR");
     }
 
     if (
@@ -888,14 +925,39 @@ export async function POST(
       );
     }
 
-    // 2. Backward Compatibility Fallbacks (Text Matching)
+    // 2. Recognized PostgreSQL Constraint Violations
+    if (
+      message.includes("participant_events_unique_event") ||
+      ((code === "23505" || message.includes("duplicate key value")) &&
+        (message.includes("participant_events") || rpcError.details?.includes("participant_events") || rpcError.details?.includes("event_id")))
+    ) {
+      return errorResponse(
+        "You or a team member are already registered for one of the selected events. Please review your event selections.",
+        400,
+        "DUPLICATE_REGISTRATION"
+      );
+    }
+
+    if (
+      code === "23502" &&
+      (message.includes("college") || rpcError.details?.includes("college") || message.includes("participants"))
+    ) {
+      return errorResponse(
+        "A required registration field was missing. Please ensure all participant, team, and college details are filled.",
+        400,
+        "MISSING_REQUIRED_FIELD"
+      );
+    }
+
+    // 3. Backward Compatibility Fallbacks (Text Matching)
     if (
       message.includes("Participant ID was not found") ||
       message.includes("The provided email does not match this Participant ID")
     ) {
       return errorResponse(
         "Invalid participant identification or email.",
-        400
+        400,
+        "INVALID_PARTICIPANT"
       );
     }
 
@@ -906,29 +968,23 @@ export async function POST(
     ) {
       return errorResponse(
         "Please enter your team name.",
-        400
+        400,
+        "TEAM_NAME_REQUIRED"
       );
     }
 
     if (
       message.includes(
         "requires at least"
-      )
-    ) {
-      return errorResponse(
-        message,
-        400
-      );
-    }
-
-    if (
+      ) ||
       message.includes(
         "allows a maximum"
       )
     ) {
       return errorResponse(
         message,
-        400
+        400,
+        "TEAM_SIZE_ERROR"
       );
     }
 
@@ -939,7 +995,8 @@ export async function POST(
     ) {
       return errorResponse(
         message,
-        400
+        400,
+        "DUPLICATE_EMAIL"
       );
     }
 
@@ -953,41 +1010,27 @@ export async function POST(
     ) {
       return errorResponse(
         message,
-        400
+        400,
+        "CAPACITY_REACHED"
       );
     }
 
     if (
-      message.includes(
-        "registration"
-      ) &&
-      message.includes(
-        "closed"
-      )
+      (message.includes("registration") && message.includes("closed")) ||
+      message.includes("not active") ||
+      message.includes("unavailable")
     ) {
       return errorResponse(
         message,
-        400
-      );
-    }
-
-    if (
-      message.includes(
-        "not active"
-      ) ||
-      message.includes(
-        "unavailable"
-      )
-    ) {
-      return errorResponse(
-        message,
-        400
+        400,
+        "REGISTRATION_CLOSED"
       );
     }
 
     return errorResponse(
       "We couldn't save your registration. Please try again.",
-      500
+      500,
+      "INTERNAL_ERROR"
     );
   }
 

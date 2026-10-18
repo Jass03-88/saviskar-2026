@@ -43,10 +43,11 @@ export function calculateStayDates(
     let startDate = defaultBaseStartDate;
     if (selectedDate === "2026-10-27" || extraDays === "before_27") {
       startDate = "2026-10-27";
-    } else if (extraDays === "after_30") {
+    } else {
+      // In Saviskar 2026, 3-day festival plan spans either:
+      // - Oct 27 to Oct 30 (early arrival before 28th)
+      // - Oct 28 to Oct 31 (standard festival + late departure after 30th)
       startDate = "2026-10-28";
-    } else if (selectedDate && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
-      startDate = selectedDate;
     }
     const endDate = addDaysToIso(startDate, durationDays);
     return { startDate, endDate, durationDays };
@@ -54,10 +55,8 @@ export function calculateStayDates(
 
   if (planSlug === "4_days") {
     const durationDays = 4;
-    let startDate = "2026-10-27";
-    if (selectedDate && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
-      startDate = selectedDate;
-    }
+    // 4-day plan always spans full festival: Oct 27 to Oct 31
+    const startDate = "2026-10-27";
     const endDate = addDaysToIso(startDate, durationDays);
     return { startDate, endDate, durationDays };
   }
