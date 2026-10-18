@@ -32,6 +32,7 @@ import {
   Bed,
   Building2,
   SlidersHorizontal,
+  BarChart3,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
@@ -1691,6 +1692,19 @@ export default function AdminPage() {
               type="button"
               onClick={() =>
                 router.push(
+                  "/admin/analytics"
+                )
+              }
+              className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+            >
+              <BarChart3 size={15} />
+              Analytics
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
                   "/register?from=admin"
                 )
               }
@@ -1922,35 +1936,37 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <div className="mt-5 grid gap-4 grid-cols-1 sm:grid-cols-3 pt-5 border-t border-black/5">
-            <div className="rounded-2xl bg-black/[0.02] p-4 border border-black/[0.03]">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Expected Revenue</p>
-              <p className="text-2xl font-semibold text-black mt-1">₹{paymentStats.expectedAmount.toLocaleString()}</p>
-              {includeAccommodation && (
-                <p className="text-[10px] text-black/45 mt-1 font-medium">
-                  Events: ₹{paymentStats.eventExpectedAmount.toLocaleString()} · Acc: ₹{paymentStats.accExpected.toLocaleString()}
-                </p>
-              )}
+          {role === "master" && (
+            <div className="mt-5 grid gap-4 grid-cols-1 sm:grid-cols-3 pt-5 border-t border-black/5">
+              <div className="rounded-2xl bg-black/[0.02] p-4 border border-black/[0.03]">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Expected Revenue</p>
+                <p className="text-2xl font-semibold text-black mt-1">₹{paymentStats.expectedAmount.toLocaleString()}</p>
+                {includeAccommodation && (
+                  <p className="text-[10px] text-black/45 mt-1 font-medium">
+                    Events: ₹{paymentStats.eventExpectedAmount.toLocaleString()} · Acc: ₹{paymentStats.accExpected.toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-2xl bg-green-50/60 p-4 border border-green-100/60">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-green-700/70">Paid Revenue</p>
+                <p className="text-2xl font-semibold text-green-700 mt-1">₹{paymentStats.paidAmount.toLocaleString()}</p>
+                {includeAccommodation && (
+                  <p className="text-[10px] text-green-800/60 mt-1 font-medium">
+                    Events: ₹{paymentStats.eventPaidAmount.toLocaleString()} · Acc: ₹{paymentStats.accPaid.toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-2xl bg-red-50/60 p-4 border border-red-100/60">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-red-700/70">Outstanding</p>
+                <p className="text-2xl font-semibold text-red-700 mt-1">₹{paymentStats.outstandingAmount.toLocaleString()}</p>
+                {includeAccommodation && (
+                  <p className="text-[10px] text-red-800/60 mt-1 font-medium">
+                    Events: ₹{paymentStats.eventOutstandingAmount.toLocaleString()} · Acc: ₹{paymentStats.accOutstanding.toLocaleString()}
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="rounded-2xl bg-green-50/60 p-4 border border-green-100/60">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-green-700/70">Paid Revenue</p>
-              <p className="text-2xl font-semibold text-green-700 mt-1">₹{paymentStats.paidAmount.toLocaleString()}</p>
-              {includeAccommodation && (
-                <p className="text-[10px] text-green-800/60 mt-1 font-medium">
-                  Events: ₹{paymentStats.eventPaidAmount.toLocaleString()} · Acc: ₹{paymentStats.accPaid.toLocaleString()}
-                </p>
-              )}
-            </div>
-            <div className="rounded-2xl bg-red-50/60 p-4 border border-red-100/60">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-red-700/70">Outstanding</p>
-              <p className="text-2xl font-semibold text-red-700 mt-1">₹{paymentStats.outstandingAmount.toLocaleString()}</p>
-              {includeAccommodation && (
-                <p className="text-[10px] text-red-800/60 mt-1 font-medium">
-                  Events: ₹{paymentStats.eventOutstandingAmount.toLocaleString()} · Acc: ₹{paymentStats.accOutstanding.toLocaleString()}
-                </p>
-              )}
-            </div>
-          </div>
+          )}
 
           {/* Accommodation Snapshot Banner (when accommodation is toggled ON) */}
           {includeAccommodation && (

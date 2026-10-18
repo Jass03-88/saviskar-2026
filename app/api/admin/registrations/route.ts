@@ -665,6 +665,12 @@ export async function GET(request: Request) {
     console.warn("Global accommodation stats skipped:", accStatsErr);
   }
 
+  if (!isMaster) {
+    accommodationStats.expectedAmount = 0;
+    accommodationStats.paidAmount = 0;
+    accommodationStats.outstandingAmount = 0;
+  }
+
   const membersByParticipantEventId =
     new Map<string, Member[]>();
 
