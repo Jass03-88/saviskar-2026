@@ -1,12 +1,16 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/supabase/server";
-import { parseAdminCategories } from "@/lib/admin/scope";
+import {
+  parseAdminCategories,
+  formatCategoryScopeLabel,
+  VALID_ADMIN_CATEGORIES,
+} from "@/lib/admin/scope";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await requireAdmin();
 
   if (auth.error) {
@@ -21,8 +25,8 @@ export async function GET() {
 
   const isMaster = auth.role === "master";
   const assignedCategory = isMaster ? null : auth.assigned_category;
-  const assignedEvents = isMaster ? [] : (auth.assigned_events || []);
-  const isScoped = !isMaster && (!!assignedCategory || assignedEvents.length > 0);
+  const assignedEvents = isMaster ? [] : auth.assigned_events || [];
+  const parsedAssigned = parseAdminCategories(assignedCategory);
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const secretKey = process.env.SUPABASE_SECRET_KEY!;
@@ -38,96 +42,170 @@ export async function GET() {
     if (eventsError) throw eventsError;
 
     const allEvents = rawEvents || [];
-    let allowedEventIds: string[] | null = null;
 
-    if (isScoped) {
-      const allowedCategories = parseAdminCategories(assignedCategory);
-      allowedEventIds = allEvents
-        .filter((ev) => {
-          if (assignedEvents.includes(ev.id)) return true;
-          if (
-            allowedCategories.length > 0 &&
-            ev.category &&
-            allowedCategories.includes(ev.category.toLowerCase())
-          ) {
-            return true;
-          }
-          return false;
-        })
-        .map((ev) => ev.id);
+    // 2. Determine Available Categories for this Admin
+    let availableCategories: string[] = [];
+    if (isMaster) {
+      availableCategories = [...VALID_ADMIN_CATEGORIES];
+    } else if (parsedAssigned.length > 0) {
+      availableCategories = parsedAssigned;
+    } else if (assignedEvents.length > 0) {
+      const catSet = new Set<string>();
+      for (const ev of allEvents) {
+        if (assignedEvents.includes(ev.id) && ev.category) {
+          catSet.add(ev.category.toLowerCase().trim());
+        }
+      }
+      availableCategories = Array.from(catSet);
+    } else {
+      // Unrestricted standard admin
+      availableCategories = [...VALID_ADMIN_CATEGORIES];
     }
 
-    const filteredEvents = allowedEventIds
-      ? allEvents.filter((ev) => allowedEventIds!.includes(ev.id))
-      : allEvents;
+    // 3. Parse and Validate Requested Category Filter (?category=...)
+    let queryCategory: string | null = null;
+    if (request) {
+      try {
+        const url = new URL(request.url);
+        queryCategory = url.searchParams.get("category")?.trim().toLowerCase() || null;
+      } catch {
+        queryCategory = null;
+      }
+    }
 
-    // 2. Fetch Participant Events (non-cancelled)
-    let peQuery = supabaseAdmin
-      .from("participant_events")
-      .select("id, participant_id, event_id, registration_status, payment_status, payment_amount, team_name, checked_in, main_checked_in, created_at")
-      .neq("registration_status", "cancelled");
-
-    if (allowedEventIds) {
-      if (allowedEventIds.length === 0) {
-        // Scoped admin with no events
+    let selectedCategory = "all";
+    if (availableCategories.length === 1) {
+      // Admin is strictly locked to a single category
+      selectedCategory = availableCategories[0];
+      if (
+        queryCategory &&
+        queryCategory !== "all" &&
+        queryCategory !== availableCategories[0]
+      ) {
         return NextResponse.json(
           {
-            success: true,
-            isMaster: false,
-            role: auth.role,
-            overview: {
-              totalParticipants: 0,
-              totalRegistrations: 0,
-              totalTeams: 0,
-              totalCheckedIn: 0,
-              checkInRate: 0,
-              totalColleges: 0,
-              totalStates: 0,
-              revenue: null,
-            },
-            stateWise: [],
-            eventWise: [],
-            categories: [],
-            demographics: {
-              gender: { male: 0, female: 0, other: 0, unspecified: 0 },
-              topColleges: [],
-            },
-            timeline: [],
-            accommodations: null,
+            success: false,
+            error: "Access denied: You do not have permission to view analytics for this category.",
           },
-          { headers: { "Cache-Control": "no-store" } }
+          { status: 403 }
         );
       }
-      peQuery = peQuery.in("event_id", allowedEventIds);
+    } else if (queryCategory && queryCategory !== "all") {
+      if (!availableCategories.includes(queryCategory)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Access denied: You do not have permission to view analytics for this category.",
+          },
+          { status: 403 }
+        );
+      }
+      selectedCategory = queryCategory;
+    } else {
+      selectedCategory = "all";
+    }
+
+    // 4. Determine Scoped Events (all events permitted under admin permissions)
+    const scopedEvents = allEvents.filter((ev) => {
+      if (isMaster) return true;
+      if (assignedEvents.includes(ev.id)) return true;
+      if (parsedAssigned.length > 0) {
+        return (
+          ev.category &&
+          parsedAssigned.includes(ev.category.toLowerCase().trim())
+        );
+      }
+      return true;
+    });
+
+    const scopedEventIds = scopedEvents.map((ev) => ev.id);
+
+    // If scoped admin has no matching events, return early empty state
+    if (scopedEventIds.length === 0) {
+      return NextResponse.json(
+        {
+          success: true,
+          isMaster,
+          role: auth.role,
+          assignedCategory: auth.assigned_category,
+          assignedEvents: auth.assigned_events,
+          availableCategories,
+          selectedCategory,
+          categoryScopeLabel: formatCategoryScopeLabel(auth.assigned_category),
+          accommodationAccess: auth.accommodation_access,
+          overview: {
+            totalParticipants: 0,
+            totalRegistrations: 0,
+            totalTeams: 0,
+            totalCheckedIn: 0,
+            checkInRate: 0,
+            totalColleges: 0,
+            totalStates: 0,
+            revenue: null,
+          },
+          stateWise: [],
+          eventWise: [],
+          categories: [],
+          demographics: {
+            gender: { male: 0, female: 0, other: 0, unspecified: 0 },
+            topColleges: [],
+          },
+          timeline: [],
+          accommodations: null,
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    // 5. Filter Events according to selectedCategory
+    const filteredEvents =
+      selectedCategory === "all"
+        ? scopedEvents
+        : scopedEvents.filter(
+            (ev) => ev.category?.toLowerCase().trim() === selectedCategory
+          );
+    const filteredEventIdSet = new Set(filteredEvents.map((ev) => ev.id));
+
+    // 6. Fetch Participant Events (non-cancelled) for Scoped Events
+    let peQuery = supabaseAdmin
+      .from("participant_events")
+      .select(
+        "id, participant_id, event_id, registration_status, payment_status, payment_amount, team_name, checked_in, main_checked_in, created_at"
+      )
+      .neq("registration_status", "cancelled");
+
+    if (!isMaster || scopedEventIds.length < allEvents.length) {
+      peQuery = peQuery.in("event_id", scopedEventIds);
     }
 
     const { data: rawPEs, error: peError } = await peQuery;
     if (peError) throw peError;
 
-    const participantEvents = rawPEs || [];
+    const allScopedPEs = rawPEs || [];
+
+    // Filter participant_events to those in filteredEvents (for the selected category)
+    const participantEvents = allScopedPEs.filter((pe) =>
+      filteredEventIdSet.has(pe.event_id)
+    );
+
     const relevantParticipantIds = Array.from(
       new Set(participantEvents.map((pe) => pe.participant_id))
     );
 
-    // 3. Fetch Participants
-    let partQuery = supabaseAdmin
-      .from("participants")
-      .select("id, participant_id, name, college, gender, state, created_at");
+    // 7. Fetch Participants for the relevantParticipantIds
+    let participants: any[] = [];
+    if (relevantParticipantIds.length > 0) {
+      const { data: rawParts, error: partError } = await supabaseAdmin
+        .from("participants")
+        .select("id, participant_id, name, college, gender, state, created_at");
 
-    if (isScoped && relevantParticipantIds.length > 0) {
-      // Chunking if many
-      partQuery = partQuery.in("id", relevantParticipantIds.slice(0, 5000));
+      if (partError) throw partError;
+      const relevantSet = new Set(relevantParticipantIds);
+      participants = (rawParts || []).filter((p) => relevantSet.has(p.id));
     }
-
-    const { data: rawParts, error: partError } = await partQuery;
-    if (partError) throw partError;
-
-    const participants = (rawParts || []).filter((p) =>
-      isScoped ? relevantParticipantIds.includes(p.id) : true
-    );
     const participantMap = new Map(participants.map((p) => [p.id, p]));
 
-    // 4. Fetch Accommodations (only if master or has accommodation_access)
+    // 8. Fetch Accommodations (only if master or has accommodation_access)
     let rawAccs: any[] = [];
     if (isMaster || auth.accommodation_access) {
       const { data: accsData } = await supabaseAdmin
@@ -138,7 +216,7 @@ export async function GET() {
     }
 
     // ==========================================
-    // AGGREGATIONS
+    // AGGREGATIONS FOR SELECTED CATEGORY / SCOPE
     // ==========================================
 
     // A. Overview Calculations
@@ -170,8 +248,10 @@ export async function GET() {
       if (isCheckedIn) totalCheckedIn++;
 
       const amt = Number(pe.payment_amount) || 0;
-      const isPaid = pe.payment_status === "confirmed" || pe.payment_status === "paid";
-      const isUnpaid = pe.payment_status === "pending" || pe.payment_status === "unpaid";
+      const isPaid =
+        pe.payment_status === "confirmed" || pe.payment_status === "paid";
+      const isUnpaid =
+        pe.payment_status === "pending" || pe.payment_status === "unpaid";
 
       eventExpectedRevenue += amt;
       if (isPaid) {
@@ -217,11 +297,16 @@ export async function GET() {
 
     // STRICT REVENUE PROTECTION:
     // If auth.role is NOT "master", revenue must be strictly null!
+    const isCategoryFiltered = selectedCategory !== "all";
     const revenue = isMaster
       ? {
-          totalExpected: eventExpectedRevenue + accExpectedRevenue,
-          totalPaid: eventPaidRevenue + accPaidRevenue,
-          totalOutstanding: eventOutstandingRevenue + accOutstandingRevenue,
+          totalExpected:
+            eventExpectedRevenue + (isCategoryFiltered ? 0 : accExpectedRevenue),
+          totalPaid:
+            eventPaidRevenue + (isCategoryFiltered ? 0 : accPaidRevenue),
+          totalOutstanding:
+            eventOutstandingRevenue +
+            (isCategoryFiltered ? 0 : accOutstandingRevenue),
           events: {
             expected: eventExpectedRevenue,
             paid: eventPaidRevenue,
@@ -276,7 +361,7 @@ export async function GET() {
       stateCountsMap.set(stateName, stObj);
     }
 
-    // Also count registrations per state
+    // Count registrations per state for selected category
     for (const pe of participantEvents) {
       const p = participantMap.get(pe.participant_id);
       if (p) {
@@ -345,35 +430,50 @@ export async function GET() {
       })
       .sort((a, b) => b.count - a.count);
 
-    // Category Breakdown
-    const categoryMap = new Map<
+    // D. Category Breakdown (computed across permitted categories in scopedEvents)
+    const categoryStatsMap = new Map<
       string,
       { count: number; eventCount: number; checkedIn: number }
     >();
 
-    for (const ev of eventWise) {
-      const cat = ev.category.toLowerCase();
-      const cur = categoryMap.get(cat) || { count: 0, eventCount: 0, checkedIn: 0 };
-      cur.count += ev.count;
-      cur.eventCount++;
-      cur.checkedIn += ev.checkedIn;
-      categoryMap.set(cat, cur);
+    for (const cat of availableCategories) {
+      categoryStatsMap.set(cat, { count: 0, eventCount: 0, checkedIn: 0 });
     }
 
-    const categories = Array.from(categoryMap.entries())
+    for (const ev of scopedEvents) {
+      const cat = (ev.category || "").toLowerCase().trim();
+      if (categoryStatsMap.has(cat)) {
+        categoryStatsMap.get(cat)!.eventCount++;
+      }
+    }
+
+    const eventMap = new Map(allEvents.map((e) => [e.id, e]));
+    for (const pe of allScopedPEs) {
+      const ev = eventMap.get(pe.event_id);
+      const cat = (ev?.category || "").toLowerCase().trim();
+      if (categoryStatsMap.has(cat)) {
+        const cur = categoryStatsMap.get(cat)!;
+        cur.count++;
+        if (pe.checked_in || pe.main_checked_in) {
+          cur.checkedIn++;
+        }
+      }
+    }
+
+    const categories = Array.from(categoryStatsMap.entries())
       .map(([category, data]) => ({
         category,
         count: data.count,
         eventCount: data.eventCount,
         checkedIn: data.checkedIn,
         percentage:
-          totalRegistrations > 0
-            ? Math.round((data.count / totalRegistrations) * 1000) / 10
+          allScopedPEs.length > 0
+            ? Math.round((data.count / allScopedPEs.length) * 1000) / 10
             : 0,
       }))
       .sort((a, b) => b.count - a.count);
 
-    // D. Demographics (Gender & Colleges)
+    // E. Demographics (Gender & Colleges for selected category)
     const genderCounts = { male: 0, female: 0, other: 0, unspecified: 0 };
     const collegesMap = new Map<string, { count: number; state: string | null }>();
 
@@ -401,7 +501,7 @@ export async function GET() {
       .sort((a, b) => b.count - a.count)
       .slice(0, 15);
 
-    // E. Accommodation Analytics (if authorized)
+    // F. Accommodation Analytics (if authorized)
     let accommodations = null;
     if (isMaster || auth.accommodation_access) {
       let paidBookings = 0;
@@ -441,7 +541,7 @@ export async function GET() {
       };
     }
 
-    // F. Registration Timeline (Daily Counts over last 14 days)
+    // G. Registration Timeline (Daily Counts over last 14 days)
     const timelineMap = new Map<string, number>();
     for (const pe of participantEvents) {
       if (pe.created_at) {
@@ -462,6 +562,9 @@ export async function GET() {
         role: auth.role,
         assignedCategory: auth.assigned_category,
         assignedEvents: auth.assigned_events,
+        availableCategories,
+        selectedCategory,
+        categoryScopeLabel: formatCategoryScopeLabel(auth.assigned_category),
         accommodationAccess: auth.accommodation_access,
         overview: {
           totalParticipants,

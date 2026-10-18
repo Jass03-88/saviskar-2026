@@ -30,6 +30,7 @@ import {
   Bed,
   Shield,
   SlidersHorizontal,
+  Lock,
 } from "lucide-react";
 
 /* =========================================================
@@ -125,6 +126,9 @@ type AnalyticsPayload = {
   role: AdminRole;
   assignedCategory: string | null;
   assignedEvents: string[] | null;
+  availableCategories: string[];
+  selectedCategory: string;
+  categoryScopeLabel: string;
   accommodationAccess: boolean;
   overview: OverviewStats;
   stateWise: StateMetric[];
@@ -152,6 +156,7 @@ export default function AdminAnalyticsPage() {
   const [error, setError] = useState("");
   const [data, setData] = useState<AnalyticsPayload | null>(null);
 
+  const [selectedCategory, setSelectedCategory] = useState("all");
   const [activeTab, setActiveTab] = useState<TabType>("states");
   const [stateSearch, setStateSearch] = useState("");
   const [eventSearch, setEventSearch] = useState("");
@@ -162,13 +167,18 @@ export default function AdminAnalyticsPage() {
   /* =======================================================
      FETCH DATA
   ======================================================= */
-  const loadAnalytics = useCallback(async (isRefresh = false) => {
+  const loadAnalytics = useCallback(async (isRefresh = false, categoryOverride?: string) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError("");
 
     try {
-      const res = await fetch("/api/admin/analytics", { cache: "no-store" });
+      const catParam = categoryOverride !== undefined ? categoryOverride : selectedCategory;
+      const url = catParam && catParam !== "all"
+        ? `/api/admin/analytics?category=${encodeURIComponent(catParam)}`
+        : "/api/admin/analytics";
+
+      const res = await fetch(url, { cache: "no-store" });
       if (res.status === 401 || res.status === 403) {
         router.replace("/admin/login");
         return;
@@ -178,6 +188,9 @@ export default function AdminAnalyticsPage() {
         throw new Error((json as any).error || "Failed to load analytics");
       }
       setData(json);
+      if (json.selectedCategory) {
+        setSelectedCategory(json.selectedCategory);
+      }
     } catch (err: any) {
       console.error("Failed to load analytics:", err);
       setError(err.message || "Failed to load analytics");
@@ -185,18 +198,44 @@ export default function AdminAnalyticsPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [router]);
+  }, [router, selectedCategory]);
 
   useEffect(() => {
     loadAnalytics();
   }, [loadAnalytics]);
 
   /* =======================================================
-     DERIVED DATA & FILTERS
+     DERIVED DATA & PERMISSIONS
   ======================================================= */
   const role = data?.role ?? "admin";
   const isMaster = data?.isMaster ?? (role === "master");
   const overview = data?.overview;
+  const availableCategories = data?.availableCategories ?? [];
+  const isCategoryScoped =
+    !isMaster &&
+    (!!data?.assignedCategory || (data?.assignedEvents && data.assignedEvents.length > 0));
+
+  const roleBadgeLabel = useMemo(() => {
+    if (isMaster) return "Master Administrator";
+    if (availableCategories.length === 1) {
+      return `${availableCategories[0].replace("-", " ").toUpperCase()} Category Admin`;
+    }
+    if (availableCategories.length > 1 && isCategoryScoped) {
+      return `${availableCategories
+        .map((c) => c.replace("-", " ").toUpperCase())
+        .join(" & ")} Category Admin`;
+    }
+    if (data?.assignedEvents && data.assignedEvents.length > 0) {
+      return "Event-Scoped Admin";
+    }
+    return "Standard Admin";
+  }, [isMaster, availableCategories, isCategoryScoped, data?.assignedEvents]);
+
+  const handleCategorySwitch = (newCat: string) => {
+    if (newCat === selectedCategory) return;
+    setSelectedCategory(newCat);
+    loadAnalytics(true, newCat);
+  };
 
   // Filtered State List
   const filteredStates = useMemo(() => {
@@ -217,7 +256,7 @@ export default function AdminAnalyticsPage() {
 
     if (eventCategoryFilter !== "all") {
       list = list.filter(
-        (e) => e.category.toLowerCase() === eventCategoryFilter.toLowerCase()
+        (e) => e.category.toLowerCase().trim() === eventCategoryFilter.toLowerCase().trim()
       );
     }
 
@@ -250,20 +289,33 @@ export default function AdminAnalyticsPage() {
       `"${s.topColleges.join("; ").replace(/"/g, '""')}"`,
     ]);
 
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const csvContent =
+      "data:text/csv;charset=utf-8," +
+      [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `saviskar_2026_state_analytics_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute(
+      "download",
+      `saviskar_2026_state_analytics_${selectedCategory}_${new Date().toISOString().slice(0, 10)}.csv`
+    );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setShowExportMenu(false);
-  }, [data?.stateWise]);
+  }, [data?.stateWise, selectedCategory]);
 
   const exportEventsCsv = useCallback(() => {
     if (!data?.eventWise) return;
-    const baseHeaders = ["Event Name", "Category", "Type", "Registrations", "Capacity Limit", "Fill Rate (%)", "Checked-In"];
+    const baseHeaders = [
+      "Event Name",
+      "Category",
+      "Type",
+      "Registrations",
+      "Capacity Limit",
+      "Fill Rate (%)",
+      "Checked-In",
+    ];
     if (isMaster) baseHeaders.push("Revenue (INR)");
 
     const rows = data.eventWise.map((e) => {
@@ -282,16 +334,21 @@ export default function AdminAnalyticsPage() {
       return r;
     });
 
-    const csvContent = "data:text/csv;charset=utf-8," + [baseHeaders.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const csvContent =
+      "data:text/csv;charset=utf-8," +
+      [baseHeaders.join(","), ...rows.map((r) => r.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `saviskar_2026_event_analytics_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute(
+      "download",
+      `saviskar_2026_event_analytics_${selectedCategory}_${new Date().toISOString().slice(0, 10)}.csv`
+    );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setShowExportMenu(false);
-  }, [data?.eventWise, isMaster]);
+  }, [data?.eventWise, isMaster, selectedCategory]);
 
   /* =======================================================
      LOADING STATE
@@ -303,8 +360,12 @@ export default function AdminAnalyticsPage() {
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-black text-white shadow-xl animate-pulse">
             <BarChart3 size={26} className="animate-spin text-violet-400" />
           </div>
-          <h2 className="text-xl font-bold tracking-tight text-black">Loading Championship Analytics...</h2>
-          <p className="text-xs text-black/45 max-w-sm">Aggregating real-time state distributions, event participation, and attendance metrics.</p>
+          <h2 className="text-xl font-bold tracking-tight text-black">
+            Loading Scoped Analytics...
+          </h2>
+          <p className="text-xs text-black/45 max-w-sm">
+            Aggregating authorized real-time state distributions, category performance, and delegate metrics.
+          </p>
         </div>
       </main>
     );
@@ -317,7 +378,7 @@ export default function AdminAnalyticsPage() {
         {/* =======================================================
             HEADER
         ======================================================= */}
-        <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+        <div className="mb-8 flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="flex items-center gap-3 mb-2">
               <button
@@ -338,22 +399,29 @@ export default function AdminAnalyticsPage() {
             </h1>
 
             <p className="mt-3 text-sm text-black/55 max-w-2xl">
-              Live geographic footprint, competition capacity, and festival demographics across all active events.
+              Live geographic footprint, competition capacity, and festival demographics categorized according to administrative permissions.
             </p>
           </div>
 
           <div className="flex flex-col items-end gap-3">
-            {/* Identity Badge */}
+            {/* Identity & Scope Badge */}
             <div className="flex flex-col items-end bg-white p-4 rounded-[20px] border border-black/10 shadow-sm w-full sm:w-auto">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-black/40">
-                Access Level
+                Access Level & Scope
               </div>
               <div className="text-sm font-bold text-black mt-0.5 flex items-center gap-1.5">
-                <Shield size={14} className={isMaster ? "text-violet-600" : "text-emerald-600"} />
-                <span>{isMaster ? "Master Administrator" : "Standard Admin"}</span>
+                <Shield
+                  size={14}
+                  className={isMaster ? "text-violet-600" : "text-emerald-600"}
+                />
+                <span>{roleBadgeLabel}</span>
               </div>
               <div className="text-[10px] font-medium text-black/50 mt-1">
-                {isMaster ? "Full Metrics & Revenue Clearance" : "Operational & Demographic Access"}
+                {isMaster
+                  ? "Full Metrics & Revenue Clearance"
+                  : isCategoryScoped
+                  ? `Restricted to: ${data?.categoryScopeLabel || "Assigned Categories"}`
+                  : "Operational & Demographic Access"}
               </div>
             </div>
 
@@ -365,7 +433,10 @@ export default function AdminAnalyticsPage() {
                 disabled={refreshing}
                 className="flex items-center gap-1.5 rounded-full border border-black/10 bg-white px-4 py-2.5 text-xs font-semibold text-black/70 hover:bg-black/[0.03] transition disabled:opacity-50 shadow-sm"
               >
-                <RefreshCw size={13} className={refreshing ? "animate-spin text-violet-600" : ""} />
+                <RefreshCw
+                  size={13}
+                  className={refreshing ? "animate-spin text-violet-600" : ""}
+                />
                 <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
               </button>
 
@@ -450,6 +521,93 @@ export default function AdminAnalyticsPage() {
         )}
 
         {/* =======================================================
+            CATEGORY SCOPE & FILTER BAR (ADMIN PERMISSIONS)
+        ======================================================= */}
+        <section className="mb-8 rounded-[24px] bg-white border border-black/10 p-4 sm:p-5 shadow-sm">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-black/[0.04] text-black">
+                <SlidersHorizontal size={18} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-bold text-black">
+                    Competition Category Filter
+                  </h2>
+                  {isCategoryScoped && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase bg-amber-50 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200 font-semibold">
+                      <Lock size={10} />
+                      <span>Role Scoped</span>
+                    </span>
+                  )}
+                  {selectedCategory !== "all" && (
+                    <span className="text-[10px] font-mono uppercase bg-violet-50 text-violet-700 px-2 py-0.5 rounded-full border border-violet-100 font-semibold">
+                      Active: {selectedCategory.replace("-", " ")}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-black/50 mt-0.5">
+                  {availableCategories.length === 1
+                    ? `Showing metrics exclusively for your assigned ${availableCategories[0].replace("-", " ")} category.`
+                    : "Filter real-time delegates, state distribution, and competition metrics by category."}
+                </p>
+              </div>
+            </div>
+
+            {/* Category Selector Buttons */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {availableCategories.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => handleCategorySwitch("all")}
+                  disabled={refreshing}
+                  className={`rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition border ${
+                    selectedCategory === "all"
+                      ? "border-black bg-black text-white shadow-sm"
+                      : "border-black/10 bg-black/[0.02] text-black/60 hover:bg-black/5"
+                  }`}
+                >
+                  All Assigned ({data?.overview.totalRegistrations ?? 0})
+                </button>
+              )}
+
+              {availableCategories.map((cat) => {
+                const catStat = data?.categories.find(
+                  (c) => c.category.toLowerCase().trim() === cat.toLowerCase().trim()
+                );
+                const count = catStat?.count ?? 0;
+                const isSelected = selectedCategory === cat;
+
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => handleCategorySwitch(cat)}
+                    disabled={refreshing || availableCategories.length === 1}
+                    className={`rounded-full px-4 py-2 text-xs font-bold uppercase tracking-wider transition border flex items-center gap-2 ${
+                      isSelected
+                        ? "border-black bg-black text-white shadow-sm"
+                        : "border-black/10 bg-black/[0.02] text-black/60 hover:bg-black/5"
+                    }`}
+                  >
+                    <span>{cat.replace("-", " ")}</span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${
+                        isSelected
+                          ? "bg-white/20 text-white"
+                          : "bg-black/5 text-black/60"
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {/* =======================================================
             EXECUTIVE OVERVIEW CARDS
         ======================================================= */}
         <section className="mb-10">
@@ -458,7 +616,9 @@ export default function AdminAnalyticsPage() {
             {/* 1. Total Delegates */}
             <div className="rounded-[24px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md">
               <div className="flex items-center justify-between text-black/40">
-                <span className="text-[10px] font-bold uppercase tracking-wider">Total Delegates</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider">
+                  {selectedCategory === "all" ? "Total Delegates" : `${selectedCategory.replace("-", " ")} Delegates`}
+                </span>
                 <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-50 text-violet-700">
                   <Users size={16} />
                 </div>
@@ -474,7 +634,9 @@ export default function AdminAnalyticsPage() {
             {/* 2. Total Registrations */}
             <div className="rounded-[24px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md">
               <div className="flex items-center justify-between text-black/40">
-                <span className="text-[10px] font-bold uppercase tracking-wider">Event Registrations</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider">
+                  {selectedCategory === "all" ? "Event Registrations" : `${selectedCategory.replace("-", " ")} Entries`}
+                </span>
                 <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
                   <CalendarDays size={16} />
                 </div>
@@ -539,10 +701,11 @@ export default function AdminAnalyticsPage() {
                   <div className="h-2 w-2 rounded-full bg-emerald-500" />
                   <h3 className="text-xs font-bold uppercase tracking-wider text-black/60">
                     Championship Financial Analytics (Master Clearance)
+                    {selectedCategory !== "all" && ` — ${selectedCategory.toUpperCase()}`}
                   </h3>
                 </div>
                 <span className="text-[10px] font-mono text-black/40 uppercase">
-                  Events & Accommodations Combined
+                  {selectedCategory === "all" ? "Events & Accommodations Combined" : `${selectedCategory.toUpperCase()} Events Only`}
                 </span>
               </div>
 
@@ -551,7 +714,8 @@ export default function AdminAnalyticsPage() {
                   <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Expected Revenue</p>
                   <p className="text-2xl font-bold text-black mt-1">₹{overview.revenue.totalExpected.toLocaleString()}</p>
                   <p className="text-[11px] text-black/45 mt-1">
-                    Events: ₹{overview.revenue.events.expected.toLocaleString()} · Acco: ₹{overview.revenue.accommodations.expected.toLocaleString()}
+                    Events: ₹{overview.revenue.events.expected.toLocaleString()}
+                    {selectedCategory === "all" && ` · Acco: ₹${overview.revenue.accommodations.expected.toLocaleString()}`}
                   </p>
                 </div>
 
@@ -559,7 +723,8 @@ export default function AdminAnalyticsPage() {
                   <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-800/70">Paid Revenue</p>
                   <p className="text-2xl font-bold text-emerald-700 mt-1">₹{overview.revenue.totalPaid.toLocaleString()}</p>
                   <p className="text-[11px] text-emerald-900/60 mt-1">
-                    Events: ₹{overview.revenue.events.paid.toLocaleString()} · Acco: ₹{overview.revenue.accommodations.paid.toLocaleString()}
+                    Events: ₹{overview.revenue.events.paid.toLocaleString()}
+                    {selectedCategory === "all" && ` · Acco: ₹${overview.revenue.accommodations.paid.toLocaleString()}`}
                   </p>
                 </div>
 
@@ -567,7 +732,8 @@ export default function AdminAnalyticsPage() {
                   <p className="text-[10px] font-bold uppercase tracking-widest text-red-800/70">Outstanding Dues</p>
                   <p className="text-2xl font-bold text-red-700 mt-1">₹{overview.revenue.totalOutstanding.toLocaleString()}</p>
                   <p className="text-[11px] text-red-900/60 mt-1">
-                    Events: ₹{overview.revenue.events.outstanding.toLocaleString()} · Acco: ₹{overview.revenue.accommodations.outstanding.toLocaleString()}
+                    Events: ₹{overview.revenue.events.outstanding.toLocaleString()}
+                    {selectedCategory === "all" && ` · Acco: ₹${overview.revenue.accommodations.outstanding.toLocaleString()}`}
                   </p>
                 </div>
               </div>
@@ -590,9 +756,13 @@ export default function AdminAnalyticsPage() {
           >
             <MapPin size={14} />
             <span>State-Wise Distribution</span>
-            <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-              activeTab === "states" ? "bg-white/20 text-white" : "bg-black/5 text-black/60"
-            }`}>
+            <span
+              className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeTab === "states"
+                  ? "bg-white/20 text-white"
+                  : "bg-black/5 text-black/60"
+              }`}
+            >
               {data?.stateWise.length ?? 0}
             </span>
           </button>
@@ -608,9 +778,13 @@ export default function AdminAnalyticsPage() {
           >
             <CalendarDays size={14} />
             <span>Event-Wise Performance</span>
-            <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-              activeTab === "events" ? "bg-white/20 text-white" : "bg-black/5 text-black/60"
-            }`}>
+            <span
+              className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                activeTab === "events"
+                  ? "bg-white/20 text-white"
+                  : "bg-black/5 text-black/60"
+              }`}
+            >
               {data?.eventWise.length ?? 0}
             </span>
           </button>
@@ -640,9 +814,13 @@ export default function AdminAnalyticsPage() {
             >
               <Bed size={14} />
               <span>Accommodation Insights</span>
-              <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-                activeTab === "accommodations" ? "bg-white/20 text-white" : "bg-black/5 text-black/60"
-              }`}>
+              <span
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  activeTab === "accommodations"
+                    ? "bg-white/20 text-white"
+                    : "bg-black/5 text-black/60"
+                }`}
+              >
                 {data.accommodations.totalBookings}
               </span>
             </button>
@@ -657,7 +835,10 @@ export default function AdminAnalyticsPage() {
             {/* Top 4 Quick Highlight Cards */}
             <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
               {data?.stateWise.slice(0, 4).map((s, idx) => (
-                <div key={s.state} className="rounded-[22px] bg-white border border-black/10 p-5 shadow-sm">
+                <div
+                  key={s.state}
+                  className="rounded-[22px] bg-white border border-black/10 p-5 shadow-sm"
+                >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-black/40">
                       Rank #{idx + 1}
@@ -687,14 +868,24 @@ export default function AdminAnalyticsPage() {
             <div className="rounded-[28px] bg-white border border-black/10 p-6 shadow-sm">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div>
-                  <h3 className="text-lg font-bold text-black">State-Wise Participation Ledger</h3>
+                  <h3 className="text-lg font-bold text-black">
+                    State-Wise Participation Ledger
+                    {selectedCategory !== "all" && (
+                      <span className="text-xs font-normal text-violet-600 ml-2 font-mono uppercase">
+                        [{selectedCategory.replace("-", " ")}]
+                      </span>
+                    )}
+                  </h3>
                   <p className="text-xs text-black/50 mt-0.5">
                     Total representation from {data?.stateWise.length} States & Union Territories.
                   </p>
                 </div>
 
                 <div className="relative w-full sm:w-72">
-                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-black/40" />
+                  <Search
+                    size={14}
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 text-black/40"
+                  />
                   <input
                     type="text"
                     value={stateSearch}
@@ -758,7 +949,10 @@ export default function AdminAnalyticsPage() {
                           {s.topColleges.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
                               {s.topColleges.map((c, i) => (
-                                <span key={i} className="inline-block px-2 py-0.5 rounded-md bg-black/[0.03] text-[10px] border border-black/5 truncate max-w-xs">
+                                <span
+                                  key={i}
+                                  className="inline-block px-2 py-0.5 rounded-md bg-black/[0.03] text-[10px] border border-black/5 truncate max-w-xs"
+                                >
                                   {c}
                                 </span>
                               ))}
@@ -790,59 +984,89 @@ export default function AdminAnalyticsPage() {
           <section className="space-y-6 animate-in fade-in duration-200">
             {/* Category Summary Cards */}
             <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-              {data?.categories.map((c) => (
-                <div key={c.category} className="rounded-[22px] bg-white border border-black/10 p-5 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-black/40">
-                      {c.eventCount} Competitions
-                    </span>
-                    <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
-                      {c.percentage}% of all entries
-                    </span>
-                  </div>
-                  <h4 className="mt-2 text-xl font-bold capitalize text-black">{c.category}</h4>
-                  <div className="mt-3 flex items-baseline gap-2">
-                    <span className="text-3xl font-bold text-black">{c.count}</span>
-                    <span className="text-xs text-black/50">total registrations</span>
-                  </div>
-                  <div className="mt-3 w-full bg-black/5 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="bg-blue-600 h-full rounded-full"
-                      style={{ width: `${Math.min(100, c.percentage)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+              {data?.categories.map((c) => {
+                const isSelected = selectedCategory === c.category.toLowerCase().trim();
+                return (
+                  <button
+                    type="button"
+                    key={c.category}
+                    onClick={() => handleCategorySwitch(c.category.toLowerCase().trim())}
+                    className={`text-left rounded-[22px] bg-white border p-5 shadow-sm transition hover:scale-[1.01] ${
+                      isSelected
+                        ? "border-black ring-2 ring-black/10 shadow-md"
+                        : "border-black/10 hover:border-black/20"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-black/40">
+                        {c.eventCount} Competitions
+                      </span>
+                      <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
+                        {c.percentage}% of all entries
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between mt-2">
+                      <h4 className="text-xl font-bold capitalize text-black">
+                        {c.category.replace("-", " ")}
+                      </h4>
+                      {isSelected && (
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black text-white">
+                          <Check size={12} />
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-3 flex items-baseline gap-2">
+                      <span className="text-3xl font-bold text-black">{c.count}</span>
+                      <span className="text-xs text-black/50">total registrations</span>
+                    </div>
+                    <div className="mt-3 w-full bg-black/5 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="bg-blue-600 h-full rounded-full"
+                        style={{ width: `${Math.min(100, c.percentage)}%` }}
+                      />
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
             {/* Event Filter & Table */}
             <div className="rounded-[28px] bg-white border border-black/10 p-6 shadow-sm">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
                 <div>
-                  <h3 className="text-lg font-bold text-black">Event Registrations & Capacity Fill</h3>
+                  <h3 className="text-lg font-bold text-black">
+                    Event Registrations & Capacity Fill
+                    {selectedCategory !== "all" && (
+                      <span className="text-xs font-normal text-violet-600 ml-2 font-mono uppercase">
+                        [{selectedCategory.replace("-", " ")}]
+                      </span>
+                    )}
+                  </h3>
                   <p className="text-xs text-black/50 mt-0.5">
                     Detailed participation metrics, squad allocations, and capacity tracking.
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
-                  {/* Category Filter Pills */}
-                  <div className="flex items-center rounded-full border border-black/10 bg-black/[0.02] p-1 text-xs">
-                    {["all", "technical", "non-technical", "cultural"].map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setEventCategoryFilter(cat)}
-                        className={`rounded-full px-3 py-1 font-medium capitalize transition ${
-                          eventCategoryFilter === cat
-                            ? "bg-black text-white shadow-sm"
-                            : "text-black/60 hover:text-black"
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
+                  {/* Category Filter Pills (strictly matching availableCategories) */}
+                  {availableCategories.length > 1 && (
+                    <div className="flex items-center rounded-full border border-black/10 bg-black/[0.02] p-1 text-xs">
+                      {["all", ...availableCategories].map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => setEventCategoryFilter(cat)}
+                          className={`rounded-full px-3 py-1 font-medium capitalize transition ${
+                            eventCategoryFilter === cat
+                              ? "bg-black text-white shadow-sm"
+                              : "text-black/60 hover:text-black"
+                          }`}
+                        >
+                          {cat.replace("-", " ")}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Sort Filter */}
                   <select
@@ -858,7 +1082,10 @@ export default function AdminAnalyticsPage() {
 
                   {/* Search */}
                   <div className="relative w-full sm:w-60">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/40" />
+                    <Search
+                      size={14}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-black/40"
+                    />
                     <input
                       type="text"
                       value={eventSearch}
@@ -888,17 +1115,23 @@ export default function AdminAnalyticsPage() {
                       <tr key={ev.id} className="hover:bg-black/[0.015] transition">
                         <td className="py-3.5 px-3">
                           <p className="font-bold text-black">{ev.name}</p>
-                          <p className="font-mono text-[10px] text-black/40 mt-0.5">Fee: ₹{ev.registrationFee}</p>
+                          <p className="font-mono text-[10px] text-black/40 mt-0.5">
+                            Fee: ₹{ev.registrationFee}
+                          </p>
                         </td>
                         <td className="py-3.5 px-3">
                           <span className="capitalize inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-black/5 border border-black/5 text-black/70">
-                            {ev.category}
+                            {ev.category.replace("-", " ")}
                           </span>
                         </td>
                         <td className="py-3.5 px-3">
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
-                            ev.registrationType === "team" ? "bg-purple-50 text-purple-700" : "bg-emerald-50 text-emerald-700"
-                          }`}>
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
+                              ev.registrationType === "team"
+                                ? "bg-purple-50 text-purple-700"
+                                : "bg-emerald-50 text-emerald-700"
+                            }`}
+                          >
                             {ev.registrationType}
                           </span>
                         </td>
@@ -910,7 +1143,13 @@ export default function AdminAnalyticsPage() {
                             <div className="space-y-1">
                               <div className="flex justify-between text-[10px] font-mono text-black/50">
                                 <span>{ev.count} / {ev.registrationLimit}</span>
-                                <span className={ev.fillRate && ev.fillRate >= 90 ? "text-red-600 font-bold" : ""}>
+                                <span
+                                  className={
+                                    ev.fillRate && ev.fillRate >= 90
+                                      ? "text-red-600 font-bold"
+                                      : ""
+                                  }
+                                >
                                   {ev.fillRate}%
                                 </span>
                               </div>
@@ -923,12 +1162,16 @@ export default function AdminAnalyticsPage() {
                                       ? "bg-amber-500"
                                       : "bg-blue-600"
                                   }`}
-                                  style={{ width: `${Math.min(100, ev.fillRate ?? 0)}%` }}
+                                  style={{
+                                    width: `${Math.min(100, ev.fillRate ?? 0)}%`,
+                                  }}
                                 />
                               </div>
                             </div>
                           ) : (
-                            <span className="text-[10px] font-mono text-black/40">Unlimited</span>
+                            <span className="text-[10px] font-mono text-black/40">
+                              Unlimited
+                            </span>
                           )}
                         </td>
                         <td className="py-3.5 px-3 text-right font-mono font-semibold text-emerald-700">
@@ -943,7 +1186,10 @@ export default function AdminAnalyticsPage() {
                     ))}
                     {filteredEvents.length === 0 && (
                       <tr>
-                        <td colSpan={isMaster ? 7 : 6} className="py-8 text-center text-black/40 italic">
+                        <td
+                          colSpan={isMaster ? 7 : 6}
+                          className="py-8 text-center text-black/40 italic"
+                        >
                           No events match your criteria.
                         </td>
                       </tr>
@@ -965,7 +1211,14 @@ export default function AdminAnalyticsPage() {
               <div className="rounded-[28px] bg-white border border-black/10 p-6 shadow-sm">
                 <div className="flex items-center gap-2 mb-4">
                   <Users size={16} className="text-violet-600" />
-                  <h3 className="text-base font-bold text-black">Gender Representation</h3>
+                  <h3 className="text-base font-bold text-black">
+                    Gender Representation
+                    {selectedCategory !== "all" && (
+                      <span className="text-xs font-normal text-violet-600 ml-2 font-mono uppercase">
+                        [{selectedCategory.replace("-", " ")}]
+                      </span>
+                    )}
+                  </h3>
                 </div>
 
                 {data?.demographics.gender && (
@@ -976,17 +1229,23 @@ export default function AdminAnalyticsPage() {
                         <>
                           <div
                             className="bg-blue-600 h-full"
-                            style={{ width: `${(data.demographics.gender.male / overview.totalParticipants) * 100}%` }}
+                            style={{
+                              width: `${(data.demographics.gender.male / overview.totalParticipants) * 100}%`,
+                            }}
                             title={`Male: ${data.demographics.gender.male}`}
                           />
                           <div
                             className="bg-pink-500 h-full"
-                            style={{ width: `${(data.demographics.gender.female / overview.totalParticipants) * 100}%` }}
+                            style={{
+                              width: `${(data.demographics.gender.female / overview.totalParticipants) * 100}%`,
+                            }}
                             title={`Female: ${data.demographics.gender.female}`}
                           />
                           <div
                             className="bg-purple-400 h-full"
-                            style={{ width: `${(data.demographics.gender.other / overview.totalParticipants) * 100}%` }}
+                            style={{
+                              width: `${(data.demographics.gender.other / overview.totalParticipants) * 100}%`,
+                            }}
                             title={`Other: ${data.demographics.gender.other}`}
                           />
                         </>
@@ -1035,7 +1294,14 @@ export default function AdminAnalyticsPage() {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <GraduationCap size={16} className="text-violet-600" />
-                    <h3 className="text-base font-bold text-black">Top Participating Institutions</h3>
+                    <h3 className="text-base font-bold text-black">
+                      Top Participating Institutions
+                      {selectedCategory !== "all" && (
+                        <span className="text-xs font-normal text-violet-600 ml-2 font-mono uppercase">
+                          [{selectedCategory.replace("-", " ")}]
+                        </span>
+                      )}
+                    </h3>
                   </div>
                   <span className="text-xs font-mono text-black/40">
                     {data?.demographics.topColleges.length} Institutions Listed
@@ -1055,12 +1321,25 @@ export default function AdminAnalyticsPage() {
                     <tbody className="divide-y divide-black/5">
                       {data?.demographics.topColleges.map((col, idx) => (
                         <tr key={idx} className="hover:bg-black/[0.015] transition">
-                          <td className="py-2.5 px-3 font-mono font-bold text-black/40">#{idx + 1}</td>
-                          <td className="py-2.5 px-3 font-semibold text-black max-w-sm truncate">{col.college}</td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-black/40">
+                            #{idx + 1}
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-black max-w-sm truncate">
+                            {col.college}
+                          </td>
                           <td className="py-2.5 px-3 text-black/50">{col.state || "—"}</td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-violet-700">{col.count}</td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-violet-700">
+                            {col.count}
+                          </td>
                         </tr>
                       ))}
+                      {data?.demographics.topColleges.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="py-8 text-center text-black/40 italic">
+                            No institutions found for this category.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>

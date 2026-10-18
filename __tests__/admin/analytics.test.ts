@@ -24,6 +24,15 @@ const mockEventsDb = [
     registration_limit: 100,
     active: true,
   },
+  {
+    id: "evt-3",
+    name: "Business Pitch",
+    category: "non-technical",
+    registration_type: "team",
+    registration_fee: 300,
+    registration_limit: 30,
+    active: true,
+  },
 ];
 
 const mockParticipantsDb = [
@@ -122,15 +131,7 @@ function createMockAdminClient() {
       }
       if (table === "participants") {
         return {
-          select: () => ({
-            in: (_field: string, ids: string[]) =>
-              Promise.resolve({
-                data: mockParticipantsDb.filter((p) => ids.includes(p.id)),
-                error: null,
-              }),
-            then: (resolve: any) =>
-              resolve({ data: mockParticipantsDb, error: null }),
-          }),
+          select: () => Promise.resolve({ data: mockParticipantsDb, error: null }),
         };
       }
       if (table === "participant_accommodations") {
@@ -181,7 +182,8 @@ describe("GET /api/admin/analytics", () => {
       assigned_events: [],
     } as any);
 
-    const res = await GET();
+    const req = new Request("http://localhost/api/admin/analytics");
+    const res = await GET(req);
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body.success).toBe(false);
@@ -198,13 +200,16 @@ describe("GET /api/admin/analytics", () => {
       assigned_events: [],
     } as any);
 
-    const res = await GET();
+    const req = new Request("http://localhost/api/admin/analytics");
+    const res = await GET(req);
     expect(res.status).toBe(200);
     const body = await res.json();
 
     expect(body.success).toBe(true);
     expect(body.isMaster).toBe(true);
     expect(body.role).toBe("master");
+    expect(body.availableCategories).toEqual(["technical", "cultural", "non-technical"]);
+    expect(body.selectedCategory).toBe("all");
 
     // Overview Stats
     expect(body.overview.totalParticipants).toBe(3);
@@ -242,7 +247,8 @@ describe("GET /api/admin/analytics", () => {
       assigned_events: [],
     } as any);
 
-    const res = await GET();
+    const req = new Request("http://localhost/api/admin/analytics");
+    const res = await GET(req);
     expect(res.status).toBe(200);
     const body = await res.json();
 
@@ -264,5 +270,97 @@ describe("GET /api/admin/analytics", () => {
 
     // State-wise breakdown is available
     expect(body.stateWise.length).toBeGreaterThan(0);
+  });
+
+  it("scopes analytics strictly to assigned_category for category-scoped admins", async () => {
+    // Admin assigned strictly to 'technical' events
+    vi.spyOn(serverLib, "requireAdmin").mockResolvedValueOnce({
+      error: null,
+      status: 200,
+      user: { id: "tech-admin-id", email: "techadmin@saviskar.co.in" },
+      role: "admin",
+      accommodation_access: false,
+      assigned_category: "technical",
+      assigned_events: [],
+    } as any);
+
+    const req = new Request("http://localhost/api/admin/analytics");
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.success).toBe(true);
+    expect(body.isMaster).toBe(false);
+    expect(body.availableCategories).toEqual(["technical"]);
+    expect(body.selectedCategory).toBe("technical");
+
+    // Only events in technical category returned
+    expect(body.eventWise.length).toBe(1);
+    expect(body.eventWise[0].name).toBe("Robo Race");
+    expect(body.eventWise[0].category).toBe("technical");
+
+    // Only participants who registered for technical events (Alice & Charlie, not Bob)
+    expect(body.overview.totalParticipants).toBe(2);
+    expect(body.overview.totalRegistrations).toBe(2);
+
+    // Categories list only shows permitted categories
+    expect(body.categories.length).toBe(1);
+    expect(body.categories[0].category).toBe("technical");
+
+    // Revenue strictly null
+    expect(body.overview.revenue).toBeNull();
+  });
+
+  it("rejects unauthorized category requests with 403 Forbidden", async () => {
+    // Admin assigned strictly to 'technical' events trying to access 'cultural'
+    vi.spyOn(serverLib, "requireAdmin").mockResolvedValueOnce({
+      error: null,
+      status: 200,
+      user: { id: "tech-admin-id", email: "techadmin@saviskar.co.in" },
+      role: "admin",
+      accommodation_access: false,
+      assigned_category: "technical",
+      assigned_events: [],
+    } as any);
+
+    const req = new Request("http://localhost/api/admin/analytics?category=cultural");
+    const res = await GET(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+    expect(body.error).toContain("Access denied");
+  });
+
+  it("filters analytics dynamically when master admin queries specific category", async () => {
+    vi.spyOn(serverLib, "requireAdmin").mockResolvedValueOnce({
+      error: null,
+      status: 200,
+      user: { id: "master-id", email: "master@saviskar.co.in" },
+      role: "master",
+      accommodation_access: true,
+      assigned_category: null,
+      assigned_events: [],
+    } as any);
+
+    const req = new Request("http://localhost/api/admin/analytics?category=cultural");
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.success).toBe(true);
+    expect(body.selectedCategory).toBe("cultural");
+    expect(body.availableCategories).toEqual(["technical", "cultural", "non-technical"]);
+
+    // Event list only contains cultural
+    expect(body.eventWise.length).toBe(1);
+    expect(body.eventWise[0].name).toBe("Canvas Art");
+    expect(body.eventWise[0].category).toBe("cultural");
+
+    // Only Bob registered for Canvas Art
+    expect(body.overview.totalParticipants).toBe(1);
+    expect(body.overview.totalRegistrations).toBe(1);
+
+    // Revenue for cultural event: 200
+    expect(body.overview.revenue.events.paid).toBe(200);
   });
 });
