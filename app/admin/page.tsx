@@ -2609,7 +2609,11 @@ export default function AdminPage() {
 
             {/* DESKTOP HEADER */}
 
-            <div className="hidden border-b border-black/10 bg-black/[0.025] px-6 py-4 lg:grid lg:grid-cols-[1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:gap-5">
+            <div className="hidden border-b border-black/10 bg-black/[0.025] px-6 py-4 lg:grid lg:grid-cols-[55px_1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:gap-5">
+              <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
+                Sr. No.
+              </span>
+
               <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
                 Participant
               </span>
@@ -2636,7 +2640,7 @@ export default function AdminPage() {
             <div className="divide-y divide-black/[0.07]">
 
               {participantGroups.map(
-                (group) => {
+                (group, index) => {
                   const participant =
                     group[0].participant;
 
@@ -2663,8 +2667,13 @@ export default function AdminPage() {
                           group
                         )
                       }
-                      className="group grid w-full gap-5 px-6 py-5 text-left transition hover:bg-black/[0.018] lg:grid-cols-[1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:items-center"
+                      className="group grid w-full gap-5 px-6 py-5 text-left transition hover:bg-black/[0.018] lg:grid-cols-[55px_1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:items-center"
                     >
+                      {/* SR NO */}
+                      <div className="flex items-center text-xs font-mono font-medium text-black/40">
+                        <span className="lg:hidden text-[10px] uppercase tracking-wider text-black/30 font-sans mr-2">Sr. No.</span>
+                        {index + 1}
+                      </div>
 
                       {/* PARTICIPANT */}
 

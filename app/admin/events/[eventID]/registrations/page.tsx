@@ -1273,6 +1273,10 @@ export default function EventRegistrationsPage() {
                   <tr className="border-b border-black/10">
 
                     <TableHead>
+                      Sr. No.
+                    </TableHead>
+
+                    <TableHead>
                       Participant
                     </TableHead>
 
@@ -1310,7 +1314,7 @@ export default function EventRegistrationsPage() {
                 <tbody>
 
                   {filteredRegistrations.map(
-                    (item) => (
+                    (item, index) => (
 
                       <tr
                         key={
@@ -1318,6 +1322,10 @@ export default function EventRegistrationsPage() {
                         }
                         className="border-b border-black/[0.06] transition hover:bg-black/[0.02]"
                       >
+
+                        <td className="px-6 py-5 text-xs font-mono font-medium text-black/40">
+                          {index + 1}
+                        </td>
 
                         <td className="px-6 py-5">
 
