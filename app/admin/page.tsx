@@ -57,6 +57,11 @@ export type AccommodationDetail = {
   checked_in_at: string | null;
   checked_out: boolean;
   checked_out_at: string | null;
+  payment_order_id?: string | null;
+  payment_order_reference?: string | null;
+  gateway_payment_id?: string | null;
+  payment_status?: string | null;
+  payment_id?: string | null;
 };
 
 type Participant = {
@@ -110,10 +115,14 @@ type RegistrationMember = {
   phone: string | null;
   is_team_leader: boolean | null;
   participant_id: string | null;
+  gender?: string | null;
+  state?: string | null;
   id_card_storage_path?: string | null;
   participants: {
     participant_id: string;
     college: string | null;
+    gender?: string | null;
+    state?: string | null;
     id_card_storage_path?: string | null;
   } | null;
   accommodation?: AccommodationDetail | null;

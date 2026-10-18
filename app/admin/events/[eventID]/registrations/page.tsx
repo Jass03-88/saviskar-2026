@@ -34,7 +34,11 @@ type Participant = {
   email: string;
   phone: string | null;
   photo_url: string | null;
+  gender?: string | null;
+  state?: string | null;
   created_at: string;
+  accommodation?: any;
+  accommodations?: any[];
 };
 
 type ParticipantEvent = {
@@ -70,10 +74,16 @@ type RegistrationMember = {
   phone: string | null;
   is_team_leader: boolean | null;
   participant_id: string | null;
+  gender?: string | null;
+  state?: string | null;
   participants: {
     participant_id: string;
     college: string | null;
+    gender?: string | null;
+    state?: string | null;
   } | null;
+  accommodation?: any;
+  accommodations?: any[];
 };
 
 type Registration = {
@@ -81,6 +91,8 @@ type Registration = {
   event: EventRecord | null;
   registration: ParticipantEvent;
   members?: RegistrationMember[];
+  accommodation?: any;
+  accommodations?: any[];
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
