@@ -1493,7 +1493,7 @@ export default function RegistrationForm({
           members: isTeamEvent(selectedEvent)
             ? state.members.map((member) => ({
               name: member.name.trim(),
-              college: college || participantLookup?.college || "",
+              college: member.college?.trim() || college.trim() || participantLookup?.college?.trim() || "",
               email: member.email.trim().toLowerCase(),
               phone: member.phone.trim(),
               gender: member.gender.trim(),
