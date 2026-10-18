@@ -130,6 +130,7 @@ export function formatDate(value: string | null | undefined): string {
 ========================================================= */
 
 export const REGISTRATION_CSV_HEADERS: string[] = [
+  "Sr. No.",
   "Participant ID",
   "Participant Name",
   "Email",
@@ -178,7 +179,8 @@ export const EVENT_REGISTRATION_CSV_HEADERS: string[] = [
 export function buildSingleParticipantRow(
   item: CsvRegistrationItem,
   participant: CsvParticipant,
-  isLeaderOrIndividual: boolean
+  isLeaderOrIndividual: boolean,
+  serialNumber: number | string = 1
 ): (string | number)[] {
   const isPrimary =
     isLeaderOrIndividual ||
@@ -251,6 +253,7 @@ export function buildSingleParticipantRow(
   const teamName = item.registration.team_name ?? "";
 
   return [
+    serialNumber,
     participant.participant_id ?? "",
     participant.name ?? "",
     participant.email ?? "",
@@ -285,7 +288,11 @@ export function buildSingleParticipantRow(
   ];
 }
 
-export function buildRegistrationCsvRows(item: CsvRegistrationItem): (string | number)[][] {
+export function buildRegistrationCsvRows(
+  item: CsvRegistrationItem,
+  startingSerial: number = 1
+): (string | number)[][] {
+  let serial = startingSerial;
   if (item.members && item.members.length > 0) {
     const hasExplicitLeaderInMembers = item.members.some(
       (m) =>
@@ -299,7 +306,7 @@ export function buildRegistrationCsvRows(item: CsvRegistrationItem): (string | n
 
     // If the registering participant (team leader) is not in item.members, emit them first
     if (!hasExplicitLeaderInMembers) {
-      rows.push(buildSingleParticipantRow(item, item.participant, true));
+      rows.push(buildSingleParticipantRow(item, item.participant, true, serial++));
     }
 
     for (const member of item.members) {
@@ -344,28 +351,36 @@ export function buildRegistrationCsvRows(item: CsvRegistrationItem): (string | n
             accommodations: member.accommodations ?? null,
           };
 
-      rows.push(buildSingleParticipantRow(item, memberParticipant, isLeader));
+      rows.push(buildSingleParticipantRow(item, memberParticipant, isLeader, serial++));
     }
 
     return rows;
   }
 
   // Individual registration or team without member records
-  return [buildSingleParticipantRow(item, item.participant, true)];
+  return [buildSingleParticipantRow(item, item.participant, true, serial)];
 }
 
-export function buildRegistrationCsvRow(item: CsvRegistrationItem): (string | number)[] {
-  return buildSingleParticipantRow(item, item.participant, true);
+export function buildRegistrationCsvRow(item: CsvRegistrationItem, serialNumber: number | string = 1): (string | number)[] {
+  return buildSingleParticipantRow(item, item.participant, true, serialNumber);
 }
 
-export function buildEventRegistrationCsvRow(item: CsvRegistrationItem): (string | number)[] {
-  return buildSingleParticipantRow(item, item.participant, true);
+export function buildEventRegistrationCsvRow(item: CsvRegistrationItem, serialNumber: number | string = 1): (string | number)[] {
+  return buildSingleParticipantRow(item, item.participant, true, serialNumber);
 }
 
 export function generateRegistrationsCsv(items: CsvRegistrationItem[]): string {
+  const allRows: (string | number)[][] = [];
+  let currentSerial = 1;
+  for (const item of items) {
+    const itemRows = buildRegistrationCsvRows(item, currentSerial);
+    allRows.push(...itemRows);
+    currentSerial += itemRows.length;
+  }
+
   const rows = [
     REGISTRATION_CSV_HEADERS,
-    ...items.flatMap(buildRegistrationCsvRows),
+    ...allRows,
   ];
 
   return (
@@ -377,9 +392,17 @@ export function generateRegistrationsCsv(items: CsvRegistrationItem[]): string {
 }
 
 export function generateEventRegistrationsCsv(items: CsvRegistrationItem[]): string {
+  const allRows: (string | number)[][] = [];
+  let currentSerial = 1;
+  for (const item of items) {
+    const itemRows = buildRegistrationCsvRows(item, currentSerial);
+    allRows.push(...itemRows);
+    currentSerial += itemRows.length;
+  }
+
   const rows = [
     EVENT_REGISTRATION_CSV_HEADERS,
-    ...items.flatMap(buildRegistrationCsvRows),
+    ...allRows,
   ];
 
   return (

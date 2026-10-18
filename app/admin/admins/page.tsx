@@ -1051,9 +1051,10 @@ export default function AdminManagementPage() {
               <div className="divide-y divide-black/[0.06]">
 
                 {masters.map(
-                  (admin) => (
+                  (admin, idx) => (
                     <AdminRow
                       key={admin.user_id}
+                      serialNumber={idx + 1}
                       admin={admin}
                       master
                       isSuperMaster={isSuperMaster}
@@ -1116,9 +1117,10 @@ export default function AdminManagementPage() {
               <div className="divide-y divide-black/[0.06]">
 
                 {normalAdmins.map(
-                  (admin) => (
+                  (admin, idx) => (
                     <AdminRow
                       key={admin.user_id}
+                      serialNumber={idx + 1}
                       admin={admin}
                       isSuperMaster={isSuperMaster}
                       eventsList={eventsList}
@@ -1377,6 +1379,7 @@ export default function AdminManagementPage() {
 
 function AdminRow({
   admin,
+  serialNumber,
   master = false,
   onRemove,
   onRoleChange,
@@ -1391,6 +1394,7 @@ function AdminRow({
   resetting = false,
 }: {
   admin: AdminRecord;
+  serialNumber?: number;
   master?: boolean;
   onRemove?: () => void;
   onRoleChange?: (newRole: "master" | "admin") => void;
@@ -1410,6 +1414,12 @@ function AdminRow({
     <div className="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between text-black">
 
       <div className="flex min-w-0 items-center gap-4">
+
+        {serialNumber !== undefined && (
+          <span className="font-mono text-xs font-semibold text-black/40 w-6 shrink-0">
+            {serialNumber}
+          </span>
+        )}
 
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/[0.05]">
 

@@ -524,6 +524,7 @@ export default function AccommodationsAdmin() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-black/10 text-black/40">
+                    <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
                     <th className="pb-3 pr-4 font-semibold">Name</th>
                     <th className="pb-3 px-4 font-semibold">Gender Eligibility</th>
                     <th className="pb-3 px-4 font-semibold">Floors</th>
@@ -536,7 +537,7 @@ export default function AccommodationsAdmin() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.hostels.map(h => {
+                  {data.hostels.map((h, idx) => {
                     const floorsCount = data.floors.filter(f => f.hostel_id === h.id).length;
                     const hostelRooms = data.rooms.filter(r => r.hostel_id === h.id);
                     const totalCap = hostelRooms.reduce((sum, r) => sum + r.capacity, 0);
@@ -544,6 +545,7 @@ export default function AccommodationsAdmin() {
                     const available = Math.max(0, totalCap - occupied);
                     return (
                       <tr key={h.id} className={`border-b border-black/5 last:border-0 hover:bg-black/[0.02] ${!h.is_active ? 'opacity-60 bg-gray-50' : ''}`}>
+                        <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
                         <td className="py-4 pr-4 font-medium text-black">{h.name}</td>
                         <td className="py-4 px-4 uppercase text-xs font-semibold">{h.gender_eligibility}</td>
                         <td className="py-4 px-4">{floorsCount}</td>
@@ -630,6 +632,7 @@ export default function AccommodationsAdmin() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-black/10 text-black/40">
+                    <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
                     <th className="pb-3 pr-4 font-semibold">Hostel</th>
                     <th className="pb-3 px-4 font-semibold">Floor Number</th>
                     <th className="pb-3 px-4 font-semibold">Floor Name / Label</th>
@@ -649,7 +652,7 @@ export default function AccommodationsAdmin() {
                 <tbody>
                   {data.floors
                     .filter(f => filterHostelForFloors === "all" || f.hostel_id === filterHostelForFloors)
-                    .map(f => {
+                    .map((f, idx) => {
                       const hostel = data.hostels.find(h => h.id === f.hostel_id);
                       const floorRooms = data.rooms.filter(r => r.floor_id === f.id);
                       const floorCap = floorRooms.reduce((sum, r) => sum + r.capacity, 0);
@@ -662,6 +665,7 @@ export default function AccommodationsAdmin() {
                       const availableRooms = floorRooms.length - fullRooms;
                       return (
                         <tr key={f.id} className={`border-b border-black/5 last:border-0 hover:bg-black/[0.02] ${!f.is_active ? 'opacity-60 bg-gray-50' : ''}`}>
+                          <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
                           <td className="py-4 pr-4 font-medium text-black">{hostel?.name || "Unknown"}</td>
                           <td className="py-4 px-4 font-semibold">Floor {f.floor_number}</td>
                           <td className="py-4 px-4 text-black/70">{f.name || "—"}</td>
@@ -782,6 +786,7 @@ export default function AccommodationsAdmin() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-black/10 text-black/40">
+                    <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
                     <th className="pb-3 pr-4 font-semibold">Hostel</th>
                     <th className="pb-3 px-4 font-semibold">Floor</th>
                     <th className="pb-3 px-4 font-semibold">Room Number</th>
@@ -797,7 +802,7 @@ export default function AccommodationsAdmin() {
                   {data.rooms
                     .filter(r => filterHostelForRooms === "all" || r.hostel_id === filterHostelForRooms)
                     .filter(r => filterFloorForRooms === "all" || r.floor_id === filterFloorForRooms)
-                    .map(r => {
+                    .map((r, idx) => {
                       const hostel = data.hostels.find(h => h.id === r.hostel_id);
                       const floor = data.floors.find(f => f.id === r.floor_id);
                       const occupied = data.roomOccupancy[r.id] || 0;
@@ -805,6 +810,7 @@ export default function AccommodationsAdmin() {
                       const occupancyPct = r.capacity > 0 ? Math.round((occupied / r.capacity) * 100) : 0;
                       return (
                         <tr key={r.id} className={`border-b border-black/5 last:border-0 hover:bg-black/[0.02] ${!r.is_active ? 'opacity-60 bg-gray-50' : ''}`}>
+                          <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
                           <td className="py-4 pr-4 text-black">{hostel?.name || "Unknown"}</td>
                           <td className="py-4 px-4 font-medium text-black">
                             {floor ? `Floor ${floor.floor_number}` : "—"}
@@ -1394,12 +1400,13 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       return;
     }
     const headers = [
+      "Sr. No.",
       "Participant ID", "Participant Name", "Type", "Email", "Gender", "State", 
       "Accommodation Plan", "Stay Details", "Check-In Date", "Check-Out Date", "Duration (Days)", "Amount", "Currency", 
       "Payment Status", "Accommodation Status", "Hostel", "Floor", "Room",
       "Allocation Status", "Checked In", "Checked In At", "Checked Out", "Checked Out At"
     ];
-    const rows = filtered.map(acc => {
+    const rows = filtered.map((acc, idx) => {
       const plan = data.plans.find(p => p.id === acc.accommodation_plan_id);
       const hostel = data.hostels.find(h => h.id === acc.hostel_id);
       const room = data.rooms.find(r => r.id === acc.room_id);
@@ -1408,6 +1415,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       const allocStatus = !acc.room_id ? "Awaiting Allocation" : "Allocated";
       
       return [
+        idx + 1,
         acc.participants?.participant_id || "",
         `"${(acc.participants?.name || "").replace(/"/g, '""')}"`,
         acc.participants?.is_faculty ? "Faculty" : "Participant",
@@ -1434,8 +1442,8 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       ];
     });
     
-    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1593,6 +1601,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
                   className="rounded border-black/20"
                 />
               </th>
+              <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
               <th className="pb-3 pr-4 font-semibold">ID</th>
               <th className="pb-3 px-4 font-semibold">Participant</th>
               <th className="pb-3 px-4 font-semibold">Type</th>
@@ -1605,7 +1614,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
             </tr>
           </thead>
           <tbody>
-            {filtered.map(acc => {
+            {filtered.map((acc, idx) => {
               const plan = data.plans.find(p => p.id === acc.accommodation_plan_id);
               const hostel = data.hostels.find(h => h.id === acc.hostel_id);
               const room = data.rooms.find(r => r.id === acc.room_id);
@@ -1623,6 +1632,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
                       className="rounded border-black/20"
                     />
                   </td>
+                  <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
                   <td className="py-4 pr-4 font-mono text-xs text-black/60">{acc.participants?.participant_id}</td>
                   <td className="py-4 px-4 font-medium text-black">
                     {acc.participants?.name}
@@ -2070,7 +2080,7 @@ function StatCard({ title, value, icon, dark }: { title: string; value: React.Re
 
 function exportCSV(filename: string, headers: string[], rows: (string|number)[][]) {
   const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\r\n");
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -2081,42 +2091,42 @@ function exportCSV(filename: string, headers: string[], rows: (string|number)[][
 }
 
 function exportHostels(data: DashboardData) {
-  const headers = ["Hostel Name", "Gender Eligibility", "Total Floors", "Total Rooms", "Total Capacity", "Occupied", "Available", "Occupancy %", "Status"];
-  const rows = data.hostels.map(h => {
+  const headers = ["Sr. No.", "Hostel Name", "Gender Eligibility", "Total Floors", "Total Rooms", "Total Capacity", "Occupied", "Available", "Occupancy %", "Status"];
+  const rows = data.hostels.map((h, idx) => {
     const floorsCount = data.floors.filter(f => f.hostel_id === h.id).length;
     const hostelRooms = data.rooms.filter(r => r.hostel_id === h.id);
     const totalCap = hostelRooms.reduce((sum, r) => sum + r.capacity, 0);
     const occupied = data.hostelOccupancy[h.id] || 0;
     const available = Math.max(0, totalCap - occupied);
     const occPct = totalCap > 0 ? Math.round((occupied/totalCap)*100) : 0;
-    return [`"${h.name.replace(/"/g, '""')}"`, h.gender_eligibility, floorsCount, hostelRooms.length, totalCap, occupied, available, `${occPct}%`, h.is_active ? "Active" : "Inactive"];
+    return [idx + 1, `"${h.name.replace(/"/g, '""')}"`, h.gender_eligibility, floorsCount, hostelRooms.length, totalCap, occupied, available, `${occPct}%`, h.is_active ? "Active" : "Inactive"];
   });
   exportCSV("saviskar-accommodation-hostels.csv", headers, rows);
 }
 
 function exportFloors(data: DashboardData) {
-  const headers = ["Hostel Name", "Floor Number", "Floor Name", "Rooms", "Capacity", "Occupied", "Available", "Occupancy %", "Status"];
-  const rows = data.floors.map(f => {
+  const headers = ["Sr. No.", "Hostel Name", "Floor Number", "Floor Name", "Rooms", "Capacity", "Occupied", "Available", "Occupancy %", "Status"];
+  const rows = data.floors.map((f, idx) => {
     const h = data.hostels.find(x => x.id === f.hostel_id);
     const floorRooms = data.rooms.filter(r => r.floor_id === f.id);
     const cap = floorRooms.reduce((sum, r) => sum + r.capacity, 0);
     const occ = data.floorOccupancy[f.id] || 0;
     const available = Math.max(0, cap - occ);
     const pct = cap > 0 ? Math.round((occ/cap)*100) : 0;
-    return [`"${(h?.name||"").replace(/"/g, '""')}"`, f.floor_number, `"${(f.name||"").replace(/"/g, '""')}"`, floorRooms.length, cap, occ, available, `${pct}%`, f.is_active ? "Active" : "Inactive"];
+    return [idx + 1, `"${(h?.name||"").replace(/"/g, '""')}"`, f.floor_number, `"${(f.name||"").replace(/"/g, '""')}"`, floorRooms.length, cap, occ, available, `${pct}%`, f.is_active ? "Active" : "Inactive"];
   });
   exportCSV("saviskar-accommodation-floors.csv", headers, rows);
 }
 
 function exportRooms(data: DashboardData) {
-  const headers = ["Hostel", "Floor", "Room Number", "Capacity", "Occupied", "Available", "Status", "Active"];
-  const rows = data.rooms.map(r => {
+  const headers = ["Sr. No.", "Hostel", "Floor", "Room Number", "Capacity", "Occupied", "Available", "Status", "Active"];
+  const rows = data.rooms.map((r, idx) => {
     const h = data.hostels.find(x => x.id === r.hostel_id);
     const f = data.floors.find(x => x.id === r.floor_id);
     const occ = data.roomOccupancy[r.id] || 0;
     const avail = Math.max(0, r.capacity - occ);
     const status = occ === 0 ? "AVAILABLE" : occ >= r.capacity ? "FULL" : "PARTIALLY OCCUPIED";
-    return [`"${(h?.name||"").replace(/"/g, '""')}"`, f ? f.floor_number : "", `"${(r.room_number||"").replace(/"/g, '""')}"`, r.capacity, occ, avail, status, r.is_active ? "Yes" : "No"];
+    return [idx + 1, `"${(h?.name||"").replace(/"/g, '""')}"`, f ? f.floor_number : "", `"${(r.room_number||"").replace(/"/g, '""')}"`, r.capacity, occ, avail, status, r.is_active ? "Yes" : "No"];
   });
   exportCSV("saviskar-accommodation-rooms.csv", headers, rows);
 }
@@ -2127,10 +2137,11 @@ function PaymentsReport({ data }: { data: DashboardData }) {
   const filtered = data.accommodations.filter(a => filter === "all" || a.status === filter);
 
   const handleExport = () => {
-    const headers = ["Participant ID", "Participant Name", "Plan", "Stay Details", "Start Date", "End Date", "Duration (Days)", "Amount", "Currency", "Payment Status", "Created At"];
-    const rows = filtered.map(a => {
+    const headers = ["Sr. No.", "Participant ID", "Participant Name", "Plan", "Stay Details", "Start Date", "End Date", "Duration (Days)", "Amount", "Currency", "Payment Status", "Created At"];
+    const rows = filtered.map((a, idx) => {
       const p = data.plans.find(x => x.id === a.accommodation_plan_id);
       return [
+        idx + 1,
         a.participants?.participant_id || "",
         `"${(a.participants?.name||"").replace(/"/g, '""')}"`,
         `"${(p?.name||"").replace(/"/g, '""')}"`,
@@ -2167,6 +2178,7 @@ function PaymentsReport({ data }: { data: DashboardData }) {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-black/10 text-black/40">
+              <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
               <th className="pb-3 pr-4 font-semibold">Participant</th>
               <th className="pb-3 px-4 font-semibold">Plan</th>
               <th className="pb-3 px-4 font-semibold">Stay Dates</th>
@@ -2176,10 +2188,11 @@ function PaymentsReport({ data }: { data: DashboardData }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(a => {
+            {filtered.map((a, idx) => {
               const p = data.plans.find(x => x.id === a.accommodation_plan_id);
               return (
                 <tr key={a.id} className="border-b border-black/5 hover:bg-black/[0.02]">
+                  <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
                   <td className="py-4 pr-4">
                     <div className="font-medium text-black">{a.participants?.name}</div>
                     <div className="text-xs text-black/50">{a.participants?.participant_id}</div>
@@ -2192,7 +2205,7 @@ function PaymentsReport({ data }: { data: DashboardData }) {
                 </tr>
               );
             })}
-            {filtered.length === 0 && <tr><td colSpan={6} className="py-8 text-center text-black/40">No payments found.</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={7} className="py-8 text-center text-black/40">No payments found.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -2210,15 +2223,15 @@ function AllocationsReport({ data }: { data: DashboardData }) {
   });
 
   const handleExport = () => {
-    const headers = ["Participant", "Gender", "Plan", "Stay Details", "Start Date", "End Date", "Duration (Days)", "Hostel", "Floor", "Room", "Room Capacity", "Occupancy", "Status"];
-    const rows = filtered.map(a => {
+    const headers = ["Sr. No.", "Participant", "Gender", "Plan", "Stay Details", "Start Date", "End Date", "Duration (Days)", "Hostel", "Floor", "Room", "Room Capacity", "Occupancy", "Status"];
+    const rows = filtered.map((a, idx) => {
       const h = data.hostels.find(x => x.id === a.hostel_id);
       const r = data.rooms.find(x => x.id === a.room_id);
       const f = r ? data.floors.find(x => x.id === r.floor_id) : null;
       const pl = data.plans.find(x => x.id === a.accommodation_plan_id);
       const status = a.room_id ? "ALLOCATED" : "AWAITING ALLOCATION";
       const occ = r ? data.roomOccupancy[r.id] || 0 : 0;
-      return [`"${(a.participants?.name||"").replace(/"/g, '""')}"`, a.participants?.gender||"", `"${(pl?.name||"").replace(/"/g, '""')}"`, `"${getAccommodationStayLabel(a)}"`, a.start_date || "", a.end_date || "", a.duration_days, `"${(h?.name||"").replace(/"/g, '""')}"`, f?.floor_number ?? "", `"${(r?.room_number||"").replace(/"/g, '""')}"`, r?.capacity||"", occ, status];
+      return [idx + 1, `"${(a.participants?.name||"").replace(/"/g, '""')}"`, a.participants?.gender||"", `"${(pl?.name||"").replace(/"/g, '""')}"`, `"${getAccommodationStayLabel(a)}"`, a.start_date || "", a.end_date || "", a.duration_days, `"${(h?.name||"").replace(/"/g, '""')}"`, f?.floor_number ?? "", `"${(r?.room_number||"").replace(/"/g, '""')}"`, r?.capacity||"", occ, status];
     });
     exportCSV("saviskar-accommodation-allocation.csv", headers, rows);
   };
@@ -2240,6 +2253,7 @@ function AllocationsReport({ data }: { data: DashboardData }) {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-black/10 text-black/40">
+              <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
               <th className="pb-3 pr-4 font-semibold">Participant</th>
               <th className="pb-3 px-4 font-semibold">Gender</th>
               <th className="pb-3 px-4 font-semibold">Plan & Stay</th>
@@ -2249,13 +2263,14 @@ function AllocationsReport({ data }: { data: DashboardData }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(a => {
+            {filtered.map((a, idx) => {
               const h = data.hostels.find(x => x.id === a.hostel_id);
               const r = data.rooms.find(x => x.id === a.room_id);
               const f = r ? data.floors.find(x => x.id === r.floor_id) : null;
               const pl = data.plans.find(x => x.id === a.accommodation_plan_id);
               return (
                 <tr key={a.id} className="border-b border-black/5 hover:bg-black/[0.02]">
+                  <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
                   <td className="py-4 pr-4">
                     <div className="font-medium text-black">{a.participants?.name}</div>
                     <div className="text-xs text-black/50">{a.participants?.participant_id}</div>
@@ -2277,7 +2292,7 @@ function AllocationsReport({ data }: { data: DashboardData }) {
                 </tr>
               );
             })}
-            {filtered.length === 0 && <tr><td colSpan={6} className="py-8 text-center text-black/40">No allocations found.</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={7} className="py-8 text-center text-black/40">No allocations found.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -2296,12 +2311,13 @@ function LifecycleReport({ data }: { data: DashboardData }) {
   });
 
   const handleExport = () => {
-    const headers = ["Participant", "Plan", "Stay Details", "Start Date", "End Date", "Duration (Days)", "Hostel/Room", "Allocated", "Checked In", "Checked In At", "Checked Out", "Checked Out At"];
-    const rows = filtered.map(a => {
+    const headers = ["Sr. No.", "Participant", "Plan", "Stay Details", "Start Date", "End Date", "Duration (Days)", "Hostel/Room", "Allocated", "Checked In", "Checked In At", "Checked Out", "Checked Out At"];
+    const rows = filtered.map((a, idx) => {
       const p = data.plans.find(x => x.id === a.accommodation_plan_id);
       const h = data.hostels.find(x => x.id === a.hostel_id);
       const r = data.rooms.find(x => x.id === a.room_id);
       return [
+        idx + 1,
         `"${(a.participants?.name||"").replace(/"/g, '""')}"`,
         `"${(p?.name||"").replace(/"/g, '""')}"`,
         `"${getAccommodationStayLabel(a)}"`,
@@ -2337,6 +2353,7 @@ function LifecycleReport({ data }: { data: DashboardData }) {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-black/10 text-black/40">
+              <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
               <th className="pb-3 pr-4 font-semibold">Participant</th>
               <th className="pb-3 px-4 font-semibold">Plan & Stay</th>
               <th className="pb-3 px-4 font-semibold">Allocation</th>
@@ -2345,12 +2362,13 @@ function LifecycleReport({ data }: { data: DashboardData }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(a => {
+            {filtered.map((a, idx) => {
               const p = data.plans.find(x => x.id === a.accommodation_plan_id);
               const h = data.hostels.find(x => x.id === a.hostel_id);
               const r = data.rooms.find(x => x.id === a.room_id);
               return (
                 <tr key={a.id} className="border-b border-black/5 hover:bg-black/[0.02]">
+                  <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
                   <td className="py-4 pr-4 font-medium text-black">{a.participants?.name}</td>
                   <td className="py-4 px-4">
                     <div className="font-medium text-xs sm:text-sm text-black">{p?.name || "Accommodation"}</div>
@@ -2374,7 +2392,7 @@ function LifecycleReport({ data }: { data: DashboardData }) {
                 </tr>
               );
             })}
-            {filtered.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-black/40">No lifecycle data found.</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={6} className="py-8 text-center text-black/40">No lifecycle data found.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -2426,6 +2444,7 @@ function PaymentConflictsSection() {
         <table className="w-full text-left text-xs bg-white rounded-xl overflow-hidden border border-amber-200/80 shadow-sm">
           <thead>
             <tr className="bg-amber-100/50 text-amber-900 border-b border-amber-200 font-semibold">
+              <th className="py-2.5 px-3 w-12">Sr. No.</th>
               <th className="py-2.5 px-3">Participant</th>
               <th className="py-2.5 px-3">Order Ref / Amount</th>
               <th className="py-2.5 px-3">Requested Stay</th>
@@ -2434,8 +2453,9 @@ function PaymentConflictsSection() {
             </tr>
           </thead>
           <tbody className="divide-y divide-amber-100">
-            {conflicts.map((c) => (
+            {conflicts.map((c, idx) => (
               <tr key={c.id} className="hover:bg-amber-50/50">
+                <td className="py-2.5 px-3 font-mono text-[10px] text-black/60">{idx + 1}</td>
                 <td className="py-2.5 px-3">
                   <div className="font-semibold text-black">{c.participant.name}</div>
                   <div className="text-[10px] font-mono text-black/60">{c.participant.participantId} &bull; {c.participant.phone || c.participant.email}</div>
@@ -2499,8 +2519,8 @@ function ExceptionsReport({ data }: { data: DashboardData }) {
   });
 
   const handleExport = () => {
-    const headers = ["Exception Type", "Description", "Participant", "Participant ID"];
-    const rows = exceptions.map(ex => [ex.type, `"${ex.desc.replace(/"/g, '""')}"`, `"${(ex.acc?.participants?.name||"").replace(/"/g, '""')}"`, ex.acc?.participants?.participant_id || ""]);
+    const headers = ["Sr. No.", "Exception Type", "Description", "Participant", "Participant ID"];
+    const rows = exceptions.map((ex, idx) => [idx + 1, ex.type, `"${ex.desc.replace(/"/g, '""')}"`, `"${(ex.acc?.participants?.name||"").replace(/"/g, '""')}"`, ex.acc?.participants?.participant_id || ""]);
     exportCSV("saviskar-accommodation-exceptions.csv", headers, rows);
   };
 
@@ -2516,6 +2536,7 @@ function ExceptionsReport({ data }: { data: DashboardData }) {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-black/10 text-black/40">
+              <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
               <th className="pb-3 pr-4 font-semibold">Type</th>
               <th className="pb-3 px-4 font-semibold">Description</th>
               <th className="pb-3 px-4 font-semibold">Participant</th>
@@ -2524,6 +2545,7 @@ function ExceptionsReport({ data }: { data: DashboardData }) {
           <tbody>
             {exceptions.map((ex, idx) => (
               <tr key={idx} className="border-b border-black/5 hover:bg-black/[0.02]">
+                <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
                 <td className="py-4 pr-4 font-semibold text-xs uppercase text-red-600">{ex.type}</td>
                 <td className="py-4 px-4 text-black">{ex.desc}</td>
                 <td className="py-4 px-4 font-medium text-black">
@@ -2532,7 +2554,7 @@ function ExceptionsReport({ data }: { data: DashboardData }) {
               </tr>
             ))}
             {exceptions.length === 0 && (
-              <tr><td colSpan={3} className="py-8 text-center text-black/40">No exceptions detected.</td></tr>
+              <tr><td colSpan={4} className="py-8 text-center text-black/40">No exceptions detected.</td></tr>
             )}
           </tbody>
         </table>
@@ -2588,10 +2610,12 @@ function HistoryReport() {
 
   const handleExport = () => {
     const headers = [
+      "Sr. No.",
       "Timestamp", "Action", "Admin", "Participant ID", "Participant Name", 
       "Hostel", "Floor", "Room", "Previous State", "New State", "Reason", "Bulk Operation"
     ];
-    const rows = activities.map(a => [
+    const rows = activities.map((a, idx) => [
+      idx + 1,
       new Date(a.timestamp).toLocaleString(),
       a.action,
       `"${(a.admin_email || "System").replace(/"/g, '""')}"`,
@@ -2659,6 +2683,7 @@ function HistoryReport() {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-black/10 text-black/40">
+              <th className="pb-3 pr-4 font-semibold w-16">Sr. No.</th>
               <th className="pb-3 pr-4 font-semibold">Timestamp / Actor</th>
               <th className="pb-3 px-4 font-semibold">Participant</th>
               <th className="pb-3 px-4 font-semibold">Action & Status</th>
@@ -2667,9 +2692,10 @@ function HistoryReport() {
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={5} className="py-8 text-center text-black/40">Loading activity...</td></tr> : 
+            {loading ? <tr><td colSpan={6} className="py-8 text-center text-black/40">Loading activity...</td></tr> :
              activities.map((h, i) => (
               <tr key={h.id || i} className="border-b border-black/5 hover:bg-black/[0.02]">
+                <td className="py-4 pr-4 font-mono text-xs text-black/60">{(page - 1) * 25 + i + 1}</td>
                 <td className="py-4 pr-4">
                   <div className="font-medium text-black">{new Date(h.timestamp).toLocaleString()}</div>
                   <div className="text-xs text-black/40 truncate max-w-[150px]" title={h.admin_email || h.admin_id}>{h.admin_email || h.admin_id}</div>
@@ -2696,7 +2722,7 @@ function HistoryReport() {
               </tr>
             ))}
             {!loading && activities.length === 0 && (
-              <tr><td colSpan={5} className="py-8 text-center text-black/40">No activity history found matching your filters.</td></tr>
+              <tr><td colSpan={6} className="py-8 text-center text-black/40">No activity history found matching your filters.</td></tr>
             )}
           </tbody>
         </table>
