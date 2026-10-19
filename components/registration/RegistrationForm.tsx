@@ -3721,16 +3721,19 @@ export default function RegistrationForm({
                                   </div>
                                 </Field>
 
-                                <Field label="State / UT">
+                                <Field label="COLLEGE STATE / UT">
                                   <input
                                     type="text"
                                     name="state"
                                     list="indian-states"
-                                    placeholder="Select State"
+                                    placeholder="Select college state / UT"
                                     required
                                     autoComplete="off"
                                     className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
                                   />
+                                  <p className="text-xs text-white/50 leading-relaxed">
+                                    Select the state/UT where your college or university is located, not your home state.
+                                  </p>
                                 </Field>
                               </div>
 
@@ -4203,17 +4206,20 @@ export default function RegistrationForm({
                                       </div>
                                     </Field>
 
-                                    <Field label="Member State / UT">
+                                    <Field label="COLLEGE STATE / UT">
                                       <input
                                         type="text"
                                         value={member.state}
                                         onChange={(e) => updateTeamMember(event.id, index, "state", e.target.value)}
                                         list="indian-states"
-                                        placeholder="Select State"
+                                        placeholder="Select college state / UT"
                                         required
                                         autoComplete="off"
                                         className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
                                       />
+                                      <p className="text-xs text-white/50 leading-relaxed">
+                                        Select the state/UT where your college or university is located, not your home state.
+                                      </p>
                                     </Field>
                                   </div>
 
@@ -4549,16 +4555,19 @@ export default function RegistrationForm({
                     </div>
                   </Field>
 
-                  <Field label="State / UT">
+                  <Field label="COLLEGE STATE / UT">
                     <input
                       type="text"
                       name="state"
                       list="indian-states"
-                      placeholder="Select State"
+                      placeholder="Select college state / UT"
                       required
                       autoComplete="off"
                       className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
                     />
+                    <p className="text-xs text-white/50 leading-relaxed">
+                      Select the state/UT where your college or university is located, not your home state.
+                    </p>
                   </Field>
                 </div>
 
@@ -4918,17 +4927,20 @@ export default function RegistrationForm({
                           </div>
                         </Field>
 
-                        <Field label="State / UT">
+                        <Field label="COLLEGE STATE / UT">
                           <input
                             type="text"
                             value={facultyState.state}
                             onChange={(e) => setFacultyState({ ...facultyState, state: e.target.value })}
                             list="indian-states"
-                            placeholder="Select State"
+                            placeholder="Select college state / UT"
                             required={facultyEnabled}
                             autoComplete="off"
                             className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
                           />
+                          <p className="text-xs text-white/50 leading-relaxed">
+                            Select the state/UT where your college or university is located, not your home state.
+                          </p>
                         </Field>
                       </div>
 

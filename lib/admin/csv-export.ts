@@ -162,13 +162,19 @@ export const REGISTRATION_CSV_HEADERS: string[] = [
   "Main Checked In At",
   "Registration Group ID",
   "Registered At",
+  "Registration ID",
+  "Team Members",
 ];
 
 /* =========================================================
-   2. EVENT-SPECIFIC REGISTRATIONS CSV HEADERS
+   2. EVENT-SPECIFIC & PARTICIPANT CSV HEADERS
 ========================================================= */
 
 export const EVENT_REGISTRATION_CSV_HEADERS: string[] = [
+  ...REGISTRATION_CSV_HEADERS,
+];
+
+export const PARTICIPANT_CSV_HEADERS: string[] = [
   ...REGISTRATION_CSV_HEADERS,
 ];
 
@@ -252,6 +258,18 @@ export function buildSingleParticipantRow(
   const teamType = item.registration.team_name ? "Team" : "Individual";
   const teamName = item.registration.team_name ?? "";
 
+  const teamMembersSummary =
+    item.members && item.members.length > 0
+      ? item.members
+          .map((m) => {
+            const leaderTag = m.is_team_leader ? " (Leader)" : "";
+            const pubId = m.participants?.participant_id || m.participant_id;
+            const idTag = pubId ? ` [${pubId}]` : "";
+            return `${m.name}${idTag}${leaderTag}`;
+          })
+          .join("; ")
+      : "";
+
   return [
     serialNumber,
     participant.participant_id ?? "",
@@ -285,6 +303,8 @@ export function buildSingleParticipantRow(
     formatDate(item.registration.main_checked_in_at),
     (item.registration as Record<string, unknown>).registration_group_id as string ?? "",
     formatDate(item.registration.created_at),
+    item.registration.id ?? "",
+    teamMembersSummary,
   ];
 }
 
@@ -309,7 +329,16 @@ export function buildRegistrationCsvRows(
       rows.push(buildSingleParticipantRow(item, item.participant, true, serial++));
     }
 
+    // Guard against accidental duplicate rows caused by joins or repeated member mappings
+    const seenMemberKeys = new Set<string>();
+
     for (const member of item.members) {
+      const memberKey = member.id || member.participant_id || `${member.name}-${member.email}`;
+      if (seenMemberKeys.has(memberKey)) {
+        continue;
+      }
+      seenMemberKeys.add(memberKey);
+
       const isLeader = Boolean(
         member.is_team_leader === true ||
         (member.participant_id && member.participant_id === item.participant.id) ||
@@ -361,6 +390,17 @@ export function buildRegistrationCsvRows(
   return [buildSingleParticipantRow(item, item.participant, true, serial)];
 }
 
+/**
+ * Builds a single CSV row representing an entire registration record (order-level).
+ * Team registrations do NOT expand into multiple rows.
+ */
+export function buildRegistrationOrderRow(
+  item: CsvRegistrationItem,
+  serialNumber: number | string = 1
+): (string | number)[] {
+  return buildSingleParticipantRow(item, item.participant, true, serialNumber);
+}
+
 export function buildRegistrationCsvRow(item: CsvRegistrationItem, serialNumber: number | string = 1): (string | number)[] {
   return buildSingleParticipantRow(item, item.participant, true, serialNumber);
 }
@@ -369,7 +409,35 @@ export function buildEventRegistrationCsvRow(item: CsvRegistrationItem, serialNu
   return buildSingleParticipantRow(item, item.participant, true, serialNumber);
 }
 
-export function generateRegistrationsCsv(items: CsvRegistrationItem[]): string {
+/**
+ * REGISTRATION EXPORT: One CSV row per registration record (order-level).
+ * Exactly items.length data rows. Teams remain on 1 row with member details preserved.
+ */
+export function generateRegistrationExportCsv(items: CsvRegistrationItem[]): string {
+  const allRows: (string | number)[][] = [];
+  let currentSerial = 1;
+  for (const item of items) {
+    allRows.push(buildRegistrationOrderRow(item, currentSerial++));
+  }
+
+  const rows = [
+    REGISTRATION_CSV_HEADERS,
+    ...allRows,
+  ];
+
+  return (
+    UTF8_BOM +
+    rows
+      .map((row) => row.map(escapeCsv).join(","))
+      .join("\r\n")
+  );
+}
+
+/**
+ * PARTICIPANT EXPORT: One CSV row per individual participant-event registration.
+ * Expands team registrations into individual rows for all members and leaders.
+ */
+export function generateParticipantExportCsv(items: CsvRegistrationItem[]): string {
   const allRows: (string | number)[][] = [];
   let currentSerial = 1;
   for (const item of items) {
@@ -391,24 +459,28 @@ export function generateRegistrationsCsv(items: CsvRegistrationItem[]): string {
   );
 }
 
-export function generateEventRegistrationsCsv(items: CsvRegistrationItem[]): string {
-  const allRows: (string | number)[][] = [];
-  let currentSerial = 1;
-  for (const item of items) {
-    const itemRows = buildRegistrationCsvRows(item, currentSerial);
-    allRows.push(...itemRows);
-    currentSerial += itemRows.length;
-  }
+/**
+ * Unified registration CSV generator supporting both modes.
+ * Default is "participant" to maintain 100% backward compatibility with existing tests.
+ */
+export function generateRegistrationsCsv(
+  items: CsvRegistrationItem[],
+  mode: "registration" | "participant" = "participant"
+): string {
+  return mode === "registration"
+    ? generateRegistrationExportCsv(items)
+    : generateParticipantExportCsv(items);
+}
 
-  const rows = [
-    EVENT_REGISTRATION_CSV_HEADERS,
-    ...allRows,
-  ];
-
-  return (
-    UTF8_BOM +
-    rows
-      .map((row) => row.map(escapeCsv).join(","))
-      .join("\r\n")
-  );
+/**
+ * Unified event registration CSV generator supporting both modes.
+ * Default is "participant" to maintain 100% backward compatibility with existing tests.
+ */
+export function generateEventRegistrationsCsv(
+  items: CsvRegistrationItem[],
+  mode: "registration" | "participant" = "participant"
+): string {
+  return mode === "registration"
+    ? generateRegistrationExportCsv(items)
+    : generateParticipantExportCsv(items);
 }
