@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { generateEventRegistrationsCsv } from "@/lib/admin/csv-export";
+import {
+  generateEventRegistrationsCsv,
+  generateRegistrationExportCsv,
+  generateParticipantExportCsv,
+} from "@/lib/admin/csv-export";
+import { CsvExportDropdown } from "@/components/admin/CsvExportDropdown";
 import {
   RefreshCw,
   Users,
@@ -863,38 +868,46 @@ export default function EventRegistrationsPage() {
   // CSV EXPORT
   // ---------------------------------------------------------
 
-  function exportCSV() {
-    const csv = generateEventRegistrationsCsv(filteredRegistrations);
-
-    const blob = new Blob(
-      [csv],
-      {
-        type:
-          "text/csv;charset=utf-8;",
-      }
-    );
-
-    const url =
-      URL.createObjectURL(blob);
-
-    const link =
-      document.createElement("a");
-
+  function exportRegistrationCSV() {
+    const csv = generateRegistrationExportCsv(filteredRegistrations);
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
     link.href = url;
-
     link.download = `saviskar-${currentEventName
       .toLowerCase()
-      .replace(/\s+/g, "-")}-registrations-${new Date()
+      .replace(/\s+/g, "-")}-registrations-orders-${new Date()
       .toISOString()
       .slice(0, 10)}.csv`;
-
     document.body.appendChild(link);
-
     link.click();
-
     document.body.removeChild(link);
-
     URL.revokeObjectURL(url);
+  }
+
+  function exportParticipantCSV() {
+    const csv = generateParticipantExportCsv(filteredRegistrations);
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `saviskar-${currentEventName
+      .toLowerCase()
+      .replace(/\s+/g, "-")}-participants-attendees-${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportCSV() {
+    exportRegistrationCSV();
   }
 
   // ---------------------------------------------------------
@@ -1193,13 +1206,12 @@ export default function EventRegistrationsPage() {
               </select>
             )}
 
-            <button
-              onClick={exportCSV}
-              className="flex items-center justify-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white"
-            >
-              <Download size={15} />
-              Export CSV
-            </button>
+            <CsvExportDropdown
+              onExportRegistrations={exportRegistrationCSV}
+              onExportParticipants={exportParticipantCSV}
+              totalRegistrations={filteredRegistrations.length}
+              pillShape
+            />
 
           </div>
 

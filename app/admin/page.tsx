@@ -37,7 +37,12 @@ import {
 import { supabase } from "@/lib/supabase";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import { parseAdminCategories } from "@/lib/admin/scope";
-import { generateRegistrationsCsv } from "@/lib/admin/csv-export";
+import {
+  generateRegistrationsCsv,
+  generateRegistrationExportCsv,
+  generateParticipantExportCsv,
+} from "@/lib/admin/csv-export";
+import { CsvExportDropdown } from "@/components/admin/CsvExportDropdown";
 
 /* =========================================================
    TYPES
@@ -488,7 +493,11 @@ export default function AdminPage() {
         );
         if (payload.role) {
           setRole(payload.role);
-          setAdminIdentity({ name: payload.adminName || null, email: payload.adminEmail || null, isPrimary: !!payload.isPrimary });
+          setAdminIdentity((prev) => ({
+            name: payload.adminName || prev?.name || null,
+            email: payload.adminEmail || prev?.email || null,
+            isPrimary: typeof payload.isPrimary === "boolean" ? payload.isPrimary : !!prev?.isPrimary,
+          }));
         }
         if (typeof payload.accommodation_access === "boolean") {
           setAccommodationAccess(payload.accommodation_access);
@@ -535,6 +544,18 @@ export default function AdminPage() {
 
   useEffect(() => {
     let ignore = false;
+
+    // Immediately resolve authenticated email and identity from client session
+    supabase.auth.getUser().then(({ data }) => {
+      if (!ignore && data?.user?.email) {
+        setAdminIdentity((prev) => ({
+          name: prev?.name || (data.user.user_metadata?.name as string) || (data.user.user_metadata?.full_name as string) || null,
+          email: data.user.email ?? prev?.email ?? null,
+          isPrimary: prev?.isPrimary ?? false,
+        }));
+      }
+    }).catch(() => {});
+
     async function init() {
       try {
         const response = await fetch(
@@ -594,7 +615,11 @@ export default function AdminPage() {
           );
           if (payload.role) {
             setRole(payload.role);
-            setAdminIdentity({ name: payload.adminName || null, email: payload.adminEmail || null, isPrimary: !!payload.isPrimary });
+            setAdminIdentity((prev) => ({
+              name: payload.adminName || prev?.name || null,
+              email: payload.adminEmail || prev?.email || null,
+              isPrimary: typeof payload.isPrimary === "boolean" ? payload.isPrimary : !!prev?.isPrimary,
+            }));
           }
           if (typeof payload.accommodation_access === "boolean") {
             setAccommodationAccess(payload.accommodation_access);
@@ -830,13 +855,19 @@ export default function AdminPage() {
   ======================================================= */
 
   const stats = useMemo(() => {
-    // Only count active registrations for the dashboard stats
+    // Active and archived registrations
     const activeRegistrations = registrations.filter(
       (item) => item.registration.is_archived !== true
     );
+    const archivedRegistrations = registrations.filter(
+      (item) => item.registration.is_archived === true
+    );
 
     const total =
-      serverTotal !== null ? serverTotal : activeRegistrations.length;
+      serverTotal !== null ? serverTotal : registrations.length;
+
+    const activeTotal = activeRegistrations.length;
+    const archivedTotal = archivedRegistrations.length;
 
     const checkedIn =
       activeRegistrations.filter(
@@ -866,13 +897,15 @@ export default function AdminPage() {
     const mainCheckedIn = mainCheckedInSet.size;
 
     const pending =
-      total - checkedIn;
+      activeTotal - checkedIn;
       
     const mainPending =
       uniqueParticipants - mainCheckedIn;
 
     return {
       total,
+      activeTotal,
+      archivedTotal,
       checkedIn,
       mainCheckedIn,
       pending,
@@ -1532,34 +1565,42 @@ export default function AdminPage() {
      CSV
   ======================================================= */
 
-  function exportCsv() {
-    const csv = generateRegistrationsCsv(filteredRegistrations);
-
-    const blob =
-      new Blob([csv], {
-        type: "text/csv;charset=utf-8;",
-      });
-
-    const url =
-      URL.createObjectURL(blob);
-
-    const link =
-      document.createElement("a");
-
+  function exportRegistrationCsv() {
+    const csv = generateRegistrationExportCsv(filteredRegistrations);
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
     link.href = url;
-
-    link.download =
-      `saviskar-registrations-${new Date()
-        .toISOString()
-        .slice(0, 10)}.csv`;
-
+    link.download = `saviskar-registrations-orders-${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
     document.body.appendChild(link);
-
     link.click();
-
     link.remove();
-
     URL.revokeObjectURL(url);
+  }
+
+  function exportParticipantCsv() {
+    const csv = generateParticipantExportCsv(filteredRegistrations);
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `saviskar-participants-attendees-${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportCsv() {
+    exportRegistrationCsv();
   }
 
   /* =======================================================
@@ -1572,196 +1613,166 @@ export default function AdminPage() {
 
         {/* HEADER */}
 
-        <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-          <div>
-            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
-              Saviskar 2026
-            </p>
+        <div className="mb-10 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          {/* Left section: Title, Description, and Admin Identity */}
+          <div className="flex flex-col gap-4">
+            <div>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
+                Saviskar 2026
+              </p>
 
-            <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl text-black">
-              Registrations
-            </h1>
+              <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl text-black">
+                Registrations
+              </h1>
 
-            <p className="mt-4 text-sm text-black/45">
-              Manage registrations and participant entry.
-            </p>
-          </div>
+              <p className="mt-3 text-sm text-black/45">
+                Manage registrations and participant entry.
+              </p>
+            </div>
 
-          {adminIdentity && (
-            <div className="flex flex-col items-end mb-4 md:mb-0 bg-white p-4 rounded-[20px] border border-black/10 shadow-sm">
-              <div className="text-xs font-semibold uppercase tracking-wider text-black/40">
-                Logged in as
+            {/* Signed-in Administrator Identity Area */}
+            <div className="inline-flex flex-col items-start rounded-2xl border border-black/10 bg-white p-4 shadow-sm sm:max-w-md">
+              <div className="text-[10px] font-mono font-semibold uppercase tracking-[0.2em] text-black/40">
+                Signed in as
               </div>
-              <div className="text-lg font-bold text-black mt-1">
-                {adminIdentity.name || adminIdentity.email}
+              <div
+                className="mt-1 text-sm font-semibold text-black break-all"
+                title={adminIdentity?.email || undefined}
+              >
+                {adminIdentity?.email || (adminIdentity?.name ? adminIdentity.name : "Authenticated Administrator")}
               </div>
-              <div className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 bg-black/5 border border-black/10 rounded-full text-black/60 mt-2">
-                {adminIdentity.isPrimary
-                  ? "Primary Master Admin"
-                  : role === "master"
-                  ? "Master Admin"
-                  : availableCategories.length === 1
-                  ? `${availableCategories[0].replace("-", " ").toUpperCase()} Category Admin`
-                  : "Admin"}
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center rounded-full border border-black/10 bg-black/5 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-black/70">
+                  {adminIdentity?.isPrimary
+                    ? "Primary Master Admin"
+                    : role === "master"
+                    ? "Master Admin"
+                    : availableCategories.length === 1
+                    ? `${availableCategories[0].replace("-", " ").toUpperCase()} Category Admin`
+                    : "Admin"}
+                </span>
+                {adminIdentity?.name && adminIdentity?.email && (
+                  <span className="text-xs text-black/45 font-medium">
+                    {adminIdentity.name}
+                  </span>
+                )}
               </div>
             </div>
-          )}
+          </div>
 
-          <div className="flex flex-wrap gap-3">
+          {/* Right section: Action Buttons in Balanced Responsive Groups */}
+          <div className="flex flex-col gap-3 lg:items-end">
+            {/* Primary Management Actions */}
+            <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
+              {role === "master" && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin/events")}
+                    className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+                  >
+                    <CalendarDays size={15} />
+                    <span>Manage Events</span>
+                  </button>
 
-            {role === "master" && (
-              <>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin/admins")}
+                    className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+                  >
+                    <Users size={15} />
+                    <span>Manage Admins</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin/logs")}
+                    className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+                  >
+                    <Clock3 size={15} />
+                    <span>Audit Logs</span>
+                  </button>
+                </>
+              )}
+
+              {(role === "master" || accommodationAccess) && (
                 <button
                   type="button"
-                  onClick={() =>
-                    router.push(
-                      "/admin/events"
-                    )
-                  }
-                  className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+                  onClick={() => router.push("/admin/accommodations")}
+                  className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
                 >
-                  <CalendarDays
-                    size={15}
-                  />
-
-                  Manage Events
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M2 19V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14" />
+                    <path d="M2 19h20" />
+                    <path d="M7 19v-9a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v9" />
+                    <path d="M12 15h.01" />
+                  </svg>
+                  <span>Accommodation</span>
                 </button>
+              )}
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(
-                      "/admin/admins"
-                    )
-                  }
-                  className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
-                >
-                  <Users size={15} />
-
-                  Manage Admins
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(
-                      "/admin/logs"
-                    )
-                  }
-                  className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
-                >
-                  <Clock3 size={15} />
-
-                  Audit Logs
-                </button>
-              </>
-            )}
-
-            {(role === "master" || accommodationAccess) && (
               <button
                 type="button"
-                onClick={() =>
-                  router.push(
-                    "/admin/accommodations"
-                  )
-                }
-                className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+                onClick={() => router.push("/admin/analytics")}
+                className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M2 19V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14" />
-                  <path d="M2 19h20" />
-                  <path d="M7 19v-9a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v9" />
-                  <path d="M12 15h.01" />
-                </svg>
-
-                Accommodation
+                <BarChart3 size={15} />
+                <span>Analytics</span>
               </button>
-            )}
+            </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                router.push(
-                  "/admin/analytics"
-                )
-              }
-              className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
-            >
-              <BarChart3 size={15} />
-              Analytics
-            </button>
+            {/* Registration and Operational Actions */}
+            <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
+              <button
+                type="button"
+                onClick={() => router.push("/register?from=admin")}
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2.5 text-sm text-black/70 transition hover:bg-black/[0.03] shadow-sm"
+              >
+                <ExternalLink size={15} />
+                <span>Add Registration</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() =>
-                router.push(
-                  "/register?from=admin"
-                )
-              }
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] text-black/70"
-            >
-              <ExternalLink
-                size={15}
-              />
+              <button
+                type="button"
+                onClick={() => router.push("/admin/scanner")}
+                className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+              >
+                <QrCode size={15} />
+                <span>Entry Scanner</span>
+              </button>
 
-              Add Registration
-            </button>
+              <button
+                type="button"
+                onClick={() => loadData(true)}
+                disabled={refreshing}
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2.5 text-sm text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50 shadow-sm"
+              >
+                <RefreshCw
+                  size={15}
+                  className={refreshing ? "animate-spin" : ""}
+                />
+                <span>Refresh</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() =>
-                router.push(
-                  "/admin/scanner"
-                )
-              }
-              className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
-            >
-              <QrCode size={15} />
-
-              Entry Scanner
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                loadData(true)
-              }
-              disabled={refreshing}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] disabled:opacity-50 text-black/70"
-            >
-              <RefreshCw
-                size={15}
-                className={
-                  refreshing
-                    ? "animate-spin"
-                    : ""
-                }
-              />
-
-              Refresh
-            </button>
-
-            <button
-              type="button"
-              onClick={logout}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-black px-5 py-3 text-sm transition hover:bg-black/[0.03]"
-            >
-              <LogOut
-                size={15}
-              />
-
-              Logout
-            </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+              >
+                <LogOut size={15} />
+                <span>Logout</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1780,6 +1791,12 @@ export default function AdminPage() {
           <StatCard
             title="Total registrations"
             value={stats.total}
+            subtitle={
+              <span>
+                {stats.activeTotal} active
+                {stats.archivedTotal > 0 && ` · ${stats.archivedTotal} archived`}
+              </span>
+            }
             icon={
               <CalendarDays
                 size={18}
@@ -1789,10 +1806,11 @@ export default function AdminPage() {
           />
 
           <StatCard
-            title="Participants"
+            title="Unique Participants"
             value={
               stats.uniqueParticipants
             }
+            subtitle="Unique delegates across all events & teams"
             icon={
               <Users size={18} />
             }
@@ -2552,25 +2570,35 @@ export default function AdminPage() {
               </select>
             )}
 
-            <button
-              type="button"
-              onClick={exportCsv}
-              className="flex items-center justify-center gap-2 rounded-[18px] bg-black px-5 py-3 text-sm text-white"
-            >
-              <Download
-                size={15}
-              />
-
-              Export CSV
-            </button>
+            <CsvExportDropdown
+              onExportRegistrations={exportRegistrationCsv}
+              onExportParticipants={exportParticipantCsv}
+              totalRegistrations={filteredRegistrations.length}
+            />
           </div>
 
-          <div className="mt-3 px-2 text-[10px] uppercase tracking-[0.16em] text-black/30">
-            Showing{" "}
-            <span className="text-black/60">
-              {filteredRegistrations.length}
-            </span>{" "}
-            event registrations
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-2 text-[10px] uppercase tracking-[0.16em] text-black/40">
+            <div>
+              Showing{" "}
+              <span className="font-semibold text-black/70">
+                {filteredRegistrations.length}
+              </span>{" "}
+              of{" "}
+              <span className="font-semibold text-black/70">
+                {stats.activeTotal}
+              </span>{" "}
+              active registrations
+              {filteredRegistrations.length !== stats.activeTotal && (
+                <span className="ml-2 font-normal text-amber-700/80 lowercase tracking-normal">
+                  ({stats.activeTotal - filteredRegistrations.length} filtered out)
+                </span>
+              )}
+            </div>
+            {stats.archivedTotal > 0 && (
+              <div className="text-black/30">
+                {stats.archivedTotal} archived {stats.archivedTotal === 1 ? "record" : "records"}
+              </div>
+            )}
           </div>
         </div>
 
@@ -3742,11 +3770,13 @@ export default function AdminPage() {
 function StatCard({
   title,
   value,
+  subtitle,
   icon,
   dark = false,
 }: {
   title: string;
   value: number;
+  subtitle?: ReactNode;
   icon: ReactNode;
   dark?: boolean;
 }) {
@@ -3781,6 +3811,15 @@ function StatCard({
       >
         {value}
       </div>
+
+      {subtitle && (
+        <div
+          className={`mt-2 text-xs font-medium ${dark ? "text-white/50" : "text-black/45"
+            }`}
+        >
+          {subtitle}
+        </div>
+      )}
     </div>
   );
 }
