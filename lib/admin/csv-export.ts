@@ -484,3 +484,13 @@ export function generateEventRegistrationsCsv(
     ? generateRegistrationExportCsv(items)
     : generateParticipantExportCsv(items);
 }
+
+export {
+  exportRegistrationXlsx,
+  exportParticipantXlsx,
+  buildRegistrationsWorkbook,
+  buildParticipantsWorkbook,
+  normalizeEventCategory,
+  EXPORT_SHEET_NAMES,
+  downloadExcelWorkbook,
+} from "./excel-export";

@@ -88,6 +88,15 @@ export function CsvExportDropdown({
       } else {
         await onExportParticipants();
       }
+    } catch (err: unknown) {
+      console.error("Export failed:", err);
+      if (typeof window !== "undefined") {
+        window.alert(
+          err instanceof Error
+            ? `Export failed: ${err.message}`
+            : "Failed to generate Excel workbook. Please try again."
+        );
+      }
     } finally {
       setIsExporting(false);
     }
@@ -111,14 +120,14 @@ export function CsvExportDropdown({
         disabled={disabled || isExporting}
         onClick={() => setIsOpen((prev) => !prev)}
         className={`flex items-center justify-center gap-2 ${roundedClass} bg-black px-5 py-3 text-sm text-white transition hover:opacity-90 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed shadow-sm`}
-        title="Export CSV data"
+        title="Export Excel workbook (.xlsx)"
       >
         {isExporting ? (
           <RefreshCw size={15} className="animate-spin text-white/80" />
         ) : (
           <Download size={15} />
         )}
-        <span>{isExporting ? "Exporting..." : "Export CSV"}</span>
+        <span>{isExporting ? "Exporting..." : "Export Excel"}</span>
         <ChevronDown
           size={14}
           className={`transition-transform duration-200 text-white/70 ${

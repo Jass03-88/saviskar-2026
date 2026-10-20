@@ -16,6 +16,7 @@ import {
   Calendar
 } from "lucide-react";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
+import AdminPageLoader from "@/components/admin/AdminPageLoader";
 
 function maskEmail(email: string): string {
   if (!email) return "";
@@ -305,10 +306,46 @@ export default function AccommodationsAdmin() {
     }));
   };
 
-  if (loading) {
+  if (loading && !data) {
     return (
-      <main className="min-h-screen bg-[#f5f5f5] px-5 py-10 flex items-center justify-center text-black">
-        <p className="text-sm text-black/60">Loading accommodations...</p>
+      <AdminPageLoader
+        heading="Loading Accommodations..."
+        subtext="Fetching accommodation bookings and availability."
+      />
+    );
+  }
+
+  if (!data && error) {
+    return (
+      <main className="min-h-screen bg-[#f5f5f5] px-5 py-10 md:px-10 lg:px-16 flex items-center justify-center text-black">
+        <div className="flex flex-col items-center gap-4 text-center max-w-md bg-white p-8 rounded-3xl border border-black/10 shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-50 text-red-600 border border-red-100">
+            <RefreshCw size={22} />
+          </div>
+          <h2 className="text-lg font-bold tracking-tight text-black">Failed to Load Accommodations</h2>
+          <p className="text-xs text-black/55 leading-relaxed">{error}</p>
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true);
+                void loadData(false);
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-black px-5 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-black/80 transition active:scale-95"
+            >
+              <RefreshCw size={14} />
+              <span>Retry</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/admin")}
+              className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-2.5 text-xs font-semibold text-black/70 hover:bg-black/5 transition"
+            >
+              <ArrowLeft size={14} />
+              <span>Back to Admin</span>
+            </button>
+          </div>
+        </div>
       </main>
     );
   }
@@ -346,8 +383,15 @@ export default function AccommodationsAdmin() {
         </div>
 
         {error && (
-          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-            {error}
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700 flex items-center justify-between">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => loadData(true)}
+              className="font-semibold text-red-800 underline hover:text-red-950 transition text-xs shrink-0"
+            >
+              Retry
+            </button>
           </div>
         )}
 

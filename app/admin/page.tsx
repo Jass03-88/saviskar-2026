@@ -42,7 +42,12 @@ import {
   generateRegistrationExportCsv,
   generateParticipantExportCsv,
 } from "@/lib/admin/csv-export";
+import {
+  exportRegistrationXlsx,
+  exportParticipantXlsx,
+} from "@/lib/admin/excel-export";
 import { CsvExportDropdown } from "@/components/admin/CsvExportDropdown";
+import AdminPageLoader from "@/components/admin/AdminPageLoader";
 
 /* =========================================================
    TYPES
@@ -258,6 +263,9 @@ export default function AdminPage() {
   const [loading, setLoading] =
     useState(true);
 
+  const [hasLoaded, setHasLoaded] =
+    useState(false);
+
   const [refreshing, setRefreshing] =
     useState(false);
 
@@ -430,8 +438,10 @@ export default function AdminPage() {
     async (refresh = false) => {
       if (refresh) {
         setRefreshing(true);
-        setError("");
+      } else {
+        setLoading(true);
       }
+      setError("");
 
       try {
         const response = await fetch(
@@ -519,6 +529,7 @@ export default function AdminPage() {
         } else {
           setAssignedEvents([]);
         }
+        setHasLoaded(true);
       } catch (loadError) {
         console.error(
           "ADMIN LOAD ERROR:",
@@ -556,96 +567,7 @@ export default function AdminPage() {
       }
     }).catch(() => {});
 
-    async function init() {
-      try {
-        const response = await fetch(
-          "/api/admin/registrations?pageSize=2000",
-          { cache: "no-store" }
-        );
-
-        if (
-          response.status === 401 ||
-          response.status === 403
-        ) {
-          router.replace("/admin/login");
-          return;
-        }
-
-        const payload =
-          (await response.json()) as {
-            registrations?: Registration[];
-            events?: EventRecord[];
-            role?: AdminRole;
-            adminEmail?: string | null;
-            adminName?: string | null;
-            isPrimary?: boolean;
-            accommodation_access?: boolean;
-            total?: number;
-            accommodationStats?: {
-              totalBookings: number;
-              paidBookings: number;
-              pendingBookings: number;
-              expectedAmount: number;
-              paidAmount: number;
-              outstandingAmount: number;
-              checkedIn?: number;
-            };
-            error?: string;
-          };
-
-        if (!response.ok) {
-          throw new Error(
-            payload.error ??
-            "Could not load registrations."
-          );
-        }
-
-        if (!ignore) {
-          if (typeof payload.total === "number") {
-            setServerTotal(payload.total);
-          }
-          if (payload.accommodationStats) {
-            setServerAccommodationStats(payload.accommodationStats);
-          }
-          setRegistrations(
-            payload.registrations ?? []
-          );
-          setEvents(
-            payload.events ?? []
-          );
-          if (payload.role) {
-            setRole(payload.role);
-            setAdminIdentity((prev) => ({
-              name: payload.adminName || prev?.name || null,
-              email: payload.adminEmail || prev?.email || null,
-              isPrimary: typeof payload.isPrimary === "boolean" ? payload.isPrimary : !!prev?.isPrimary,
-            }));
-          }
-          if (typeof payload.accommodation_access === "boolean") {
-            setAccommodationAccess(payload.accommodation_access);
-          }
-        }
-      } catch (loadError) {
-        console.error(
-          "ADMIN LOAD ERROR:",
-          loadError
-        );
-        if (!ignore) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Could not load registrations."
-          );
-        }
-      } finally {
-        if (!ignore) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      }
-    }
-
-    void init();
+    void loadData(false);
 
     const participantChannel =
       supabase
@@ -1562,50 +1484,70 @@ export default function AdminPage() {
   }
 
   /* =======================================================
-     CSV
+     EXCEL EXPORT (FOUR-SHEET WORKBOOKS)
   ======================================================= */
 
-  function exportRegistrationCsv() {
-    const csv = generateRegistrationExportCsv(filteredRegistrations);
-    const blob = new Blob([csv], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `saviskar-registrations-orders-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+  async function exportRegistrationCsv() {
+    await exportRegistrationXlsx(
+      filteredRegistrations,
+      "saviskar-registrations-2026.xlsx"
+    );
   }
 
-  function exportParticipantCsv() {
-    const csv = generateParticipantExportCsv(filteredRegistrations);
-    const blob = new Blob([csv], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `saviskar-participants-attendees-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+  async function exportParticipantCsv() {
+    await exportParticipantXlsx(
+      filteredRegistrations,
+      "saviskar-participants-attendees-2026.xlsx"
+    );
   }
 
   function exportCsv() {
-    exportRegistrationCsv();
+    void exportRegistrationCsv();
   }
 
   /* =======================================================
      RENDER
   ======================================================= */
+
+  if (!hasLoaded) {
+    if (error) {
+      return (
+        <main className="min-h-screen bg-[#f5f5f5] px-5 py-10 md:px-10 lg:px-16 flex items-center justify-center text-black">
+          <div className="flex flex-col items-center gap-4 text-center max-w-md bg-white p-8 rounded-3xl border border-black/10 shadow-sm">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-50 text-red-600 border border-red-100">
+              <RefreshCw size={22} />
+            </div>
+            <h2 className="text-lg font-bold tracking-tight text-black">Failed to Load Dashboard</h2>
+            <p className="text-xs text-black/55 leading-relaxed">{error}</p>
+            <div className="mt-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => loadData(false)}
+                className="inline-flex items-center gap-2 rounded-full bg-black px-5 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-black/80 transition active:scale-95"
+              >
+                <RefreshCw size={14} />
+                <span>Retry</span>
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-2.5 text-xs font-semibold text-black/70 hover:bg-black/5 transition"
+              >
+                <LogOut size={14} />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          </div>
+        </main>
+      );
+    }
+    return (
+      <AdminPageLoader
+        heading="Loading Admin Dashboard..."
+        subtext="Fetching registrations and dashboard statistics."
+      />
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#f5f5f5] px-5 py-10 md:px-10 lg:px-16">
@@ -1779,8 +1721,15 @@ export default function AdminPage() {
         {/* ERROR */}
 
         {error && (
-          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-            {error}
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700 flex items-center justify-between">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => loadData(true)}
+              className="font-semibold text-red-800 underline hover:text-red-950 transition text-xs shrink-0"
+            >
+              Retry
+            </button>
           </div>
         )}
 
