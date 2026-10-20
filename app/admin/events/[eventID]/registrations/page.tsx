@@ -8,6 +8,10 @@ import {
   generateRegistrationExportCsv,
   generateParticipantExportCsv,
 } from "@/lib/admin/csv-export";
+import {
+  exportRegistrationXlsx,
+  exportParticipantXlsx,
+} from "@/lib/admin/excel-export";
 import { CsvExportDropdown } from "@/components/admin/CsvExportDropdown";
 import {
   RefreshCw,
@@ -865,49 +869,27 @@ export default function EventRegistrationsPage() {
     activeRegistrations.length - totalCheckedIn;
 
   // ---------------------------------------------------------
-  // CSV EXPORT
+  // EXCEL EXPORT (FOUR-SHEET WORKBOOKS)
   // ---------------------------------------------------------
 
-  function exportRegistrationCSV() {
-    const csv = generateRegistrationExportCsv(filteredRegistrations);
-    const blob = new Blob([csv], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `saviskar-${currentEventName
-      .toLowerCase()
-      .replace(/\s+/g, "-")}-registrations-orders-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  async function exportRegistrationCSV() {
+    const slug = currentEventName.toLowerCase().replace(/\s+/g, "-");
+    await exportRegistrationXlsx(
+      filteredRegistrations,
+      `saviskar-${slug}-registrations-2026.xlsx`
+    );
   }
 
-  function exportParticipantCSV() {
-    const csv = generateParticipantExportCsv(filteredRegistrations);
-    const blob = new Blob([csv], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `saviskar-${currentEventName
-      .toLowerCase()
-      .replace(/\s+/g, "-")}-participants-attendees-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  async function exportParticipantCSV() {
+    const slug = currentEventName.toLowerCase().replace(/\s+/g, "-");
+    await exportParticipantXlsx(
+      filteredRegistrations,
+      `saviskar-${slug}-participants-attendees-2026.xlsx`
+    );
   }
 
   function exportCSV() {
-    exportRegistrationCSV();
+    void exportRegistrationCSV();
   }
 
   // ---------------------------------------------------------

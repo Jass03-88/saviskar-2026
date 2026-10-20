@@ -15,9 +15,9 @@ export default function AdminLayout({
   children: ReactNode;
 }) {
   return (
-    <>
+    <div className="admin-root selection:bg-[#2563EB] selection:text-white min-h-screen" data-admin-root>
       <AdminSessionWatcher />
       {children}
-    </>
+    </div>
   );
 }
