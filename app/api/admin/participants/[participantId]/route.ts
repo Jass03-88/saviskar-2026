@@ -93,7 +93,7 @@ export async function GET(
           main_checked_in,
           main_checked_in_at,
           registration_group_id,
-          events(name)
+          events(name, category, registration_fee, payment_type)
         ),
         participant_event_members (
           id,
@@ -110,7 +110,7 @@ export async function GET(
             main_checked_in,
             main_checked_in_at,
             registration_group_id,
-            events(name)
+            events(name, category, registration_fee, payment_type)
           )
         ),
         participant_accommodations (
@@ -160,7 +160,7 @@ export async function GET(
             team_name,
             checked_in,
             checked_in_at,
-            events(name)
+            events(name, category, registration_fee, payment_type)
           ),
           participant_event_members (
             id,
@@ -174,7 +174,7 @@ export async function GET(
               team_name,
               checked_in,
               checked_in_at,
-              events(name)
+              events(name, category, registration_fee, payment_type)
             )
           ),
           participant_accommodations (
@@ -243,8 +243,18 @@ export async function GET(
     main_checked_in_at?: string | null;
     registration_group_id?: string | null;
     events:
-      | { name: string | null }
-      | { name: string | null }[]
+      | {
+          name: string | null;
+          category?: string | null;
+          registration_fee?: number | null;
+          payment_type?: string | null;
+        }
+      | {
+          name: string | null;
+          category?: string | null;
+          registration_fee?: number | null;
+          payment_type?: string | null;
+        }[]
       | null;
   };
 
@@ -367,22 +377,26 @@ export async function GET(
 
     faculty: facultyWithSignedUrls,
 
-    events: combinedEvents.map((event) => ({
-      participantEventId: event.id,
-      eventId: event.event_id,
-      eventName:
-        (Array.isArray(event.events) ? event.events[0] : event.events)?.name ??
-        "Unknown event",
-      registrationStatus: event.registration_status,
-      paymentStatus: event.payment_status,
-      paymentAmount: event.payment_amount,
-      teamName: event.team_name,
-      checkedIn: event.checked_in ?? false,
-      checkedInAt: event.checked_in_at,
-      mainCheckedIn: event.main_checked_in ?? false,
-      mainCheckedInAt: event.main_checked_in_at ?? null,
-      registrationGroupId: event.registration_group_id ?? null,
-    })),
+    events: combinedEvents.map((event) => {
+      const eventMeta = Array.isArray(event.events) ? event.events[0] : event.events;
+      return {
+        participantEventId: event.id,
+        eventId: event.event_id,
+        eventName: eventMeta?.name ?? "Unknown event",
+        eventCategory: eventMeta?.category ?? null,
+        registrationFee: eventMeta?.registration_fee ?? 0,
+        paymentType: eventMeta?.payment_type ?? (event.payment_amount === 0 ? "free" : "paid"),
+        registrationStatus: event.registration_status,
+        paymentStatus: event.payment_status,
+        paymentAmount: event.payment_amount,
+        teamName: event.team_name,
+        checkedIn: event.checked_in ?? false,
+        checkedInAt: event.checked_in_at,
+        mainCheckedIn: event.main_checked_in ?? false,
+        mainCheckedInAt: event.main_checked_in_at ?? null,
+        registrationGroupId: event.registration_group_id ?? null,
+      };
+    }),
 
     accommodations: Array.isArray(dataResult.participant_accommodations)
       ? dataResult.participant_accommodations.map((acc: any) => ({

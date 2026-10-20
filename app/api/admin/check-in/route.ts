@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireAdmin } from "@/lib/supabase/server";
 import { parseAdminCategories } from "@/lib/admin/scope";
+import { evaluateEventPaymentStatus } from "@/lib/admin/check-in-rules";
 
 function response(body: unknown, status = 200) {
   return NextResponse.json(body, {
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
   let participantEvent: any = null;
   const { data: peWithGroup, error: fetchErrorWithGroup } = await supabaseAdmin
     .from("participant_events")
-    .select("id, payment_status, payment_amount, team_name, event_id, participant_id, registration_group_id")
+    .select("id, payment_status, payment_amount, registration_status, team_name, event_id, participant_id, registration_group_id")
     .eq("id", participantEventId)
     .single();
 
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
     if (fetchErrorWithGroup.code === "42703") {
       const { data: fallbackData, error: fallbackError } = await supabaseAdmin
         .from("participant_events")
-        .select("id, payment_status, payment_amount, team_name, event_id, participant_id")
+        .select("id, payment_status, payment_amount, registration_status, team_name, event_id, participant_id")
         .eq("id", participantEventId)
         .single();
         
@@ -99,24 +100,42 @@ export async function POST(request: NextRequest) {
     const rawAmount = participantEvent.payment_amount;
     const paymentStatus = participantEvent.payment_status;
 
-    if (
-      rawAmount === null ||
-      rawAmount === undefined ||
-      typeof rawAmount !== "number" ||
-      Number.isNaN(rawAmount) ||
-      rawAmount < 0
-    ) {
-      return response({ success: false, error: "Inconsistent payment record: invalid amount." }, 400);
+    let eventMeta: {
+      category?: string | null;
+      registration_fee?: number | null;
+      payment_type?: string | null;
+    } | null = null;
+
+    if (participantEvent.event_id) {
+      const eventsTable = supabaseAdmin.from("events");
+      if (typeof eventsTable?.select === "function") {
+        const { data: evData } = await eventsTable
+          .select("category, registration_fee, payment_type")
+          .eq("id", participantEvent.event_id)
+          .maybeSingle();
+        eventMeta = evData;
+      }
     }
 
-    if (rawAmount > 0 && paymentStatus === "not_required") {
-      return response({ success: false, error: "Inconsistent payment record." }, 400);
-    }
+    const decision = evaluateEventPaymentStatus({
+      registrationFee: eventMeta?.registration_fee,
+      paymentType: eventMeta?.payment_type,
+      paymentAmount: rawAmount,
+      paymentStatus,
+      registrationStatus: participantEvent.registration_status,
+    });
 
-    if (
-      (rawAmount > 0 && paymentStatus !== "paid") ||
-      (paymentStatus !== "paid" && paymentStatus !== "not_required")
-    ) {
+    if (!decision.canCheckIn) {
+      if (decision.httpStatus === 400) {
+        return response(
+          {
+            success: false,
+            error: decision.rejectionReason || "Inconsistent payment record.",
+          },
+          400
+        );
+      }
+
       return response(
         {
           success: false,
@@ -126,7 +145,8 @@ export async function POST(request: NextRequest) {
         402
       );
     }
-    paymentAmount = rawAmount;
+
+    paymentAmount = typeof rawAmount === "number" ? rawAmount : 0;
     teamName = participantEvent.team_name;
     eventId = participantEvent.event_id;
   }
