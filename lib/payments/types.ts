@@ -114,6 +114,24 @@ export type FetchedPaymentDetails = {
 
   /** Gateway timestamp when transaction was recorded */
   addedOn?: string;
+
+  /** Explicit gateway additional charges/surcharge in paise, if returned by gateway */
+  additionalCharges?: number;
+
+  /** Bank reference number returned by PayU / issuing bank */
+  bankRefNum?: string;
+
+  /** UDF1 metadata echoed back by gateway */
+  udf1?: string;
+
+  /** Net settlement amount credited to merchant in paise */
+  settlementAmount?: number;
+
+  /** Gateway deductions or discounts in paise */
+  deductions?: number;
+
+  /** Total customer transaction amount debited in paise */
+  customerTransactionAmount?: number;
 };
 
 export class PaymentVerificationError extends Error {

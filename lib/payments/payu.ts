@@ -341,12 +341,41 @@ export class PayUGateway implements PaymentGateway {
     }
 
     const txRecord = transaction as Record<string, unknown>;
-    const rawAmt = typeof txRecord.transaction_amount === "string" && txRecord.transaction_amount
-      ? parseFloat(txRecord.transaction_amount)
-      : txRecord.additional_charges
-        ? parseFloat(transaction.amt || "0") - parseFloat(String(txRecord.additional_charges) || "0")
-        : parseFloat(transaction.amt || transaction.amount || "0");
+    const rawAmt = txRecord.additional_charges && typeof txRecord.transaction_amount === "string"
+      ? parseFloat(txRecord.transaction_amount) - parseFloat(String(txRecord.additional_charges))
+      : typeof txRecord.amt === "string" && txRecord.amt
+        ? parseFloat(txRecord.amt)
+        : typeof txRecord.transaction_amount === "string" && txRecord.transaction_amount
+          ? parseFloat(txRecord.transaction_amount)
+          : parseFloat(transaction.amount || "0");
     const amountInPaise = Math.round(rawAmt * 100);
+
+    const additionalChargesStr = txRecord.additional_charges ? String(txRecord.additional_charges) : undefined;
+    const additionalChargesPaise = additionalChargesStr && !isNaN(parseFloat(additionalChargesStr))
+      ? Math.round(parseFloat(additionalChargesStr) * 100)
+      : 0;
+
+    const bankRefNum = typeof txRecord.bank_ref_num === "string" && txRecord.bank_ref_num.trim()
+      ? txRecord.bank_ref_num.trim()
+      : typeof txRecord.field2 === "string" && txRecord.field2.trim()
+        ? txRecord.field2.trim()
+        : undefined;
+
+    const udf1 = typeof txRecord.udf1 === "string" && txRecord.udf1.trim()
+      ? txRecord.udf1.trim()
+      : undefined;
+
+    const settlementAmountPaise = typeof txRecord.net_amount_debit === "string" && !isNaN(parseFloat(txRecord.net_amount_debit))
+      ? Math.round(parseFloat(txRecord.net_amount_debit) * 100)
+      : undefined;
+
+    const deductionsPaise = typeof txRecord.disc === "string" && !isNaN(parseFloat(txRecord.disc))
+      ? Math.round(parseFloat(txRecord.disc) * 100)
+      : 0;
+
+    const customerTxnAmountPaise = typeof txRecord.transaction_amount === "string" && !isNaN(parseFloat(txRecord.transaction_amount))
+      ? Math.round(parseFloat(txRecord.transaction_amount) * 100)
+      : undefined;
 
     return {
       gatewayPaymentId: transaction.mihpayid?.toString() || "",
@@ -358,6 +387,159 @@ export class PayUGateway implements PaymentGateway {
       unmappedStatus: typeof txRecord.unmappedstatus === "string" ? txRecord.unmappedstatus : undefined,
       mode: typeof txRecord.mode === "string" ? txRecord.mode : undefined,
       addedOn: typeof txRecord.addedon === "string" ? txRecord.addedon : undefined,
+      additionalCharges: additionalChargesPaise,
+      bankRefNum,
+      udf1,
+      settlementAmount: settlementAmountPaise,
+      deductions: deductionsPaise,
+      customerTransactionAmount: customerTxnAmountPaise,
     };
+  }
+
+  /**
+   * Batch verification of multiple PayU gateway order references (txnid)
+   * using PayU's pipe-delimited verify_payment command.
+   *
+   * PayU supports up to 50 txnids per request. We enforce bounded chunks (max 25)
+   * with strict 15-second timeouts and safe error handling.
+   */
+  async fetchPaymentBatchDetails(gatewayOrderIds: string[]): Promise<Record<string, FetchedPaymentDetails>> {
+    if (!gatewayOrderIds || gatewayOrderIds.length === 0) {
+      return {};
+    }
+
+    const uniqueIds = Array.from(new Set(gatewayOrderIds.filter((id) => Boolean(id && id.trim()))));
+    if (uniqueIds.length === 0) return {};
+
+    const CHUNK_SIZE = 25; // Safely below PayU's 50 limit
+    const results: Record<string, FetchedPaymentDetails> = {};
+
+    for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+      const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+      const var1 = chunk.join("|");
+      const command = "verify_payment";
+      const hash = generatePayUCommandHash({
+        key: this.key,
+        command,
+        var1,
+        salt: this.salt,
+      });
+
+      const body = new URLSearchParams();
+      body.append("key", this.key);
+      body.append("command", command);
+      body.append("var1", var1);
+      body.append("hash", hash);
+
+      let response: Response;
+      try {
+        response = await fetch(this.verifyEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: body.toString(),
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch (err) {
+        const isTimeout =
+          err instanceof Error &&
+          (err.name === "TimeoutError" || err.message.toLowerCase().includes("timeout"));
+        throw new PaymentVerificationError(
+          isTimeout ? "timeout" : "network",
+          `fetchPaymentBatchDetails: Network/timeout error verifying batch: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => "(unreadable)");
+        throw new PaymentVerificationError(
+          "provider_error",
+          `fetchPaymentBatchDetails: PayU returned HTTP ${response.status}: ${errorBody}`
+        );
+      }
+
+      const text = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new PaymentVerificationError(
+          "malformed",
+          "fetchPaymentBatchDetails: Malformed non-JSON response from PayU."
+        );
+      }
+
+      const detailsMap = data?.transaction_details || {};
+
+      for (const txnid of chunk) {
+        const transaction = detailsMap[txnid];
+        if (!transaction || transaction.status === "Not Found" || transaction.mihpayid === "Not Found") {
+          results[txnid] = {
+            gatewayPaymentId: "",
+            gatewayOrderId: txnid,
+            status: "not_found",
+            amount: 0,
+            currency: "INR",
+            rawStatus: transaction?.status || "Not Found",
+          };
+          continue;
+        }
+
+        const rawStatus = (transaction.status || "").toLowerCase().trim();
+        let parsedStatus = "failed";
+        if (rawStatus === "success") parsedStatus = "paid";
+        else if (rawStatus === "pending" || rawStatus === "in progress") parsedStatus = "pending";
+        else if (rawStatus === "not found") parsedStatus = "not_found";
+
+        const txRecord = transaction as Record<string, unknown>;
+        const rawAmt = txRecord.additional_charges && typeof txRecord.transaction_amount === "string"
+          ? parseFloat(txRecord.transaction_amount) - parseFloat(String(txRecord.additional_charges))
+          : typeof txRecord.amt === "string" && txRecord.amt
+            ? parseFloat(txRecord.amt)
+            : typeof txRecord.transaction_amount === "string" && txRecord.transaction_amount
+              ? parseFloat(txRecord.transaction_amount)
+              : parseFloat(transaction.amount || "0");
+
+        const additionalChargesStr = txRecord.additional_charges ? String(txRecord.additional_charges) : undefined;
+        const additionalChargesPaise = additionalChargesStr && !isNaN(parseFloat(additionalChargesStr))
+          ? Math.round(parseFloat(additionalChargesStr) * 100)
+          : 0;
+
+        results[txnid] = {
+          gatewayPaymentId: transaction.mihpayid?.toString() || "",
+          gatewayOrderId: transaction.txnid || txnid,
+          status: parsedStatus,
+          amount: Math.round(rawAmt * 100),
+          currency: "INR",
+          rawStatus: transaction.status,
+          unmappedStatus: typeof txRecord.unmappedstatus === "string" ? txRecord.unmappedstatus : undefined,
+          mode: typeof txRecord.mode === "string" ? txRecord.mode : undefined,
+          addedOn: typeof txRecord.addedon === "string" ? txRecord.addedon : undefined,
+          additionalCharges: additionalChargesPaise,
+          bankRefNum: typeof txRecord.bank_ref_num === "string" && txRecord.bank_ref_num.trim()
+            ? txRecord.bank_ref_num.trim()
+            : typeof txRecord.field2 === "string" && txRecord.field2.trim()
+              ? txRecord.field2.trim()
+              : undefined,
+          udf1: typeof txRecord.udf1 === "string" && txRecord.udf1.trim()
+            ? txRecord.udf1.trim()
+            : undefined,
+          settlementAmount: typeof txRecord.net_amount_debit === "string" && !isNaN(parseFloat(txRecord.net_amount_debit))
+            ? Math.round(parseFloat(txRecord.net_amount_debit) * 100)
+            : undefined,
+          deductions: typeof txRecord.disc === "string" && !isNaN(parseFloat(txRecord.disc))
+            ? Math.round(parseFloat(txRecord.disc) * 100)
+            : 0,
+          customerTransactionAmount: typeof txRecord.transaction_amount === "string" && !isNaN(parseFloat(txRecord.transaction_amount))
+            ? Math.round(parseFloat(txRecord.transaction_amount) * 100)
+            : undefined,
+        };
+      }
+    }
+
+    return results;
   }
 }
