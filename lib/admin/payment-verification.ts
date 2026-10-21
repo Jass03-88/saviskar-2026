@@ -1302,7 +1302,7 @@ export function generateSanitizedDiagnosticReport(verification: VerificationResp
         }`
       );
       lines.push(
-        `- **Merchant Settlement (net_amount_debit / amount_settled)**: ${
+        `- **Merchant Settlement (amount_settled)**: ${
           o.settlementAmount != null
             ? `₹${o.settlementAmount.toFixed(2)}`
             : "Not returned by PayU"

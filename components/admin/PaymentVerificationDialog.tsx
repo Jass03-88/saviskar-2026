@@ -492,7 +492,7 @@ export function PaymentVerificationDialog({
       lines.push(`  - Gateway Base Amount (PayU amt / transaction_amount): ${o.gatewayReportedAmount != null ? `₹${o.gatewayReportedAmount.toFixed(2)}` : "Not returned by PayU"}`);
       lines.push(`  - Additional Charge Reported by PayU (additional_charges): ${o.additionalCharges != null && o.additionalCharges > 0 ? `₹${o.additionalCharges.toFixed(2)}` : "Not returned by PayU"}`);
       lines.push(`  - Customer Debit (Calculated/Reported): ${o.customerTransactionAmount != null ? `₹${o.customerTransactionAmount.toFixed(2)}` : "Not returned by PayU"}`);
-      lines.push(`  - Merchant Settlement (net_amount_debit / amount_settled): ${o.settlementAmount != null ? `₹${o.settlementAmount.toFixed(2)}` : "Not returned by PayU"}`);
+      lines.push(`  - Merchant Settlement (amount_settled): ${o.settlementAmount != null ? `₹${o.settlementAmount.toFixed(2)}` : "Not returned by PayU"}`);
       lines.push(`  - Gateway Deductions / Fees (PayU disc): ${o.deductions != null ? `₹${o.deductions.toFixed(2)}` : "₹0.00"}`);
       if (o.payuAmt != null || o.payuTransactionAmount != null) {
         lines.push(`  - PayU Raw Fields: amt=${o.payuAmt != null ? o.payuAmt.toFixed(2) : "N/A"}, transaction_amount=${o.payuTransactionAmount != null ? o.payuTransactionAmount.toFixed(2) : "N/A"}`);
@@ -1247,7 +1247,7 @@ export function PaymentVerificationDialog({
                                   </div>
 
                                   {/* AUTHORITATIVE BANK & GATEWAY METADATA */}
-                                  {(order.bankRefNum || order.udf1 || order.deductions != null || order.payuAmt != null) && (
+                                  {(order.bankRefNum || order.udf1 || order.deductions != null || order.payuAmt != null || order.payuTransactionAmount != null) && (
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-[11px] bg-white p-3.5 rounded-xl border border-black/[0.06]">
                                       <div>
                                         <span className="text-black/40 block text-[9px] uppercase font-bold">
@@ -1279,6 +1279,7 @@ export function PaymentVerificationDialog({
                                         </span>
                                         <span className="font-mono text-black/80 block truncate">
                                           amt: {order.payuAmt != null ? `₹${order.payuAmt.toFixed(2)}` : "—"}
+                                          {order.payuTransactionAmount != null ? ` | txn_amt: ₹${order.payuTransactionAmount.toFixed(2)}` : ""}
                                         </span>
                                       </div>
                                     </div>

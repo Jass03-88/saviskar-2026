@@ -47,8 +47,8 @@ export type NormalizedPayUAmounts = {
  * - `amt`: Merchant-requested base transaction amount (e.g. "999.00").
  * - `transaction_amount`: Base or gross captured transaction amount (e.g. "999.00" or "1000.18").
  * - `additional_charges`: Explicit customer-side payment gateway surcharge / convenience fee (e.g. "1.18").
- * - `net_amount_debit`: Net amount credited to merchant account or debited (e.g. "999.00").
- * - `amount_settled`: Explicit settlement amount credited to merchant (e.g. "999.00").
+ * - `net_amount_debit`: Customer debit amount debited from customer account/card (e.g. "1000.18").
+ * - `amount_settled`: Authoritative settlement amount credited to merchant bank account (e.g. "999.00"). Only present when returned by settlement APIs.
  * - `disc`: Merchant-side discount or deduction (e.g. "0.00").
  *
  * Never subtracts explicit charges from transaction_amount when transaction_amount is already the base amount!
@@ -116,20 +116,47 @@ export function normalizePayUAmountFields(
     }
   }
 
-  // Settlement amount resolution & mismatch check
+  // Corroborate customer debit using net_amount_debit
+  // In PayU's API contract, net_amount_debit represents the customer debit amount (either gross debit or net of surcharge).
+  if (netDebitPaise != null) {
+    if (customerTransactionAmountPaise == null) {
+      customerTransactionAmountPaise =
+        additionalChargesPaise > 0 && netDebitPaise === baseAmountPaise
+          ? baseAmountPaise + additionalChargesPaise
+          : netDebitPaise;
+    } else if (
+      netDebitPaise !== customerTransactionAmountPaise &&
+      netDebitPaise !== baseAmountPaise
+    ) {
+      const debitDiff = `PayU customer debit discrepancy: 'net_amount_debit' (₹${(netDebitPaise / 100).toFixed(2)}) differs from customer debit (₹${(customerTransactionAmountPaise / 100).toFixed(2)}).`;
+      amountAmbiguityReason = amountAmbiguityReason
+        ? `${amountAmbiguityReason} ${debitDiff}`
+        : debitDiff;
+    }
+  }
+
+  // Settlement amount resolution & validation
+  // Merchant settlement ONLY comes from an authoritative settlement field (amount_settled).
+  // Under NO circumstances fall back to net_amount_debit (customer debit), amt, or transaction_amount.
   let settlementAmountPaise: number | undefined;
-  if (netDebitPaise != null && amountSettledPaise != null) {
-    if (netDebitPaise !== amountSettledPaise) {
-      const settleDiff = `PayU settlement discrepancy: 'net_amount_debit' (₹${netDebitPaise / 100}) differs from 'amount_settled' (₹${amountSettledPaise / 100}).`;
+  if (amountSettledPaise != null) {
+    settlementAmountPaise = amountSettledPaise;
+    if (
+      customerTransactionAmountPaise != null &&
+      amountSettledPaise > customerTransactionAmountPaise
+    ) {
+      const settleDiff = `PayU settlement discrepancy: 'amount_settled' (₹${(amountSettledPaise / 100).toFixed(2)}) exceeds customer debit (₹${(customerTransactionAmountPaise / 100).toFixed(2)}).`;
       amountAmbiguityReason = amountAmbiguityReason
         ? `${amountAmbiguityReason} ${settleDiff}`
         : settleDiff;
     }
-    settlementAmountPaise = amountSettledPaise;
-  } else if (amountSettledPaise != null) {
-    settlementAmountPaise = amountSettledPaise;
-  } else if (netDebitPaise != null) {
-    settlementAmountPaise = netDebitPaise;
+    const expectedMerchantNet = baseAmountPaise - deductionsPaise;
+    if (expectedMerchantNet > 0 && amountSettledPaise !== expectedMerchantNet) {
+      const settleNetDiff = `PayU settlement discrepancy: 'amount_settled' (₹${(amountSettledPaise / 100).toFixed(2)}) differs from expected merchant net settlement (₹${(expectedMerchantNet / 100).toFixed(2)}).`;
+      amountAmbiguityReason = amountAmbiguityReason
+        ? `${amountAmbiguityReason} ${settleNetDiff}`
+        : settleNetDiff;
+    }
   }
 
   return {
