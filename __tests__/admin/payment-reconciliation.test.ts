@@ -7,6 +7,7 @@ import {
   toPaise,
   ReconciliationOutcome,
   formatIndianTimestamp,
+  getReconciliationConfirmationSummary,
 } from "@/lib/admin/payment-verification";
 import {
   generateEmailPreviews,
@@ -3908,4 +3909,458 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
       expect(report).not.toContain("sha512");
     });
   });
+
+  // =========================================================================
+  // Part 12: Reconciliation Confirmation Dialog Display & Transition Safety Suite (97–107)
+  // =========================================================================
+  describe("Part 12: Reconciliation Confirmation Dialog Display & Transition Safety", () => {
+    it("97. Requirement 1: Separate Reference Identifiers are accurately labeled without ambiguity", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "order-uuid-1",
+        orderReference: "SVK-SVK26-2B846A46-20261019180605894-68460D",
+        gatewayOrderId: "SVK-1792433168043-c5151e1",
+        gatewayPaymentId: "31387025914",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0001",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 1.18,
+        settlementAmount: 999,
+        customerTransactionAmount: 1000.18,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Payment confirmed on gateway.",
+        linkedItems: [
+          {
+            id: "acc-1",
+            itemType: "accommodation",
+            title: "2 Days Accommodation",
+            expectedAmount: 999,
+            localStatus: "pending",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.saviskarOrderRef).toBe("SVK-SVK26-2B846A46-20261019180605894-68460D");
+      expect(summary.merchantTxnRef).toBe("SVK-1792433168043-c5151e1");
+      expect(summary.payuPaymentId).toBe("31387025914");
+      expect(summary.expectedAmountINR).toBe(999);
+      expect(summary.canSettle).toBe(true);
+    });
+
+    it("98. Requirement 1 & 4: Merchant Transaction Reference (txnid) is NEVER substituted as PayU Payment ID (mihpayid)", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "order-uuid-2",
+        orderReference: "SVK-ORD-REF",
+        gatewayOrderId: "SVK-TXNID-12345", // merchant reference (txnid)
+        gatewayPaymentId: null, // missing mihpayid!
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0002",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Payment confirmed on gateway.",
+        linkedItems: [],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.merchantTxnRef).toBe("SVK-TXNID-12345");
+      // Must NOT substitute gatewayOrderId into payuPaymentId!
+      expect(summary.payuPaymentId).not.toBe("SVK-TXNID-12345");
+      expect(summary.payuPaymentId).toBe("Not returned by PayU");
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("Missing PayU Payment ID (mihpayid)");
+    });
+
+    it("99. Requirement 1 & 8: Missing IDs display Unavailable fallback rather than cross-populating", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "order-uuid-3",
+        orderReference: "",
+        gatewayOrderId: "",
+        gatewayPaymentId: "",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0003",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Payment confirmed on gateway.",
+        linkedItems: [],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.saviskarOrderRef).toBe("Unavailable");
+      expect(summary.merchantTxnRef).toBe("Unavailable");
+      expect(summary.payuPaymentId).toBe("Not returned by PayU");
+    });
+
+    it("100. Requirement 2 & 5 & 6: Known Target Case derives Payment Order FAILED → PAID and 2 Days Accommodation PENDING → PAID", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        orderReference: "SVK-SVK26-2B846A46-20261019180605894-68460D",
+        gatewayOrderId: "SVK-1792433168043-c5151e1",
+        gatewayPaymentId: "31387025914",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Kritika Sangotra",
+        payerEmail: "kritika@example.com",
+        payerPublicId: "SVK-26-0004",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 1.18,
+        settlementAmount: 999,
+        customerTransactionAmount: 1000.18,
+        localOrderStatus: "failed", // Real local order status is FAILED
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment; eligible for administrative settlement.",
+        linkedItems: [
+          {
+            id: "70f77d52-4f5a-4268-a4b3-00b9771ffd33",
+            itemType: "accommodation",
+            title: "2 Days Accommodation",
+            expectedAmount: 999,
+            localStatus: "pending",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions).toHaveLength(2);
+
+      // 1. Payment Order row: FAILED → PAID (NOT hardcoded pending!)
+      expect(summary.transitions[0].recordName).toBe("Payment Order");
+      expect(summary.transitions[0].sourceStatus).toBe("failed");
+      expect(summary.transitions[0].targetStatus).toBe("paid");
+      expect(summary.transitions[0].transitionDisplay).toBe("FAILED → PAID");
+      expect(summary.transitions[0].isUnchanged).toBe(false);
+
+      // 2. Accommodation row: PENDING → PAID
+      expect(summary.transitions[1].recordName).toBe("2 Days Accommodation");
+      expect(summary.transitions[1].sourceStatus).toBe("pending");
+      expect(summary.transitions[1].targetStatus).toBe("paid");
+      expect(summary.transitions[1].transitionDisplay).toBe("PENDING → PAID");
+      expect(summary.transitions[1].isUnchanged).toBe(false);
+
+      expect(summary.canSettle).toBe(true);
+    });
+
+    it("101. Requirement 2 & 5: Payment order with local status pending shows PENDING → PAID", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "order-pending-1",
+        orderReference: "SVK-PENDING-REF",
+        gatewayOrderId: "SVK-TXN-PENDING",
+        gatewayPaymentId: "31387099999",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0005",
+        expectedAmount: 500,
+        currency: "INR",
+        gatewayReportedAmount: 500,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "pending",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment.",
+        linkedItems: [
+          {
+            id: "evt-1",
+            itemType: "event",
+            title: "Roborace Challenge",
+            expectedAmount: 500,
+            localStatus: "pending",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions[0].transitionDisplay).toBe("PENDING → PAID");
+      expect(summary.transitions[1].transitionDisplay).toBe("PENDING → PAID");
+      expect(summary.canSettle).toBe(true);
+    });
+
+    it("102. Requirement 2 & 7: Multiple linked items each display their independent expected transition", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "multi-order-1",
+        orderReference: "SVK-MULTI-REF",
+        gatewayOrderId: "SVK-TXN-MULTI",
+        gatewayPaymentId: "31387088888",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0006",
+        expectedAmount: 1499,
+        currency: "INR",
+        gatewayReportedAmount: 1499,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment.",
+        linkedItems: [
+          {
+            id: "evt-1",
+            itemType: "event",
+            title: "Web Dev Sprint",
+            expectedAmount: 500,
+            localStatus: "pending",
+          },
+          {
+            id: "acc-1",
+            itemType: "accommodation",
+            title: "2 Days Accommodation",
+            expectedAmount: 999,
+            localStatus: "pending",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions).toHaveLength(3);
+      expect(summary.transitions[0].recordName).toBe("Payment Order");
+      expect(summary.transitions[0].transitionDisplay).toBe("FAILED → PAID");
+
+      expect(summary.transitions[1].recordName).toBe("Web Dev Sprint");
+      expect(summary.transitions[1].transitionDisplay).toBe("PENDING → PAID");
+
+      expect(summary.transitions[2].recordName).toBe("2 Days Accommodation");
+      expect(summary.transitions[2].transitionDisplay).toBe("PENDING → PAID");
+    });
+
+    it("103. Requirement 2: Already-paid items do not claim active status changes and block redundant settlement", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "paid-order-1",
+        orderReference: "SVK-ALREADY-PAID",
+        gatewayOrderId: "SVK-TXN-PAID",
+        gatewayPaymentId: "31387077777",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0007",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "paid",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_created",
+        outcome: "MATCHED_PAID",
+        outcomeMessage: "Order is already paid.",
+        linkedItems: [
+          {
+            id: "acc-1",
+            itemType: "accommodation",
+            title: "2 Days Accommodation",
+            expectedAmount: 999,
+            localStatus: "paid",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions[0].isUnchanged).toBe(true);
+      expect(summary.transitions[0].transitionDisplay).toBe("PAID (Already Settled)");
+      expect(summary.transitions[1].isUnchanged).toBe(true);
+      expect(summary.transitions[1].transitionDisplay).toBe("PAID (Already Settled)");
+
+      // Redundant settlement should be blocked
+      expect(summary.canSettle).toBe(false);
+    });
+
+    it("104. Requirement 2 & 10: Missing accommodation booking or corrupted status displays Outcome requires review and blocks confirmation", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "corrupted-order-1",
+        orderReference: "SVK-CORRUPT-REF",
+        gatewayOrderId: "SVK-TXN-CORRUPT",
+        gatewayPaymentId: "31387066666",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0008",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment.",
+        linkedItems: [
+          {
+            id: "acc-missing-1",
+            itemType: "accommodation",
+            title: "Missing Accommodation Booking",
+            expectedAmount: 999,
+            localStatus: "missing", // Booking record is missing!
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions[1].requiresReview).toBe(true);
+      expect(summary.transitions[1].transitionDisplay).toBe("Outcome requires review");
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("require administrative review");
+    });
+
+    it("105. Requirement 3 & 10: Amount ambiguity blocks settlement in the confirmation summary", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "ambig-order-1",
+        orderReference: "SVK-AMBIG-REF",
+        gatewayOrderId: "SVK-TXN-AMBIG",
+        gatewayPaymentId: "31387055555",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0009",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 1.18,
+        amountAmbiguityReason: "Contradictory settlement amount fields returned by PayU.",
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment.",
+        linkedItems: [],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("Contradictory settlement amount fields");
+    });
+
+    it("106. Requirement 3 & 10: Non-reconcilable outcome (e.g. AMOUNT_MISMATCH) blocks settlement", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "mismatch-order-1",
+        orderReference: "SVK-MISMATCH-REF",
+        gatewayOrderId: "SVK-TXN-MISMATCH",
+        gatewayPaymentId: "31387044444",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0010",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 500, // Mismatch!
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "AMOUNT_MISMATCH",
+        outcomeMessage: "Order amount (₹999) does not match gateway captured amount (₹500).",
+        linkedItems: [],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("does not match gateway captured amount");
+    });
+
+    it("107. Requirement 3 & 9: Summary calculation is pure and causes zero RPC calls or side effects", () => {
+      const mockOrder: any = {
+        orderId: "pure-check-1",
+        orderReference: "SVK-PURE-REF",
+        gatewayOrderId: "SVK-TXN-PURE",
+        gatewayPaymentId: "31387033333",
+        expectedAmount: 999,
+        localOrderStatus: "failed",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        linkedItems: [{ id: "acc-1", itemType: "accommodation", title: "Stay", localStatus: "pending" }],
+      };
+
+      // Calling helper multiple times produces identical pure outputs without mutating order
+      const summary1 = getReconciliationConfirmationSummary(mockOrder);
+      const summary2 = getReconciliationConfirmationSummary(mockOrder);
+
+      expect(summary1).toEqual(summary2);
+      expect(mockOrder.localOrderStatus).toBe("failed"); // No mutation
+    });
+  });
+
 });

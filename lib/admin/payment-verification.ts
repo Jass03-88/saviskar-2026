@@ -1347,3 +1347,190 @@ export function generateSanitizedDiagnosticReport(verification: VerificationResp
 
   return lines.join("\n");
 }
+
+export type RecordStatusTransition = {
+  recordName: string;
+  itemType: "order" | "accommodation" | "event";
+  sourceStatus: string;
+  targetStatus: string;
+  transitionDisplay: string;
+  isUnchanged: boolean;
+  requiresReview: boolean;
+};
+
+export type ReconciliationConfirmationSummary = {
+  canSettle: boolean;
+  blockReason?: string;
+  saviskarOrderRef: string;
+  merchantTxnRef: string;
+  payuPaymentId: string;
+  expectedAmountINR: number;
+  transitions: RecordStatusTransition[];
+};
+
+/**
+ * Derives safe, authoritative reference labels and pre/post settlement status
+ * transitions for the Payment Reconciliation confirmation modal.
+ * Strictly adheres to the database RPC (process_payment_success) contract.
+ */
+export function getReconciliationConfirmationSummary(
+  order: OrderVerificationResult | null | undefined
+): ReconciliationConfirmationSummary {
+  if (!order) {
+    return {
+      canSettle: false,
+      blockReason: "No order selected for reconciliation.",
+      saviskarOrderRef: "Unavailable",
+      merchantTxnRef: "Unavailable",
+      payuPaymentId: "Not returned by PayU",
+      expectedAmountINR: 0,
+      transitions: [],
+    };
+  }
+
+  // 1. Separate Reference Identifiers — Strictly Never Substituted
+  const saviskarOrderRef =
+    typeof order.orderReference === "string" && order.orderReference.trim()
+      ? order.orderReference.trim()
+      : typeof order.udf1 === "string" && order.udf1.trim()
+        ? order.udf1.trim()
+        : "Unavailable";
+
+  const merchantTxnRef =
+    typeof order.gatewayOrderId === "string" && order.gatewayOrderId.trim()
+      ? order.gatewayOrderId.trim()
+      : "Unavailable";
+
+  const payuPaymentId =
+    typeof order.gatewayPaymentId === "string" && order.gatewayPaymentId.trim()
+      ? order.gatewayPaymentId.trim()
+      : "Not returned by PayU";
+
+  const expectedAmountINR = typeof order.expectedAmount === "number" ? order.expectedAmount : 0;
+
+  // 2. Derive Status Transitions according to process_payment_success contract
+  const transitions: RecordStatusTransition[] = [];
+  let hasReviewBlocker = false;
+
+  // 2a. Payment Order Record
+  const localOrderStatus = (order.localOrderStatus || "").toLowerCase().trim();
+  if (localOrderStatus === "failed" || localOrderStatus === "pending") {
+    transitions.push({
+      recordName: "Payment Order",
+      itemType: "order",
+      sourceStatus: localOrderStatus,
+      targetStatus: "paid",
+      transitionDisplay: `${localOrderStatus.toUpperCase()} → PAID`,
+      isUnchanged: false,
+      requiresReview: false,
+    });
+  } else if (localOrderStatus === "paid") {
+    transitions.push({
+      recordName: "Payment Order",
+      itemType: "order",
+      sourceStatus: localOrderStatus,
+      targetStatus: "paid",
+      transitionDisplay: "PAID (Already Settled)",
+      isUnchanged: true,
+      requiresReview: false,
+    });
+  } else {
+    hasReviewBlocker = true;
+    transitions.push({
+      recordName: "Payment Order",
+      itemType: "order",
+      sourceStatus: localOrderStatus || "unknown",
+      targetStatus: "unknown",
+      transitionDisplay: "Outcome requires review",
+      isUnchanged: false,
+      requiresReview: true,
+    });
+  }
+
+  // 2b. Linked Items (Accommodations & Events)
+  const linkedItems = Array.isArray(order.linkedItems) ? order.linkedItems : [];
+  for (const li of linkedItems) {
+    const rawStatus = (li.localStatus || "").toLowerCase().trim();
+    const displayName =
+      li.title && li.title.trim()
+        ? li.title.trim()
+        : li.itemType === "accommodation"
+          ? "Accommodation Booking"
+          : "Event Registration";
+
+    if (!rawStatus || rawStatus === "missing" || rawStatus === "unknown") {
+      hasReviewBlocker = true;
+      transitions.push({
+        recordName: displayName,
+        itemType: li.itemType,
+        sourceStatus: rawStatus || "missing",
+        targetStatus: "unknown",
+        transitionDisplay: "Outcome requires review",
+        isUnchanged: false,
+        requiresReview: true,
+      });
+    } else if (rawStatus === "pending" || rawStatus === "unpaid") {
+      transitions.push({
+        recordName: displayName,
+        itemType: li.itemType,
+        sourceStatus: rawStatus,
+        targetStatus: "paid",
+        transitionDisplay: `${rawStatus.toUpperCase()} → PAID`,
+        isUnchanged: false,
+        requiresReview: false,
+      });
+    } else if (rawStatus === "paid") {
+      transitions.push({
+        recordName: displayName,
+        itemType: li.itemType,
+        sourceStatus: rawStatus,
+        targetStatus: "paid",
+        transitionDisplay: "PAID (Already Settled)",
+        isUnchanged: true,
+        requiresReview: false,
+      });
+    } else {
+      hasReviewBlocker = true;
+      transitions.push({
+        recordName: displayName,
+        itemType: li.itemType,
+        sourceStatus: rawStatus,
+        targetStatus: "unknown",
+        transitionDisplay: "Outcome requires review",
+        isUnchanged: false,
+        requiresReview: true,
+      });
+    }
+  }
+
+  // 3. Evaluate Safety & Settlement Gate
+  let canSettle = true;
+  let blockReason: string | undefined;
+
+  if (order.amountAmbiguityReason) {
+    canSettle = false;
+    blockReason = `Amount field ambiguity: ${order.amountAmbiguityReason}`;
+  } else if (!order.gatewayPaymentId || !order.gatewayPaymentId.trim() || order.gatewayPaymentId === "Not returned by PayU") {
+    canSettle = false;
+    blockReason = "Missing PayU Payment ID (mihpayid). Settlement requires a verified gateway transaction ID.";
+  } else if (order.outcome !== "GATEWAY_PAID_LOCAL_PENDING") {
+    canSettle = false;
+    blockReason = order.outcomeMessage || `Order outcome is ${order.outcome}, which cannot be reconciled.`;
+  } else if (hasReviewBlocker) {
+    canSettle = false;
+    blockReason = "One or more affected records require administrative review before settlement.";
+  } else if (transitions.length > 0 && transitions.every((t) => t.isUnchanged)) {
+    canSettle = false;
+    blockReason = "All records are already settled. No status changes required.";
+  }
+
+  return {
+    canSettle,
+    blockReason,
+    saviskarOrderRef,
+    merchantTxnRef,
+    payuPaymentId,
+    expectedAmountINR,
+    transitions,
+  };
+}

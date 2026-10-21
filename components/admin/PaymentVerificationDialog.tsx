@@ -28,6 +28,7 @@ import {
   DiagnosticFinding,
   formatIndianTimestamp,
   PaymentAuditScope,
+  getReconciliationConfirmationSummary,
 } from "@/lib/admin/payment-verification";
 import { useBodyScrollLock } from "@/lib/admin/useBodyScrollLock";
 
@@ -58,6 +59,12 @@ export function PaymentVerificationDialog({
 
   // Reconciliation & Email Retry State
   const [reconciliationTarget, setReconciliationTarget] = useState<OrderVerificationResult | null>(null);
+
+  // Authoritative Confirmation Summary Derived from Reconciliation Target
+  const confirmSummary = useMemo(
+    () => getReconciliationConfirmationSummary(reconciliationTarget),
+    [reconciliationTarget]
+  );
   const [reconciling, setReconciling] = useState(false);
   const [reconciliationResults, setReconciliationResults] = useState<
     Record<
@@ -1421,43 +1428,64 @@ export function PaymentVerificationDialog({
               )}
             </div>
 
-            {/* Order & Linked Items Summary */}
-            <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/[0.06] space-y-2.5 text-xs">
+                        {/* Order & Linked Items Summary */}
+            <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/[0.06] space-y-3 text-xs">
               <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
-                <span className="text-black/50">Merchant Order Reference</span>
-                <span className="font-mono font-bold text-black">{reconciliationTarget.orderReference}</span>
+                <span className="text-black/50">Saviskar Order Reference (UDF1)</span>
+                <span className="font-mono font-bold text-black">{confirmSummary.saviskarOrderRef}</span>
               </div>
               <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
-                <span className="text-black/50">Expected Verified Amount</span>
+                <span className="text-black/50">PayU Merchant Transaction Reference (txnid)</span>
+                <span className="font-mono text-black/80">{confirmSummary.merchantTxnRef}</span>
+              </div>
+              <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
+                <span className="text-black/50">PayU Payment ID (mihpayid)</span>
+                <span className="font-mono text-black/80">{confirmSummary.payuPaymentId}</span>
+              </div>
+              <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
+                <span className="text-black/50">Expected Base Amount</span>
                 <span className="font-mono font-bold text-emerald-800">
-                  ₹{reconciliationTarget.expectedAmount.toLocaleString("en-IN")} INR
+                  ₹{confirmSummary.expectedAmountINR.toFixed(2)} INR
                 </span>
               </div>
-              <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
-                <span className="text-black/50">Gateway Transaction ID</span>
-                <span className="font-mono text-black/80">{reconciliationTarget.gatewayOrderId}</span>
-              </div>
-              <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
-                <span className="text-black/50">Affected Status Records</span>
-                <span className="font-semibold text-emerald-700">Order: pending → paid</span>
-              </div>
+
+              {/* Affected Status Records Summary */}
               <div className="space-y-1.5 pt-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-black/40 block">
-                  Linked Items To Settle ({reconciliationTarget.linkedItems.length})
+                <span className="text-[10px] font-bold uppercase tracking-wider text-black/50 block">
+                  Affected Status Records ({confirmSummary.transitions.filter((t) => !t.isUnchanged).length})
                 </span>
-                {reconciliationTarget.linkedItems.map((li, idx) => (
+                {confirmSummary.transitions.map((t, idx) => (
                   <div
                     key={idx}
-                    className="flex justify-between items-center text-[11px] p-2 rounded-lg bg-white border border-black/[0.04]"
+                    className="flex justify-between items-center text-[11px] p-2.5 rounded-lg bg-white border border-black/[0.04]"
                   >
-                    <span className="font-medium text-black truncate max-w-[240px]">{li.title}</span>
-                    <span className="font-mono text-black/60">
-                      ₹{li.expectedAmount} (pending → paid)
+                    <span className="font-medium text-black truncate max-w-[240px]">{t.recordName}</span>
+                    <span
+                      className={`font-mono font-semibold ${
+                        t.requiresReview
+                          ? "text-rose-700 font-bold"
+                          : t.isUnchanged
+                          ? "text-black/40"
+                          : "text-emerald-700"
+                      }`}
+                    >
+                      {t.transitionDisplay}
                     </span>
                   </div>
                 ))}
               </div>
             </div>
+
+            {/* If settlement blocked, show prominent alert */}
+            {!confirmSummary.canSettle && (
+              <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-[11px] text-rose-900 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-bold">Confirmation Blocked:</strong>
+                  <span>{confirmSummary.blockReason}</span>
+                </div>
+              </div>
+            )}
 
             {/* Disclosure */}
             <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
@@ -1479,9 +1507,9 @@ export function PaymentVerificationDialog({
               </button>
               <button
                 type="button"
-                disabled={reconciling}
+                disabled={reconciling || !confirmSummary.canSettle}
                 onClick={() => executeReconciliation(reconciliationTarget)}
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition active:scale-95 disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {reconciling ? (
                   <>
