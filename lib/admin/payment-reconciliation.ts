@@ -18,6 +18,9 @@ export type ReconcilePaymentParams = {
     currency?: string;
     gatewayOrderId?: string;
     additionalChargesPaise?: number;
+    customerTransactionAmountPaise?: number;
+    settlementAmountPaise?: number;
+    amountAmbiguityReason?: string;
   };
 };
 
@@ -210,6 +213,8 @@ export async function reconcilePaymentOrder(
   let gatewayCurrency = "INR";
   let gatewayOrderId = "";
   let gatewayAdditionalChargesPaise = 0;
+  let gatewayCustomerTxnAmountPaise: number | undefined;
+  let gatewayAmountAmbiguityReason: string | undefined;
 
   if (mockGatewayResult) {
     // Authorized test/preview fixture
@@ -219,6 +224,8 @@ export async function reconcilePaymentOrder(
     gatewayCurrency = mockGatewayResult.currency || "INR";
     gatewayOrderId = mockGatewayResult.gatewayOrderId || order.gateway_order_id;
     gatewayAdditionalChargesPaise = mockGatewayResult.additionalChargesPaise || 0;
+    gatewayCustomerTxnAmountPaise = mockGatewayResult.customerTransactionAmountPaise;
+    gatewayAmountAmbiguityReason = mockGatewayResult.amountAmbiguityReason;
   } else {
     // Production Gateway Call
     try {
@@ -230,6 +237,8 @@ export async function reconcilePaymentOrder(
       gatewayCurrency = details.currency || "INR";
       gatewayOrderId = details.gatewayOrderId || order.gateway_order_id;
       gatewayAdditionalChargesPaise = details.additionalCharges || 0;
+      gatewayCustomerTxnAmountPaise = details.customerTransactionAmount;
+      gatewayAmountAmbiguityReason = details.amountAmbiguityReason;
     } catch (err) {
       const msg = err instanceof PaymentVerificationError ? err.message : String(err);
       return {
@@ -289,7 +298,18 @@ export async function reconcilePaymentOrder(
     };
   }
 
-  // 6e. Exact Amount Comparison — Zero Blanket Tolerance
+  // 6e. Ambiguity Gate: Unresolved amount-field discrepancies strictly block reconciliation
+  if (gatewayAmountAmbiguityReason) {
+    return {
+      success: false,
+      orderId: order.id,
+      orderReference: order.order_reference,
+      settled: false,
+      error: `Amount field ambiguity: ${gatewayAmountAmbiguityReason} Reconciliation blocked.`,
+    };
+  }
+
+  // 6f. Exact Amount Comparison — Zero Blanket Tolerance
   // Distinguishes base merchant amount from explicitly reported additional_charges
   const expectedBasePaise = toPaise(order.amount);
   let isAmountMatched = false;
@@ -298,16 +318,24 @@ export async function reconcilePaymentOrder(
   if (gatewayAmountPaise === expectedBasePaise) {
     // Exact base amount match
     isAmountMatched = true;
-  } else if (gatewayAdditionalChargesPaise > 0) {
-    // Surcharge explicitly reported by PayU: verify that gross amount minus surcharge equals base amount
-    if (gatewayAmountPaise - gatewayAdditionalChargesPaise === expectedBasePaise) {
-      isAmountMatched = true;
-    }
+  } else if (
+    gatewayCustomerTxnAmountPaise != null &&
+    gatewayAdditionalChargesPaise > 0 &&
+    gatewayCustomerTxnAmountPaise - gatewayAdditionalChargesPaise === expectedBasePaise
+  ) {
+    // Gross customer debit minus explicit surcharge matches base order amount
+    isAmountMatched = true;
+  } else if (
+    gatewayAdditionalChargesPaise > 0 &&
+    gatewayAmountPaise - gatewayAdditionalChargesPaise === expectedBasePaise
+  ) {
+    // Surcharge explicitly reported by PayU where gateway amount was gross
+    isAmountMatched = true;
   }
 
   if (!isAmountMatched) {
     const errorDetail = gatewayAdditionalChargesPaise > 0
-      ? `Gateway reported ₹${gatewayAmountPaise / 100} with explicit surcharge ₹${gatewayAdditionalChargesPaise / 100}, which does not match base order amount ₹${order.amount}.`
+      ? `Gateway reported base ₹${gatewayAmountPaise / 100} with explicit surcharge ₹${gatewayAdditionalChargesPaise / 100}, which does not match base order amount ₹${order.amount}.`
       : `Gateway reported ₹${gatewayAmountPaise / 100}, expected ₹${order.amount}. Unreported extra amounts or arbitrary differences cannot be treated as permissible fees.`;
 
     return {

@@ -71,6 +71,9 @@ export type OrderVerificationResult = {
   customerTransactionAmount?: number | null;
   bankRefNum?: string | null;
   udf1?: string | null;
+  payuAmt?: number | null;
+  payuTransactionAmount?: number | null;
+  amountAmbiguityReason?: string | null;
   localOrderStatus: string;
   authoritativeGatewayStatus: string;
   settlementReceiptStatus: "receipt_created" | "receipt_missing" | "not_applicable";
@@ -96,6 +99,9 @@ export type OrderVerificationResult = {
     settlementAmount?: number;
     deductions?: number;
     customerTransactionAmount?: number;
+    payuAmt?: number;
+    payuTransactionAmount?: number;
+    amountAmbiguityReason?: string;
   };
 };
 
@@ -212,6 +218,9 @@ export async function verifyParticipantPayments(params: {
     settlementAmountPaise?: number;
     deductionsPaise?: number;
     customerTransactionAmountPaise?: number;
+    payuAmtPaise?: number;
+    payuTransactionAmountPaise?: number;
+    amountAmbiguityReason?: string;
   }>;
 }): Promise<VerificationResponse> {
   const { supabaseAdmin, mockGatewayResults } = params;
@@ -562,6 +571,9 @@ export async function verifyParticipantPayments(params: {
     let deductionsPaise: number | null = null;
     let customerTxnAmountPaise: number | null = null;
     let gatewayAdditionalChargesPaise: number | null = null;
+    let payuAmtPaise: number | null = null;
+    let payuTxnAmtPaise: number | null = null;
+    let amountAmbiguityReason: string | null = null;
 
     // Check mock results first (used in unit/integration tests and local dev previews)
     if (mockGatewayResults && (mockGatewayResults[order.gateway_order_id] || mockGatewayResults[order.id])) {
@@ -580,6 +592,15 @@ export async function verifyParticipantPayments(params: {
       customerTxnAmountPaise = mock.customerTransactionAmountPaise ?? null;
       if (mock.additionalChargesPaise != null) {
         gatewayAdditionalChargesPaise = mock.additionalChargesPaise;
+      }
+      if (mock.payuAmtPaise != null) {
+        payuAmtPaise = mock.payuAmtPaise;
+      }
+      if (mock.payuTransactionAmountPaise != null) {
+        payuTxnAmtPaise = mock.payuTransactionAmountPaise;
+      }
+      if (mock.amountAmbiguityReason != null) {
+        amountAmbiguityReason = mock.amountAmbiguityReason;
       }
       isLocalPreview = true;
     } else if (isLocalOrTestEnvironment()) {
@@ -618,6 +639,9 @@ export async function verifyParticipantPayments(params: {
         if (details.additionalCharges != null) {
           gatewayAdditionalChargesPaise = details.additionalCharges;
         }
+        payuAmtPaise = details.payuAmtPaise ?? null;
+        payuTxnAmtPaise = details.payuTransactionAmountPaise ?? null;
+        amountAmbiguityReason = details.amountAmbiguityReason ?? null;
       } catch (err) {
         if (err instanceof PaymentVerificationError) {
           gatewayError = err.message;
@@ -638,12 +662,6 @@ export async function verifyParticipantPayments(params: {
     const amountDifference = gatewayReportedAmountPaise != null
       ? (gatewayReportedAmountPaise - expectedAmountPaise) / 100
       : undefined;
-
-    // Check if small discrepancy could be PayU gateway convenience charges + GST
-    const isConvenienceFeeLikely =
-      amountDifference != null &&
-      amountDifference > 0 &&
-      amountDifference <= 50;
 
     // Evaluate Canonical Receipt in payments table
     const canonicalReceipt = receiptsByGatewayOrderId.get(order.gateway_order_id);
@@ -681,14 +699,26 @@ export async function verifyParticipantPayments(params: {
       outcome = "PAYMENT_PENDING";
       outcomeMessage = "Payment is awaiting completion or confirmation by PayU.";
     } else if (gatewayReportedStatus === "paid") {
-      // Gateway is PAID. Check amount matching.
+      // Gateway is PAID. Check amount matching with strict zero blanket tolerance.
       const amountsMatch =
         gatewayReportedAmountPaise != null &&
         gatewayReportedAmountPaise === expectedAmountPaise;
 
-      if (!amountsMatch && !isConvenienceFeeLikely) {
+      const grossMinusSurchargeMatches =
+        customerTxnAmountPaise != null &&
+        gatewayAdditionalChargesPaise != null &&
+        gatewayAdditionalChargesPaise > 0 &&
+        customerTxnAmountPaise - gatewayAdditionalChargesPaise === expectedAmountPaise;
+
+      if (amountAmbiguityReason) {
         outcome = "AMOUNT_MISMATCH";
-        outcomeMessage = `Order amount (₹${expectedAmount}) does not match gateway captured amount (₹${gatewayAmountINR ?? "unknown"}).`;
+        outcomeMessage = `Amount field ambiguity: ${amountAmbiguityReason}`;
+      } else if (!amountsMatch && !grossMinusSurchargeMatches) {
+        outcome = "AMOUNT_MISMATCH";
+        outcomeMessage =
+          gatewayAdditionalChargesPaise != null && gatewayAdditionalChargesPaise > 0
+            ? `Gateway reported base ₹${gatewayAmountINR ?? "unknown"} with explicit surcharge ₹${gatewayAdditionalChargesPaise / 100}, which does not match local order amount ₹${expectedAmount}.`
+            : `Local order amount (₹${expectedAmount}) does not match gateway captured amount (₹${gatewayAmountINR ?? "unknown"}). Unreported differences cannot be treated as permissible fees.`;
       } else if (order.status !== "paid") {
         outcome = "GATEWAY_PAID_LOCAL_PENDING";
         const localStatusText = order.status === "failed" ? "FAILED" : "PENDING";
@@ -850,14 +880,15 @@ export async function verifyParticipantPayments(params: {
       gatewayReportedCurrency: "INR",
       additionalCharges: gatewayAdditionalChargesPaise != null && gatewayAdditionalChargesPaise > 0
         ? gatewayAdditionalChargesPaise / 100
-        : isConvenienceFeeLikely
-          ? amountDifference ?? null
-          : null,
+        : null,
       settlementAmount: settlementAmountPaise != null ? settlementAmountPaise / 100 : null,
       deductions: deductionsPaise != null ? deductionsPaise / 100 : null,
       customerTransactionAmount: customerTxnAmountPaise != null ? customerTxnAmountPaise / 100 : null,
       bankRefNum,
       udf1,
+      payuAmt: payuAmtPaise != null ? payuAmtPaise / 100 : null,
+      payuTransactionAmount: payuTxnAmtPaise != null ? payuTxnAmtPaise / 100 : null,
+      amountAmbiguityReason: amountAmbiguityReason || null,
       localOrderStatus: order.status,
       authoritativeGatewayStatus: gatewayReportedStatus,
       settlementReceiptStatus,
@@ -874,7 +905,6 @@ export async function verifyParticipantPayments(params: {
         mode: gatewayMode,
         addedOn: gatewayAddedOn,
         amountDifference,
-        isConvenienceFeeLikely,
         isLocalPreview,
         auditNote: isLocalPreview ? "Verified in safe preview/test environment (mocked gateway)" : undefined,
         bankRefNum: bankRefNum || undefined,
@@ -882,6 +912,9 @@ export async function verifyParticipantPayments(params: {
         settlementAmount: settlementAmountPaise ?? undefined,
         deductions: deductionsPaise ?? undefined,
         customerTransactionAmount: customerTxnAmountPaise ?? undefined,
+        payuAmt: payuAmtPaise ?? undefined,
+        payuTransactionAmount: payuTxnAmtPaise ?? undefined,
+        amountAmbiguityReason: amountAmbiguityReason || undefined,
       },
     });
   }
@@ -1246,18 +1279,47 @@ export function generateSanitizedDiagnosticReport(verification: VerificationResp
         lines.push(`- **Gateway Echoed UDF1**: \`${o.udf1}\``);
       }
       lines.push(`- **Local Status**: \`${o.localOrderStatus.toUpperCase()}\` | **Gateway Status**: \`${o.authoritativeGatewayStatus.toUpperCase()}\``);
-      lines.push(`- **Base Order Amount**: ₹${o.expectedAmount.toFixed(2)} ${o.currency}`);
-      if (o.gatewayReportedAmount != null) {
-        lines.push(`- **Gateway Captured Amount**: ₹${o.gatewayReportedAmount.toFixed(2)} ${o.gatewayReportedCurrency || o.currency}`);
-      }
-      if (o.additionalCharges && o.additionalCharges > 0) {
-        lines.push(`- **Customer Gateway Surcharge**: ₹${o.additionalCharges.toFixed(2)}`);
-      }
-      if (o.settlementAmount != null) {
-        lines.push(`- **Net Settlement Amount**: ₹${o.settlementAmount.toFixed(2)}`);
-      }
+      lines.push(`- **Local Order Amount (payment_orders.amount)**: ₹${o.expectedAmount.toFixed(2)} ${o.currency}`);
+      lines.push(
+        `- **Gateway Base Amount (PayU amt / transaction_amount)**: ${
+          o.gatewayReportedAmount != null
+            ? `₹${o.gatewayReportedAmount.toFixed(2)} ${o.gatewayReportedCurrency || o.currency}`
+            : "Not returned by PayU"
+        }`
+      );
+      lines.push(
+        `- **Additional Charge Reported by PayU (additional_charges)**: ${
+          o.additionalCharges != null && o.additionalCharges > 0
+            ? `₹${o.additionalCharges.toFixed(2)}`
+            : "Not returned by PayU"
+        }`
+      );
+      lines.push(
+        `- **Customer Debit (Calculated/Reported)**: ${
+          o.customerTransactionAmount != null
+            ? `₹${o.customerTransactionAmount.toFixed(2)}`
+            : "Not returned by PayU"
+        }`
+      );
+      lines.push(
+        `- **Merchant Settlement (net_amount_debit / amount_settled)**: ${
+          o.settlementAmount != null
+            ? `₹${o.settlementAmount.toFixed(2)}`
+            : "Not returned by PayU"
+        }`
+      );
       if (o.deductions != null) {
-        lines.push(`- **Gateway Deductions / Fees**: ₹${o.deductions.toFixed(2)}`);
+        lines.push(`- **Gateway Deductions / Fees (PayU disc)**: ₹${o.deductions.toFixed(2)}`);
+      }
+      if (o.payuAmt != null || o.payuTransactionAmount != null) {
+        lines.push(
+          `- **PayU Raw Fields**: amt: ${o.payuAmt != null ? o.payuAmt.toFixed(2) : "N/A"}, transaction_amount: ${
+            o.payuTransactionAmount != null ? o.payuTransactionAmount.toFixed(2) : "N/A"
+          }`
+        );
+      }
+      if (o.amountAmbiguityReason) {
+        lines.push(`- **⚠️ Amount Ambiguity**: ${o.amountAmbiguityReason}`);
       }
       lines.push(`- **Receipt Status**: \`${o.settlementReceiptStatus}\``);
       lines.push(`- **Audit Outcome**: **${o.outcome}** — ${o.outcomeMessage}`);

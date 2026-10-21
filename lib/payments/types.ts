@@ -127,11 +127,23 @@ export type FetchedPaymentDetails = {
   /** Net settlement amount credited to merchant in paise */
   settlementAmount?: number;
 
+  /** Explicit amount_settled field in paise if returned by gateway */
+  amountSettledPaise?: number;
+
   /** Gateway deductions or discounts in paise */
   deductions?: number;
 
   /** Total customer transaction amount debited in paise */
   customerTransactionAmount?: number;
+
+  /** Raw amt field from PayU in paise */
+  payuAmtPaise?: number;
+
+  /** Raw transaction_amount field from PayU in paise */
+  payuTransactionAmountPaise?: number;
+
+  /** Unresolved amount-field discrepancy or ambiguity reason string */
+  amountAmbiguityReason?: string;
 };
 
 export class PaymentVerificationError extends Error {

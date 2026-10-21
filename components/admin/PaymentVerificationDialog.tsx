@@ -480,7 +480,19 @@ export function PaymentVerificationDialog({
     data.orders.forEach((o, idx) => {
       lines.push(`Order #${idx + 1}: ${o.orderReference} (${o.orderId})`);
       lines.push(`Participant: ${o.payerName} [${o.payerPublicId}] (${o.payerEmail})`);
-      lines.push(`Expected Amount: ₹${o.expectedAmount} | Gateway Amount: ₹${o.gatewayReportedAmount ?? "N/A"}`);
+      lines.push(`Amount Breakdown:`);
+      lines.push(`  - Local Order Amount (payment_orders.amount): ₹${o.expectedAmount.toFixed(2)}`);
+      lines.push(`  - Gateway Base Amount (PayU amt / transaction_amount): ${o.gatewayReportedAmount != null ? `₹${o.gatewayReportedAmount.toFixed(2)}` : "Not returned by PayU"}`);
+      lines.push(`  - Additional Charge Reported by PayU (additional_charges): ${o.additionalCharges != null && o.additionalCharges > 0 ? `₹${o.additionalCharges.toFixed(2)}` : "Not returned by PayU"}`);
+      lines.push(`  - Customer Debit (Calculated/Reported): ${o.customerTransactionAmount != null ? `₹${o.customerTransactionAmount.toFixed(2)}` : "Not returned by PayU"}`);
+      lines.push(`  - Merchant Settlement (net_amount_debit / amount_settled): ${o.settlementAmount != null ? `₹${o.settlementAmount.toFixed(2)}` : "Not returned by PayU"}`);
+      lines.push(`  - Gateway Deductions / Fees (PayU disc): ${o.deductions != null ? `₹${o.deductions.toFixed(2)}` : "₹0.00"}`);
+      if (o.payuAmt != null || o.payuTransactionAmount != null) {
+        lines.push(`  - PayU Raw Fields: amt=${o.payuAmt != null ? o.payuAmt.toFixed(2) : "N/A"}, transaction_amount=${o.payuTransactionAmount != null ? o.payuTransactionAmount.toFixed(2) : "N/A"}`);
+      }
+      if (o.amountAmbiguityReason) {
+        lines.push(`  - ⚠️ Amount Ambiguity: ${o.amountAmbiguityReason}`);
+      }
       lines.push(`Local Status: ${o.localOrderStatus} | Gateway Status: ${o.authoritativeGatewayStatus}${o.diagnostics.isLocalPreview ? " [SIMULATED]" : ""}`);
       lines.push(`Outcome: ${o.outcome} - ${o.outcomeMessage}`);
       lines.push(`Order Created: ${formatIndianTimestamp(o.orderCreatedAt)}`);
@@ -1081,20 +1093,25 @@ export function PaymentVerificationDialog({
 
                                 {/* AMOUNTS & EXPAND TRIGGER */}
                                 <div className="flex items-center gap-6 shrink-0">
-                                  <div className="text-right">
+                                  <div className="text-right space-y-0.5">
                                     <div className="text-xs font-mono font-bold text-black">
-                                      Expected: ₹{order.expectedAmount.toLocaleString("en-IN")}
+                                      Local Order: ₹{order.expectedAmount.toFixed(2)}
                                     </div>
-                                    <div className="text-[11px] font-mono text-black/50">
-                                      Gateway:{" "}
+                                    <div className="text-[11px] font-mono text-black/60">
+                                      Gateway Base:{" "}
                                       {order.gatewayReportedAmount != null
-                                        ? `₹${order.gatewayReportedAmount.toLocaleString("en-IN")}`
-                                        : "—"}
+                                        ? `₹${order.gatewayReportedAmount.toFixed(2)}`
+                                        : "Not returned by PayU"}
                                       {order.diagnostics.isLocalPreview && " (Simulated)"}
                                     </div>
                                     {order.additionalCharges != null && order.additionalCharges > 0 && (
-                                      <div className="text-[10px] text-amber-700 font-mono">
-                                        +₹{order.additionalCharges} convenience charge
+                                      <div className="text-[10px] text-amber-800 font-mono">
+                                        PayU Surcharge: +₹{order.additionalCharges.toFixed(2)}
+                                      </div>
+                                    )}
+                                    {order.customerTransactionAmount != null && (
+                                      <div className="text-[10px] text-black/50 font-mono">
+                                        Customer Debit: ₹{order.customerTransactionAmount.toFixed(2)}
                                       </div>
                                     )}
                                   </div>
@@ -1156,8 +1173,74 @@ export function PaymentVerificationDialog({
                                     </div>
                                   </div>
 
+                                  {/* AMOUNT NORMALIZATION & SETTLEMENT BREAKDOWN */}
+                                  <div className="space-y-1.5">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-black/50 block">
+                                      Amount Normalization & Settlement Breakdown
+                                    </span>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 text-[11px] bg-white p-3.5 rounded-xl border border-black/[0.06]">
+                                      <div>
+                                        <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                          Local Order Amount
+                                        </span>
+                                        <span className="font-mono text-black/90 font-semibold block mt-0.5">
+                                          ₹{order.expectedAmount.toFixed(2)}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                          Gateway Base Amount
+                                        </span>
+                                        <span className="font-mono text-black/80 block mt-0.5">
+                                          {order.gatewayReportedAmount != null
+                                            ? `₹${order.gatewayReportedAmount.toFixed(2)}`
+                                            : "Not returned by PayU"}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                          Additional Charge (PayU)
+                                        </span>
+                                        <span className="font-mono text-black/80 block mt-0.5">
+                                          {order.additionalCharges != null && order.additionalCharges > 0
+                                            ? `₹${order.additionalCharges.toFixed(2)}`
+                                            : "Not returned by PayU"}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                          Customer Debit
+                                        </span>
+                                        <span className="font-mono text-black/80 block mt-0.5">
+                                          {order.customerTransactionAmount != null
+                                            ? `₹${order.customerTransactionAmount.toFixed(2)}`
+                                            : "Not returned by PayU"}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                          Merchant Settlement
+                                        </span>
+                                        <span className="font-mono text-black/80 block mt-0.5">
+                                          {order.settlementAmount != null
+                                            ? `₹${order.settlementAmount.toFixed(2)}`
+                                            : "Not returned by PayU"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    {order.amountAmbiguityReason && (
+                                      <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-2">
+                                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                                        <div>
+                                          <span className="font-bold">Unresolved Amount Discrepancy: </span>
+                                          {order.amountAmbiguityReason}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
                                   {/* AUTHORITATIVE BANK & GATEWAY METADATA */}
-                                  {(order.bankRefNum || order.udf1 || order.settlementAmount != null || order.deductions != null) && (
+                                  {(order.bankRefNum || order.udf1 || order.deductions != null || order.payuAmt != null) && (
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-[11px] bg-white p-3.5 rounded-xl border border-black/[0.06]">
                                       <div>
                                         <span className="text-black/40 block text-[9px] uppercase font-bold">
@@ -1177,22 +1260,18 @@ export function PaymentVerificationDialog({
                                       </div>
                                       <div>
                                         <span className="text-black/40 block text-[9px] uppercase font-bold">
-                                          Net Settlement Amount
-                                        </span>
-                                        <span className="font-mono text-black/80 block">
-                                          {order.settlementAmount != null
-                                            ? `₹${order.settlementAmount.toFixed(2)}`
-                                            : order.gatewayReportedAmount != null
-                                            ? `₹${order.expectedAmount.toFixed(2)}`
-                                            : "—"}
-                                        </span>
-                                      </div>
-                                      <div>
-                                        <span className="text-black/40 block text-[9px] uppercase font-bold">
                                           Gateway Deductions / Fees
                                         </span>
                                         <span className="font-mono text-black/80 block">
                                           {order.deductions != null ? `₹${order.deductions.toFixed(2)}` : "₹0.00"}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                          PayU Raw Fields
+                                        </span>
+                                        <span className="font-mono text-black/80 block truncate">
+                                          amt: {order.payuAmt != null ? `₹${order.payuAmt.toFixed(2)}` : "—"}
                                         </span>
                                       </div>
                                     </div>
