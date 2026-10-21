@@ -33,6 +33,7 @@ import {
   Building2,
   SlidersHorizontal,
   BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
@@ -48,6 +49,8 @@ import {
 } from "@/lib/admin/excel-export";
 import { CsvExportDropdown } from "@/components/admin/CsvExportDropdown";
 import AdminPageLoader from "@/components/admin/AdminPageLoader";
+import { PaymentVerificationDialog } from "@/components/admin/PaymentVerificationDialog";
+import { ResendEmailDialog } from "@/components/admin/ResendEmailDialog";
 
 /* =========================================================
    TYPES
@@ -322,6 +325,18 @@ export default function AdminPage() {
     outstandingAmount: number;
     checkedIn?: number;
   } | null>(null);
+
+  const [selectedParticipantIds, setSelectedParticipantIds] =
+    useState<Set<string>>(new Set());
+
+  const [isVerificationOpen, setIsVerificationOpen] =
+    useState(false);
+
+  const [verificationMode, setVerificationMode] =
+    useState<"selected" | "audit">("selected");
+
+  const [isResendEmailOpen, setIsResendEmailOpen] =
+    useState(false);
 
   const [isBreakdownOpen, setIsBreakdownOpen] = useState(true);
   const [breakdownCategory, setBreakdownCategory] = useState<string>("all");
@@ -1079,6 +1094,36 @@ export default function AdminPage() {
         map.values()
       );
     }, [filteredRegistrations]);
+
+  const toggleSelectRow = useCallback((participantId: string) => {
+    setSelectedParticipantIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(participantId)) next.delete(participantId);
+      else next.add(participantId);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    if (participantGroups.length === 0) return;
+    const allVisibleSelected = participantGroups.every((g) =>
+      selectedParticipantIds.has(g[0].participant.id)
+    );
+
+    setSelectedParticipantIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        participantGroups.forEach((g) => next.delete(g[0].participant.id));
+      } else {
+        participantGroups.forEach((g) => next.add(g[0].participant.id));
+      }
+      return next;
+    });
+  }, [participantGroups, selectedParticipantIds]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedParticipantIds(new Set());
+  }, []);
 
   /* =======================================================
      PARTICIPANT DETAIL
@@ -2524,6 +2569,60 @@ export default function AdminPage() {
               onExportParticipants={exportParticipantCsv}
               totalRegistrations={filteredRegistrations.length}
             />
+
+            <button
+              type="button"
+              onClick={() => {
+                setVerificationMode("audit");
+                setIsVerificationOpen(true);
+              }}
+              className="rounded-[18px] border border-amber-900/40 bg-[#78350f] hover:bg-[#92400e] text-[#fef3c7] px-4 py-3 text-sm font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+              title="Run payment reconciliation audit across anomalous, pending and retry-chain orders"
+            >
+              <ShieldCheck size={16} className="text-amber-300" />
+              <span>Payment Audit</span>
+            </button>
+
+            {selectedParticipantIds.size > 0 && (
+              <div
+                role="toolbar"
+                aria-label="Selection actions"
+                className="flex items-center flex-wrap gap-2 animate-in fade-in duration-150"
+              >
+                <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-[18px] bg-black/[0.05] border border-black/10 text-xs font-semibold text-black">
+                  <span>{selectedParticipantIds.size}</span>
+                  <span className="font-normal text-black/60">selected</span>
+                  <button
+                    type="button"
+                    onClick={clearSelection}
+                    className="ml-1 text-[11px] font-medium text-black/40 hover:text-black underline cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVerificationMode("selected");
+                    setIsVerificationOpen(true);
+                  }}
+                  className="rounded-[18px] border border-amber-900/40 bg-[#78350f] hover:bg-[#92400e] text-[#fef3c7] px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                >
+                  <ShieldCheck size={14} className="text-amber-300" />
+                  <span>Verify Payment</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsResendEmailOpen(true)}
+                  className="rounded-[18px] border border-blue-700/40 bg-[#1e40af] hover:bg-[#1d4ed8] text-[#dbeafe] px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                >
+                  <Mail size={14} className="text-blue-300" />
+                  <span>Resend Email</span>
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-2 text-[10px] uppercase tracking-[0.16em] text-black/40">
@@ -2611,7 +2710,22 @@ export default function AdminPage() {
                 Status
               </span>
 
-              <span />
+              <div className="flex items-center justify-end gap-3">
+                <input
+                  type="checkbox"
+                  id="select-all-visible"
+                  aria-label="Select all visible registrations"
+                  checked={
+                    participantGroups.length > 0 &&
+                    participantGroups.every((g) =>
+                      selectedParticipantIds.has(g[0].participant.id)
+                    )
+                  }
+                  onChange={toggleSelectAll}
+                  className="h-4 w-4 rounded border-black/20 text-black focus:ring-black cursor-pointer"
+                  title="Select all visible registrations"
+                />
+              </div>
             </div>
 
             <div className="divide-y divide-black/[0.07]">
@@ -2819,7 +2933,19 @@ export default function AdminPage() {
                         )}
                       </div>
 
-                      <div className="flex justify-end">
+                      <div className="flex items-center justify-end gap-3">
+                        <input
+                          type="checkbox"
+                          id={`select-participant-${participant.id}`}
+                          aria-label={`Select ${participant.name}`}
+                          checked={selectedParticipantIds.has(participant.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            toggleSelectRow(participant.id);
+                          }}
+                          className="h-4 w-4 rounded border-black/20 text-black focus:ring-black cursor-pointer"
+                        />
                         <span className="text-lg text-black/15 transition group-hover:translate-x-1 group-hover:text-black">
                           →
                         </span>
@@ -3708,6 +3834,19 @@ export default function AdminPage() {
         </div>
       );
     })()}
+
+      <PaymentVerificationDialog
+        isOpen={isVerificationOpen}
+        onClose={() => setIsVerificationOpen(false)}
+        selectedParticipantIds={Array.from(selectedParticipantIds)}
+        initialMode={verificationMode}
+      />
+
+      <ResendEmailDialog
+        isOpen={isResendEmailOpen}
+        onClose={() => setIsResendEmailOpen(false)}
+        selectedParticipantIds={Array.from(selectedParticipantIds)}
+      />
     </main>
   );
 }
