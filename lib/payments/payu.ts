@@ -17,6 +17,134 @@ import {
 } from "./payu-hash";
 import { getSiteBaseUrl } from "./resume-token";
 
+/**
+ * Decimal-safe parsing of currency strings or numbers to integer paise.
+ * Avoids floating-point inaccuracies by rounding to nearest integer paise.
+ */
+export function parsePaise(val: unknown): number | undefined {
+  if (val === null || val === undefined || val === "") return undefined;
+  const num = typeof val === "number" ? val : parseFloat(String(val).trim());
+  if (isNaN(num)) return undefined;
+  return Math.round(num * 100);
+}
+
+export type NormalizedPayUAmounts = {
+  baseAmountPaise: number;
+  additionalChargesPaise: number;
+  customerTransactionAmountPaise?: number;
+  settlementAmountPaise?: number;
+  amountSettledPaise?: number;
+  deductionsPaise: number;
+  payuAmtPaise?: number;
+  payuTransactionAmountPaise?: number;
+  amountAmbiguityReason?: string;
+};
+
+/**
+ * Normalizes amount fields from PayU verify_payment transaction responses.
+ *
+ * In PayU's API contract:
+ * - `amt`: Merchant-requested base transaction amount (e.g. "999.00").
+ * - `transaction_amount`: Base or gross captured transaction amount (e.g. "999.00" or "1000.18").
+ * - `additional_charges`: Explicit customer-side payment gateway surcharge / convenience fee (e.g. "1.18").
+ * - `net_amount_debit`: Net amount credited to merchant account or debited (e.g. "999.00").
+ * - `amount_settled`: Explicit settlement amount credited to merchant (e.g. "999.00").
+ * - `disc`: Merchant-side discount or deduction (e.g. "0.00").
+ *
+ * Never subtracts explicit charges from transaction_amount when transaction_amount is already the base amount!
+ * If `amt` and `transaction_amount` differ and cannot be reconciled via `additional_charges`, flags ambiguity
+ * and prevents premature or unsafe classification.
+ */
+export function normalizePayUAmountFields(
+  txRecord: Record<string, unknown>,
+  fallbackAmount?: string
+): NormalizedPayUAmounts {
+  const payuAmtPaise = parsePaise(txRecord.amt);
+  const payuTxnAmtPaise = parsePaise(txRecord.transaction_amount);
+  const additionalChargesPaise = parsePaise(txRecord.additional_charges) ?? 0;
+  const netDebitPaise = parsePaise(txRecord.net_amount_debit);
+  const amountSettledPaise = parsePaise(txRecord.amount_settled);
+  const deductionsPaise = parsePaise(txRecord.disc) ?? 0;
+
+  let baseAmountPaise = 0;
+  let customerTransactionAmountPaise: number | undefined;
+  let amountAmbiguityReason: string | undefined;
+
+  if (payuAmtPaise != null && payuTxnAmtPaise != null) {
+    if (payuAmtPaise === payuTxnAmtPaise) {
+      // Standard PayU legacy response: amt and transaction_amount both report the base amount.
+      baseAmountPaise = payuAmtPaise;
+      customerTransactionAmountPaise =
+        additionalChargesPaise > 0
+          ? baseAmountPaise + additionalChargesPaise
+          : baseAmountPaise;
+    } else if (
+      additionalChargesPaise > 0 &&
+      payuTxnAmtPaise - additionalChargesPaise === payuAmtPaise
+    ) {
+      // transaction_amount represents gross customer debit, amt represents base amount.
+      baseAmountPaise = payuAmtPaise;
+      customerTransactionAmountPaise = payuTxnAmtPaise;
+    } else if (
+      additionalChargesPaise > 0 &&
+      payuAmtPaise - additionalChargesPaise === payuTxnAmtPaise
+    ) {
+      // Inverted format: amt represents gross customer debit, transaction_amount represents base amount.
+      baseAmountPaise = payuTxnAmtPaise;
+      customerTransactionAmountPaise = payuAmtPaise;
+    } else {
+      // Discordant amounts that do not reconcile with reported additional charges!
+      amountAmbiguityReason = `PayU amount fields mismatch: 'amt' (₹${payuAmtPaise / 100}) and 'transaction_amount' (₹${payuTxnAmtPaise / 100}) differ and cannot be reconciled with additional_charges (₹${additionalChargesPaise / 100}).`;
+      baseAmountPaise = payuAmtPaise;
+    }
+  } else if (payuAmtPaise != null) {
+    baseAmountPaise = payuAmtPaise;
+    customerTransactionAmountPaise =
+      additionalChargesPaise > 0
+        ? baseAmountPaise + additionalChargesPaise
+        : baseAmountPaise;
+  } else if (payuTxnAmtPaise != null) {
+    baseAmountPaise = payuTxnAmtPaise;
+    customerTransactionAmountPaise =
+      additionalChargesPaise > 0
+        ? baseAmountPaise + additionalChargesPaise
+        : baseAmountPaise;
+  } else {
+    baseAmountPaise = parsePaise(fallbackAmount) ?? 0;
+    if (baseAmountPaise === 0) {
+      amountAmbiguityReason = "Missing PayU amount fields in gateway transaction response.";
+    }
+  }
+
+  // Settlement amount resolution & mismatch check
+  let settlementAmountPaise: number | undefined;
+  if (netDebitPaise != null && amountSettledPaise != null) {
+    if (netDebitPaise !== amountSettledPaise) {
+      const settleDiff = `PayU settlement discrepancy: 'net_amount_debit' (₹${netDebitPaise / 100}) differs from 'amount_settled' (₹${amountSettledPaise / 100}).`;
+      amountAmbiguityReason = amountAmbiguityReason
+        ? `${amountAmbiguityReason} ${settleDiff}`
+        : settleDiff;
+    }
+    settlementAmountPaise = amountSettledPaise;
+  } else if (amountSettledPaise != null) {
+    settlementAmountPaise = amountSettledPaise;
+  } else if (netDebitPaise != null) {
+    settlementAmountPaise = netDebitPaise;
+  }
+
+  return {
+    baseAmountPaise,
+    additionalChargesPaise,
+    customerTransactionAmountPaise,
+    settlementAmountPaise,
+    amountSettledPaise,
+    deductionsPaise,
+    payuAmtPaise,
+    payuTransactionAmountPaise: payuTxnAmtPaise,
+    amountAmbiguityReason,
+  };
+}
+
 export class PayUGateway implements PaymentGateway {
   readonly name = "payu";
 
@@ -341,19 +469,7 @@ export class PayUGateway implements PaymentGateway {
     }
 
     const txRecord = transaction as Record<string, unknown>;
-    const rawAmt = txRecord.additional_charges && typeof txRecord.transaction_amount === "string"
-      ? parseFloat(txRecord.transaction_amount) - parseFloat(String(txRecord.additional_charges))
-      : typeof txRecord.amt === "string" && txRecord.amt
-        ? parseFloat(txRecord.amt)
-        : typeof txRecord.transaction_amount === "string" && txRecord.transaction_amount
-          ? parseFloat(txRecord.transaction_amount)
-          : parseFloat(transaction.amount || "0");
-    const amountInPaise = Math.round(rawAmt * 100);
-
-    const additionalChargesStr = txRecord.additional_charges ? String(txRecord.additional_charges) : undefined;
-    const additionalChargesPaise = additionalChargesStr && !isNaN(parseFloat(additionalChargesStr))
-      ? Math.round(parseFloat(additionalChargesStr) * 100)
-      : 0;
+    const amounts = normalizePayUAmountFields(txRecord, transaction.amount);
 
     const bankRefNum = typeof txRecord.bank_ref_num === "string" && txRecord.bank_ref_num.trim()
       ? txRecord.bank_ref_num.trim()
@@ -365,34 +481,26 @@ export class PayUGateway implements PaymentGateway {
       ? txRecord.udf1.trim()
       : undefined;
 
-    const settlementAmountPaise = typeof txRecord.net_amount_debit === "string" && !isNaN(parseFloat(txRecord.net_amount_debit))
-      ? Math.round(parseFloat(txRecord.net_amount_debit) * 100)
-      : undefined;
-
-    const deductionsPaise = typeof txRecord.disc === "string" && !isNaN(parseFloat(txRecord.disc))
-      ? Math.round(parseFloat(txRecord.disc) * 100)
-      : 0;
-
-    const customerTxnAmountPaise = typeof txRecord.transaction_amount === "string" && !isNaN(parseFloat(txRecord.transaction_amount))
-      ? Math.round(parseFloat(txRecord.transaction_amount) * 100)
-      : undefined;
-
     return {
       gatewayPaymentId: transaction.mihpayid?.toString() || "",
       gatewayOrderId: transaction.txnid || var1,
       status: parsedStatus,
-      amount: amountInPaise,
+      amount: amounts.baseAmountPaise,
       currency: "INR",
       rawStatus: transaction.status,
       unmappedStatus: typeof txRecord.unmappedstatus === "string" ? txRecord.unmappedstatus : undefined,
       mode: typeof txRecord.mode === "string" ? txRecord.mode : undefined,
       addedOn: typeof txRecord.addedon === "string" ? txRecord.addedon : undefined,
-      additionalCharges: additionalChargesPaise,
+      additionalCharges: amounts.additionalChargesPaise,
       bankRefNum,
       udf1,
-      settlementAmount: settlementAmountPaise,
-      deductions: deductionsPaise,
-      customerTransactionAmount: customerTxnAmountPaise,
+      settlementAmount: amounts.settlementAmountPaise,
+      amountSettledPaise: amounts.amountSettledPaise,
+      deductions: amounts.deductionsPaise,
+      customerTransactionAmount: amounts.customerTransactionAmountPaise,
+      payuAmtPaise: amounts.payuAmtPaise,
+      payuTransactionAmountPaise: amounts.payuTransactionAmountPaise,
+      amountAmbiguityReason: amounts.amountAmbiguityReason,
     };
   }
 
@@ -495,30 +603,19 @@ export class PayUGateway implements PaymentGateway {
         else if (rawStatus === "not found") parsedStatus = "not_found";
 
         const txRecord = transaction as Record<string, unknown>;
-        const rawAmt = txRecord.additional_charges && typeof txRecord.transaction_amount === "string"
-          ? parseFloat(txRecord.transaction_amount) - parseFloat(String(txRecord.additional_charges))
-          : typeof txRecord.amt === "string" && txRecord.amt
-            ? parseFloat(txRecord.amt)
-            : typeof txRecord.transaction_amount === "string" && txRecord.transaction_amount
-              ? parseFloat(txRecord.transaction_amount)
-              : parseFloat(transaction.amount || "0");
-
-        const additionalChargesStr = txRecord.additional_charges ? String(txRecord.additional_charges) : undefined;
-        const additionalChargesPaise = additionalChargesStr && !isNaN(parseFloat(additionalChargesStr))
-          ? Math.round(parseFloat(additionalChargesStr) * 100)
-          : 0;
+        const amounts = normalizePayUAmountFields(txRecord, transaction.amount);
 
         results[txnid] = {
           gatewayPaymentId: transaction.mihpayid?.toString() || "",
           gatewayOrderId: transaction.txnid || txnid,
           status: parsedStatus,
-          amount: Math.round(rawAmt * 100),
+          amount: amounts.baseAmountPaise,
           currency: "INR",
           rawStatus: transaction.status,
           unmappedStatus: typeof txRecord.unmappedstatus === "string" ? txRecord.unmappedstatus : undefined,
           mode: typeof txRecord.mode === "string" ? txRecord.mode : undefined,
           addedOn: typeof txRecord.addedon === "string" ? txRecord.addedon : undefined,
-          additionalCharges: additionalChargesPaise,
+          additionalCharges: amounts.additionalChargesPaise,
           bankRefNum: typeof txRecord.bank_ref_num === "string" && txRecord.bank_ref_num.trim()
             ? txRecord.bank_ref_num.trim()
             : typeof txRecord.field2 === "string" && txRecord.field2.trim()
@@ -527,15 +624,13 @@ export class PayUGateway implements PaymentGateway {
           udf1: typeof txRecord.udf1 === "string" && txRecord.udf1.trim()
             ? txRecord.udf1.trim()
             : undefined,
-          settlementAmount: typeof txRecord.net_amount_debit === "string" && !isNaN(parseFloat(txRecord.net_amount_debit))
-            ? Math.round(parseFloat(txRecord.net_amount_debit) * 100)
-            : undefined,
-          deductions: typeof txRecord.disc === "string" && !isNaN(parseFloat(txRecord.disc))
-            ? Math.round(parseFloat(txRecord.disc) * 100)
-            : 0,
-          customerTransactionAmount: typeof txRecord.transaction_amount === "string" && !isNaN(parseFloat(txRecord.transaction_amount))
-            ? Math.round(parseFloat(txRecord.transaction_amount) * 100)
-            : undefined,
+          settlementAmount: amounts.settlementAmountPaise,
+          amountSettledPaise: amounts.amountSettledPaise,
+          deductions: amounts.deductionsPaise,
+          customerTransactionAmount: amounts.customerTransactionAmountPaise,
+          payuAmtPaise: amounts.payuAmtPaise,
+          payuTransactionAmountPaise: amounts.payuTransactionAmountPaise,
+          amountAmbiguityReason: amounts.amountAmbiguityReason,
         };
       }
     }

@@ -22,7 +22,7 @@ import { POST as verifyPost } from "@/app/api/admin/payments/verify/route";
 import { POST as resendEmailPost } from "@/app/api/admin/registrations/resend-email/route";
 import { POST as reconcilePost } from "@/app/api/admin/payments/reconcile/route";
 import { GET as auditGet, POST as auditPost } from "@/app/api/admin/payments/audit/route";
-import { PayUGateway } from "@/lib/payments/payu";
+import { PayUGateway, normalizePayUAmountFields, parsePaise } from "@/lib/payments/payu";
 import * as serverLib from "@/lib/supabase/server";
 import { NextRequest } from "next/server";
 import {
@@ -395,14 +395,16 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
     expect(toPaise(undefined)).toBe(0);
   });
 
-  it("2. Case 1 diagnosis: Gateway paid but local pending (bank 1000.18 vs order 999.00 with convenience fee)", async () => {
+  it("2. Case 1 diagnosis: Gateway paid but local pending (bank 1000.18 vs order 999.00 with explicit PayU surcharge)", async () => {
     const supabase = createMockSupabase(mockDb);
 
-    // Mock PayU returning ₹1000.18 (100018 paise) with success status
+    // Mock PayU returning ₹1000.18 (100018 paise) with explicit ₹1.18 surcharge
     const mockGatewayResults = {
       "TXN-CASE1": {
         status: "paid",
-        amountPaise: 100018, // 1,000.18
+        amountPaise: 100018, // 1,000.18 gross
+        additionalChargesPaise: 118, // explicit 1.18 surcharge
+        customerTransactionAmountPaise: 100018,
         gatewayPaymentId: "MIH-CASE1",
         rawStatus: "success",
       },
@@ -423,7 +425,7 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
     expect(orderRes?.localOrderStatus).toBe("pending");
     expect(orderRes?.authoritativeGatewayStatus).toBe("paid");
     expect(orderRes?.additionalCharges).toBeCloseTo(1.18, 2);
-    expect(orderRes?.diagnostics.isConvenienceFeeLikely).toBe(true);
+    expect(orderRes?.customerTransactionAmount).toBe(1000.18);
   });
 
   it("3. Case 2 diagnosis: Paid accommodation (₹999) while Footlose (₹500) remains unlinked and pending", async () => {
@@ -3573,6 +3575,337 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
       expect(o.settlementAmount).toBe(999); // Credited to CGC Jhanjeri
       expect(o.deductions).toBe(0); // Zero PayU deductions
       expect(o.customerTransactionAmount).toBe(1000.18); // Gross customer debit
+    });
+  });
+
+  // =========================================================================
+  // Part 11: PayU Amount Normalization, Ambiguity Gates & Regression Suite (A–L)
+  // =========================================================================
+  describe("Part 11: PayU Amount Normalization, Ambiguity Gates & Regression Suite (A–L)", () => {
+    it("85. Scenario A: Local order amount matches PayU canonical base amount, while payer debit legitimately differs by explicit surcharge", () => {
+      const txRecord = {
+        amt: "999.00",
+        transaction_amount: "999.00",
+        additional_charges: "1.18",
+        net_amount_debit: "999.00",
+        amount_settled: "999.00",
+        disc: "0.00",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+
+      expect(normalized.baseAmountPaise).toBe(99900); // Canonical base ₹999.00
+      expect(normalized.customerTransactionAmountPaise).toBe(100018); // ₹1,000.18 payer debit
+      expect(normalized.additionalChargesPaise).toBe(118); // ₹1.18 explicit surcharge
+      expect(normalized.settlementAmountPaise).toBe(99900); // ₹999.00 net merchant settlement
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+    });
+
+    it("86. Scenario B: Department-style report with customer amount ₹1,000.18 and merchant settlement ₹999.00 reconciles canonical base amount", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb", // Attempt 1
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900, // Authoritative base amount
+          additionalChargesPaise: 118, // Surcharge reported
+          customerTransactionAmountPaise: 100018, // Customer debit
+          settlementAmountPaise: 99900, // CGC settlement
+          gatewayPaymentId: "31387025914",
+          gatewayOrderId: "SVK-1792433168043-c5151e1",
+          currency: "INR",
+        },
+      });
+
+      expect(reconRes.success).toBe(true);
+      expect(reconRes.settled).toBe(true);
+      expect(supabase.rpc).toHaveBeenCalledWith(
+        "process_payment_success",
+        expect.objectContaining({
+          p_amount_paise: 99900, // Canonical base order amount
+          p_gateway_payment_id: "31387025914",
+          p_gateway_order_id: "SVK-1792433168043-c5151e1",
+        })
+      );
+    });
+
+    it("87. Scenario C: PayU response where amt differs from transaction_amount is not assumed interchangeable without reconciliation", () => {
+      // Discordant case: amt = 999.00, transaction_amount = 950.00, additional_charges = 0
+      const discordantRecord = {
+        amt: "999.00",
+        transaction_amount: "950.00",
+        additional_charges: "0.00",
+      };
+      const resultDiscordant = normalizePayUAmountFields(discordantRecord);
+      expect(resultDiscordant.amountAmbiguityReason).toBeDefined();
+      expect(resultDiscordant.amountAmbiguityReason).toContain("PayU amount fields mismatch");
+
+      // Gross reconciled case: amt = 999.00, transaction_amount = 1000.18, additional_charges = 1.18
+      const reconciledRecord = {
+        amt: "999.00",
+        transaction_amount: "1000.18",
+        additional_charges: "1.18",
+      };
+      const resultReconciled = normalizePayUAmountFields(reconciledRecord);
+      expect(resultReconciled.amountAmbiguityReason).toBeUndefined();
+      expect(resultReconciled.baseAmountPaise).toBe(99900);
+      expect(resultReconciled.customerTransactionAmountPaise).toBe(100018);
+    });
+
+    it("88. Scenario D: Response in which net_amount_debit differs from amount_settled flags settlement discrepancy", () => {
+      const conflictingSettlementRecord = {
+        amt: "999.00",
+        transaction_amount: "999.00",
+        net_amount_debit: "999.00",
+        amount_settled: "950.00", // Discordant settlement amount!
+      };
+      const result = normalizePayUAmountFields(conflictingSettlementRecord);
+      expect(result.amountAmbiguityReason).toBeDefined();
+      expect(result.amountAmbiguityReason).toContain("PayU settlement discrepancy");
+      expect(result.settlementAmountPaise).toBe(95000);
+    });
+
+    it("89. Scenario E: Successful PayU transaction with an amount-field ambiguity strictly blocks reconciliation", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Status is 'paid', but amount fields are discordant
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["b2366e0f-e566-4632-8c68-0369baba05cb"],
+        mockGatewayResults: {
+          "SVK-1792433168043-c5151e1": {
+            status: "paid",
+            amountPaise: 99900,
+            gatewayPaymentId: "31387025914",
+            amountAmbiguityReason: "PayU amount fields mismatch: 'amt' (₹999) and 'transaction_amount' (₹950) differ",
+          },
+        },
+      });
+
+      expect(verifyRes.orders[0].outcome).toBe("AMOUNT_MISMATCH");
+      expect(verifyRes.orders[0].outcomeMessage).toContain("Amount field ambiguity");
+
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900,
+          gatewayPaymentId: "31387025914",
+          amountAmbiguityReason: "PayU amount fields mismatch: 'amt' (₹999) and 'transaction_amount' (₹950) differ",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(reconRes.error).toContain("Amount field ambiguity");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    it("89b. Scenario F: Explicit documented customer surcharge classifies according to true contract without blanket tolerance", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["b2366e0f-e566-4632-8c68-0369baba05cb"],
+        mockGatewayResults: {
+          "SVK-1792433168043-c5151e1": {
+            status: "paid",
+            amountPaise: 99900, // Exact canonical base
+            additionalChargesPaise: 118, // Explicit 1.18 surcharge
+            customerTransactionAmountPaise: 100018,
+            gatewayPaymentId: "31387025914",
+          },
+        },
+      });
+
+      const o = verifyRes.orders[0];
+      expect(o.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING");
+      expect(o.expectedAmount).toBe(999);
+      expect(o.gatewayReportedAmount).toBe(999);
+      expect(o.additionalCharges).toBe(1.18);
+      expect(o.customerTransactionAmount).toBe(1000.18);
+    });
+
+    it("90. Scenario G: Payment with no explicitly reported additional charge: arbitrary difference strictly rejected", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Gateway reports ₹1000.18 but additionalChargesPaise is 0 / not returned
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["b2366e0f-e566-4632-8c68-0369baba05cb"],
+        mockGatewayResults: {
+          "SVK-1792433168043-c5151e1": {
+            status: "paid",
+            amountPaise: 100018, // ₹1,000.18
+            additionalChargesPaise: 0, // Unreported surcharge!
+            gatewayPaymentId: "31387025914",
+          },
+        },
+      });
+
+      const o = verifyRes.orders[0];
+      expect(o.outcome).toBe("AMOUNT_MISMATCH");
+      expect(o.outcomeMessage).toContain("Unreported differences cannot be treated as permissible fees");
+    });
+
+    it("91. Scenario H: Wrong merchant reference, transaction ID or currency strictly blocked", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Wrong currency
+      const reconCurrency = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900,
+          gatewayPaymentId: "31387025914",
+          currency: "USD", // Wrong currency!
+        },
+      });
+      expect(reconCurrency.success).toBe(false);
+      expect(reconCurrency.error).toContain("Currency mismatch");
+
+      // Missing transaction ID
+      const reconMissingId = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900,
+          gatewayPaymentId: "", // Missing mihpayid!
+        },
+      });
+      expect(reconMissingId.success).toBe(false);
+      expect(reconMissingId.error).toContain("Missing gateway payment ID (mihpayid)");
+    });
+
+    it("92. Scenario I: Failed local retry confirmed paid: only that exact order becomes eligible and settles", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Attempt 1 is confirmed paid
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900,
+          gatewayPaymentId: "31387025914",
+          gatewayOrderId: "SVK-1792433168043-c5151e1",
+        },
+      });
+
+      expect(reconRes.success).toBe(true);
+
+      const o1 = db.payment_orders.find((o) => o.id === "b2366e0f-e566-4632-8c68-0369baba05cb")!;
+      const o2 = db.payment_orders.find((o) => o.id === "9e9d3f27-075c-4b59-913c-a66e00d89df6")!;
+      const o3 = db.payment_orders.find((o) => o.id === "b55ef6d8-3902-4581-8f1b-797bdfb3b287")!;
+
+      expect(o1.status).toBe("paid");
+      expect(o2.status).toBe("failed");
+      expect(o3.status).toBe("pending");
+    });
+
+    it("93. Scenario J: Already-settled order safe idempotency", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Pre-set order as already paid
+      const o1 = db.payment_orders.find((o) => o.id === "b2366e0f-e566-4632-8c68-0369baba05cb")!;
+      o1.status = "paid";
+
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: o1.id,
+      });
+
+      expect(reconRes.success).toBe(true);
+      expect(reconRes.alreadySettled).toBe(true);
+      expect(reconRes.action).toBe("already_paid");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    it("94. Scenario K: Simulated gateway response attempting reconciliation is blocked", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        (process.env as any).NODE_ENV = "development";
+        const reconRes = await reconcilePaymentOrder({
+          supabaseAdmin: supabase,
+          adminId: "master-uuid",
+          adminEmail: "master@saviskar.internal",
+          paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+          // No mock provided in dev mode
+        });
+
+        expect(reconRes.success).toBe(false);
+        expect(reconRes.error).toContain("Reconciliation is disabled in local preview mode");
+        expect(supabase.rpc).not.toHaveBeenCalled();
+      } finally {
+        (process.env as any).NODE_ENV = originalEnv;
+      }
+    });
+
+    it("95. Scenario L: Sanitized diagnostics show all raw-source field values separately without sensitive credentials", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verification = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["b2366e0f-e566-4632-8c68-0369baba05cb"],
+        mockGatewayResults: {
+          "SVK-1792433168043-c5151e1": {
+            status: "paid",
+            amountPaise: 99900,
+            gatewayPaymentId: "31387025914",
+            bankRefNum: "131568971245",
+            udf1: "SVK-SVK26-2B846A46-20261019180605894-68460D",
+            additionalChargesPaise: 118,
+            settlementAmountPaise: 99900,
+            deductionsPaise: 0,
+            customerTransactionAmountPaise: 100018,
+            payuAmtPaise: 99900,
+            payuTransactionAmountPaise: 99900,
+          },
+        },
+      });
+
+      const report = generateSanitizedDiagnosticReport(verification);
+
+      expect(report).toContain("**Local Order Amount (payment_orders.amount)**: ₹999.00 INR");
+      expect(report).toContain("**Gateway Base Amount (PayU amt / transaction_amount)**: ₹999.00 INR");
+      expect(report).toContain("**Additional Charge Reported by PayU (additional_charges)**: ₹1.18");
+      expect(report).toContain("**Customer Debit (Calculated/Reported)**: ₹1000.18");
+      expect(report).toContain("**Merchant Settlement (net_amount_debit / amount_settled)**: ₹999.00");
+      expect(report).toContain("**Gateway Deductions / Fees (PayU disc)**: ₹0.00");
+      expect(report).toContain("**PayU Raw Fields**: amt: 999.00, transaction_amount: 999.00");
+
+      // Zero sensitive tokens
+      expect(report).not.toContain("PAYU_KEY");
+      expect(report).not.toContain("PAYU_SALT");
+      expect(report).not.toContain("sha512");
     });
   });
 });
