@@ -134,6 +134,7 @@ export function PaymentVerificationDialog({
                   linkedItems: o.linkedItems.map((li) => ({
                     ...li,
                     localStatus: "paid",
+                    settlementContext: "settled_by_current_order",
                   })),
                 };
               }
@@ -966,6 +967,16 @@ export function PaymentVerificationDialog({
                                     <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-black/5 text-black/70">
                                       Local: {order.localOrderStatus.toUpperCase()}
                                     </span>
+                                    {order.allocationBreakdown && (
+                                      <span className="font-mono text-[10px] px-2.5 py-0.5 rounded-full bg-black/5 text-black/80 font-medium border border-black/[0.06]">
+                                        {order.allocationBreakdown.summaryText}
+                                      </span>
+                                    )}
+                                    {order.allocationBreakdown?.hasAllocationMismatch && (
+                                      <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+                                        Diff: ₹{Math.abs(order.allocationBreakdown.differenceINR).toLocaleString("en-IN")}
+                                      </span>
+                                    )}
                                   </div>
 
                                   <p className="text-xs text-black/70 italic">
@@ -984,10 +995,16 @@ export function PaymentVerificationDialog({
                                               className={`inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-md border mr-1.5 ${
                                                 df.severity === "error"
                                                   ? "bg-rose-50 text-rose-800 border-rose-200"
+                                                  : df.severity === "info" || df.type === "RETRY_ORDER_NOTICE"
+                                                  ? "bg-blue-50 text-blue-800 border-blue-200"
                                                   : "bg-amber-50 text-amber-800 border-amber-200"
                                               }`}
                                             >
-                                              <AlertCircle className="w-3 h-3 shrink-0" />
+                                              {df.severity === "info" || df.type === "RETRY_ORDER_NOTICE" ? (
+                                                <Info className="w-3 h-3 shrink-0 text-blue-600" />
+                                              ) : (
+                                                <AlertCircle className="w-3 h-3 shrink-0" />
+                                              )}
                                               <span>{df.title}: {df.description}</span>
                                             </div>
                                           ))}
@@ -1180,6 +1197,82 @@ export function PaymentVerificationDialog({
                                     </div>
                                   </div>
 
+                                  {/* LINE-ITEM ALLOCATION BREAKDOWN */}
+                                  {order.allocationBreakdown && (
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-black/50 block">
+                                          Line-Item Allocation Breakdown
+                                        </span>
+                                        <span
+                                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md ${
+                                            order.allocationBreakdown.hasAllocationMismatch
+                                              ? "bg-amber-100 text-amber-900 border border-amber-300"
+                                              : "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                                          }`}
+                                        >
+                                          {order.allocationBreakdown.allocationDifferenceText}
+                                        </span>
+                                      </div>
+                                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5 text-[11px] bg-white p-3.5 rounded-xl border border-black/[0.06]">
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Order Amount
+                                          </span>
+                                          <span className="font-mono text-black/90 font-semibold block mt-0.5">
+                                            ₹{order.allocationBreakdown.totalOrderAmount.toLocaleString("en-IN")}
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Line-Item Sum
+                                          </span>
+                                          <span className="font-mono text-black/90 font-semibold block mt-0.5">
+                                            ₹{order.allocationBreakdown.totalLineItemSum.toLocaleString("en-IN")}
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Distinct Items
+                                          </span>
+                                          <span className="font-mono text-black/80 block mt-0.5">
+                                            {order.allocationBreakdown.distinctItemCount}
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Events Subtotal
+                                          </span>
+                                          <span className="font-mono text-black/80 block mt-0.5">
+                                            {order.allocationBreakdown.eventCount} (₹{order.allocationBreakdown.eventSubtotal.toLocaleString("en-IN")})
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Accommodations
+                                          </span>
+                                          <span className="font-mono text-black/80 block mt-0.5">
+                                            {order.allocationBreakdown.accommodationCount} (₹{order.allocationBreakdown.accommodationSubtotal.toLocaleString("en-IN")})
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Allocation Diff
+                                          </span>
+                                          <span
+                                            className={`font-mono font-semibold block mt-0.5 ${
+                                              order.allocationBreakdown.hasAllocationMismatch
+                                                ? "text-amber-800"
+                                                : "text-emerald-700"
+                                            }`}
+                                          >
+                                            ₹{order.allocationBreakdown.differenceINR.toLocaleString("en-IN")}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
                                   {/* AMOUNT NORMALIZATION & SETTLEMENT BREAKDOWN */}
                                   <div className="space-y-1.5">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-black/50 block">
@@ -1322,23 +1415,46 @@ export function PaymentVerificationDialog({
                                       {order.linkedItems.map((item, liIdx) => (
                                         <div
                                           key={item.id || liIdx}
-                                          className="flex items-center justify-between p-2.5 rounded-lg bg-white border border-black/[0.06] text-xs"
+                                          className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-lg bg-white border border-black/[0.06] text-xs gap-2"
                                         >
-                                          <div className="flex items-center gap-2">
+                                          <div className="flex items-center gap-2 flex-wrap">
                                             {item.itemType === "accommodation" ? (
-                                              <Building2 className="w-3.5 h-3.5 text-purple-600" />
+                                              <Building2 className="w-3.5 h-3.5 text-purple-600 shrink-0" />
                                             ) : (
-                                              <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                                              <CreditCard className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                                             )}
                                             <span className="font-medium text-black">{item.title}</span>
+                                            {item.delegateName && (
+                                              <span className="text-[10px] text-black/60 font-mono">
+                                                • {item.delegateName}
+                                              </span>
+                                            )}
                                             {item.dates && (
                                               <span className="text-[10px] text-black/40">
                                                 ({item.dates})
                                               </span>
                                             )}
+                                            {item.settlementContext === "settled_by_retry" && (
+                                              <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                                                <Info className="w-2.5 h-2.5" />
+                                                Settled by retry: {item.settledByOrderReference || "paid retry"}
+                                              </span>
+                                            )}
+                                            {item.settlementContext === "unresolved_paid" && (
+                                              <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                                                <AlertTriangle className="w-2.5 h-2.5" />
+                                                Unresolved paid item
+                                              </span>
+                                            )}
+                                            {item.hasMissingTarget && (
+                                              <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                                <AlertCircle className="w-2.5 h-2.5" />
+                                                Missing canonical target ID
+                                              </span>
+                                            )}
                                           </div>
 
-                                          <div className="flex items-center gap-3">
+                                          <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
                                             <span className="font-mono font-semibold text-black/80">
                                               ₹{item.expectedAmount.toLocaleString("en-IN")}
                                             </span>

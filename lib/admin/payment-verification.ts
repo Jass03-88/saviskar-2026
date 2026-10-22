@@ -41,6 +41,7 @@ export type DiagnosticFinding = {
 
 export type LinkedItemDetail = {
   id: string;
+  orderItemId?: string;
   itemType: "event" | "accommodation";
   title: string;
   category?: string | null;
@@ -49,6 +50,13 @@ export type LinkedItemDetail = {
   delegateName?: string;
   dates?: string;
   paymentOrderId?: string | null;
+  participantEventId?: string;
+  participantAccommodationId?: string;
+  hasMissingTarget?: boolean;
+  settledByOrderReference?: string;
+  settledByOrderStatus?: string;
+  settledByOrderId?: string;
+  settlementContext?: "settled_by_retry" | "settled_by_current_order" | "unresolved_paid" | "unsettled";
 };
 
 export type OrderVerificationResult = {
@@ -80,6 +88,7 @@ export type OrderVerificationResult = {
   outcome: ReconciliationOutcome;
   outcomeMessage: string;
   linkedItems: LinkedItemDetail[];
+  allocationBreakdown?: ItemAllocationBreakdown;
   diagnosticFindings: DiagnosticFinding[];
   orderCreatedAt: string | null;
   gatewayTransactionTime: string | null;
@@ -176,6 +185,149 @@ export function toPaise(amount: number | string | null | undefined): number {
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
   if (isNaN(num)) return 0;
   return Math.round(num * 100);
+}
+
+export type ItemAllocationBreakdown = {
+  totalOrderAmount: number;
+  totalOrderAmountPaise: number;
+  distinctItemCount: number;
+  eventCount: number;
+  eventSubtotal: number;
+  eventSubtotalPaise: number;
+  accommodationCount: number;
+  accommodationSubtotal: number;
+  accommodationSubtotalPaise: number;
+  totalLineItemSum: number;
+  totalLineItemSumPaise: number;
+  differencePaise: number;
+  differenceINR: number;
+  summaryText: string;
+  allocationDifferenceText: string;
+  hasAllocationMismatch: boolean;
+  hasInvalidOrUnavailableItems: boolean;
+  invalidItemsCount: number;
+};
+
+export function formatINR(amount: number): string {
+  return amount.toLocaleString("en-IN");
+}
+
+/**
+ * Computes a grounded, integer-paise line-item allocation breakdown
+ * for an individual payment order without cross-order double-counting.
+ */
+export function computeItemAllocationBreakdown(params: {
+  orderAmount: number;
+  items: Array<{
+    id: string;
+    orderItemId?: string;
+    itemType: "event" | "accommodation" | string;
+    expectedAmount?: number;
+    amount?: number;
+    participantEventId?: string;
+    participantAccommodationId?: string;
+    hasMissingTarget?: boolean;
+  }>;
+}): ItemAllocationBreakdown {
+  const orderAmount = Number(params.orderAmount) || 0;
+  const totalOrderAmountPaise = toPaise(orderAmount);
+
+  const seenKeys = new Set<string>();
+  let eventCount = 0;
+  let eventSubtotalPaise = 0;
+  let accommodationCount = 0;
+  let accommodationSubtotalPaise = 0;
+  let distinctItemCount = 0;
+  let hasInvalidOrUnavailableItems = false;
+  let invalidItemsCount = 0;
+
+  for (const it of params.items || []) {
+    const rawAmt = it.expectedAmount != null ? it.expectedAmount : it.amount;
+    const amt = Number(rawAmt);
+    const isAmtInvalid = rawAmt == null || isNaN(amt) || amt < 0;
+    const isTypeInvalid = it.itemType !== "event" && it.itemType !== "accommodation";
+    const isTargetMissing =
+      it.hasMissingTarget === true ||
+      (it.itemType === "event" && it.orderItemId != null && it.participantEventId == null) ||
+      (it.itemType === "accommodation" && it.orderItemId != null && it.participantAccommodationId == null) ||
+      (typeof it.id === "string" && it.id.startsWith("unmapped-"));
+
+    if (isAmtInvalid || isTypeInvalid || isTargetMissing) {
+      hasInvalidOrUnavailableItems = true;
+      invalidItemsCount++;
+    }
+
+    const key = it.participantEventId || it.participantAccommodationId || it.orderItemId || it.id;
+    if (seenKeys.has(key)) {
+      continue;
+    }
+    seenKeys.add(key);
+    distinctItemCount++;
+
+    const itemAmt = isAmtInvalid ? 0 : amt;
+    const itemAmtPaise = toPaise(itemAmt);
+
+    if (!isAmtInvalid && !isTypeInvalid && !isTargetMissing) {
+      if (it.itemType === "event") {
+        eventCount++;
+        eventSubtotalPaise += itemAmtPaise;
+      } else if (it.itemType === "accommodation") {
+        accommodationCount++;
+        accommodationSubtotalPaise += itemAmtPaise;
+      }
+    }
+  }
+
+  const eventSubtotal = eventSubtotalPaise / 100;
+  const accommodationSubtotal = accommodationSubtotalPaise / 100;
+  const totalLineItemSumPaise = eventSubtotalPaise + accommodationSubtotalPaise;
+  const totalLineItemSum = totalLineItemSumPaise / 100;
+  const differencePaise = totalOrderAmountPaise - totalLineItemSumPaise;
+  const differenceINR = differencePaise / 100;
+  const hasAllocationMismatch = differencePaise !== 0;
+
+  let summaryText = "";
+  if (eventCount > 0 && accommodationCount > 0) {
+    const evText = `${eventCount} ${eventCount === 1 ? "Event" : "Events"} (₹${formatINR(eventSubtotal)})`;
+    const accText = `${accommodationCount} ${accommodationCount === 1 ? "Accommodation" : "Accommodations"} (₹${formatINR(accommodationSubtotal)})`;
+    summaryText = `${evText} + ${accText}`;
+  } else if (eventCount > 0) {
+    summaryText = `${eventCount} ${eventCount === 1 ? "Event" : "Events"} (₹${formatINR(eventSubtotal)})`;
+  } else if (accommodationCount > 0) {
+    summaryText = `${accommodationCount} ${accommodationCount === 1 ? "Accommodation" : "Accommodations"} (₹${formatINR(accommodationSubtotal)})`;
+  } else {
+    summaryText = "0 Line Items (₹0)";
+  }
+
+  let allocationDifferenceText = "";
+  if (differencePaise === 0) {
+    allocationDifferenceText = "Allocation difference: ₹0";
+  } else if (differencePaise > 0) {
+    allocationDifferenceText = `Allocation difference: ₹${formatINR(differenceINR)} — missing/unmapped item requires investigation`;
+  } else {
+    allocationDifferenceText = `Allocation difference: -₹${formatINR(Math.abs(differenceINR))} — line items exceed order amount`;
+  }
+
+  return {
+    totalOrderAmount: orderAmount,
+    totalOrderAmountPaise,
+    distinctItemCount,
+    eventCount,
+    eventSubtotal,
+    eventSubtotalPaise,
+    accommodationCount,
+    accommodationSubtotal,
+    accommodationSubtotalPaise,
+    totalLineItemSum,
+    totalLineItemSumPaise,
+    differencePaise,
+    differenceINR,
+    summaryText,
+    allocationDifferenceText,
+    hasAllocationMismatch,
+    hasInvalidOrUnavailableItems,
+    invalidItemsCount,
+  };
 }
 
 /**
@@ -491,41 +643,62 @@ export async function verifyParticipantPayments(params: {
     // Assemble Linked Items
     const linkedItems: LinkedItemDetail[] = [];
     let hasMissingAccommodationRecord = false;
+    let hasMissingEventRecord = false;
 
     // Event items
     orderItems.forEach((poi) => {
       if (poi.item_type === "event" || poi.participant_event_id) {
         const rawEvt = Array.isArray(poi.events) ? poi.events[0] : poi.events;
         const rawPe = Array.isArray(poi.participant_events) ? poi.participant_events[0] : poi.participant_events;
+        const hasValidPeId = typeof poi.participant_event_id === "string" && poi.participant_event_id.trim().length > 0;
+
+        if (!hasValidPeId) {
+          hasMissingEventRecord = true;
+        }
+
+        const peId = hasValidPeId ? poi.participant_event_id.trim() : `unmapped-event-${poi.id}`;
         linkedItems.push({
-          id: poi.id,
+          id: peId,
+          orderItemId: poi.id,
           itemType: "event",
-          title: rawEvt?.name || "Event Registration",
+          title: rawEvt?.name || (!hasValidPeId ? "Unmapped Event Registration" : "Event Registration"),
           category: rawEvt?.category || null,
           expectedAmount: Number(poi.amount) || Number(rawEvt?.registration_fee) || 0,
-          localStatus: rawPe?.payment_status || "pending",
+          localStatus: !hasValidPeId ? "missing" : (rawPe?.payment_status || "pending"),
           paymentOrderId: order.id,
+          participantEventId: hasValidPeId ? peId : undefined,
+          hasMissingTarget: !hasValidPeId,
         });
       } else if (poi.item_type === "accommodation" || poi.participant_accommodation_id) {
         const rawAcc = Array.isArray(poi.participant_accommodations)
           ? poi.participant_accommodations[0]
           : poi.participant_accommodations || accList.find((a) => a.id === poi.participant_accommodation_id);
-        if (!rawAcc && poi.participant_accommodation_id) {
+        const hasValidPaId = typeof poi.participant_accommodation_id === "string" && poi.participant_accommodation_id.trim().length > 0;
+
+        if (!rawAcc || !hasValidPaId) {
           hasMissingAccommodationRecord = true;
         }
+
         const rawPlan = rawAcc?.accommodation_plans;
         const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
         const dates = rawAcc?.start_date && rawAcc?.end_date ? `${rawAcc.start_date} to ${rawAcc.end_date}` : undefined;
-        const accId = poi.participant_accommodation_id || poi.id;
+        const accId = hasValidPaId ? poi.participant_accommodation_id.trim() : `unmapped-acc-${poi.id}`;
+        const accParticipant = rawAcc?.participant_id ? participantsMap.get(rawAcc.participant_id) : undefined;
+        const delegateName = accParticipant ? `${accParticipant.name} (${accParticipant.participant_id || "Participant"})` : undefined;
+
         linkedItems.push({
           id: accId,
+          orderItemId: poi.id,
           itemType: "accommodation",
-          title: plan?.name || (!rawAcc ? "Missing Accommodation Booking" : "Accommodation Booking"),
+          title: plan?.name || (!rawAcc || !hasValidPaId ? "Missing Accommodation Booking" : "Accommodation Booking"),
           category: "Accommodation",
           expectedAmount: Number(poi.amount) || Number(rawAcc?.amount) || 0,
-          localStatus: rawAcc?.status || "missing",
+          localStatus: !hasValidPaId ? "missing" : (rawAcc?.status || "missing"),
+          delegateName,
           dates,
           paymentOrderId: order.id,
+          participantAccommodationId: hasValidPaId ? accId : undefined,
+          hasMissingTarget: !hasValidPaId,
         });
       }
     });
@@ -538,6 +711,8 @@ export async function verifyParticipantPayments(params: {
       if (!alreadyInList) {
         const rawPlan = Array.isArray(acc.accommodation_plans) ? acc.accommodation_plans[0] : acc.accommodation_plans;
         const dates = acc.start_date && acc.end_date ? `${acc.start_date} to ${acc.end_date}` : undefined;
+        const accParticipant = acc.participant_id ? participantsMap.get(acc.participant_id) : undefined;
+        const delegateName = accParticipant ? `${accParticipant.name} (${accParticipant.participant_id || "Participant"})` : undefined;
         linkedItems.push({
           id: acc.id,
           itemType: "accommodation",
@@ -545,8 +720,10 @@ export async function verifyParticipantPayments(params: {
           category: "Accommodation",
           expectedAmount: Number(acc.amount) || 0,
           localStatus: acc.status || "pending",
+          delegateName,
           dates,
           paymentOrderId: order.id,
+          participantAccommodationId: acc.id,
         });
       }
     });
@@ -554,6 +731,77 @@ export async function verifyParticipantPayments(params: {
     // Calculate expected order amount
     const expectedAmount = Number(order.amount) || 0;
     const expectedAmountPaise = toPaise(expectedAmount);
+
+    // Compute grounded line-item allocation breakdown
+    const allocationBreakdown = computeItemAllocationBreakdown({
+      orderAmount: expectedAmount,
+      items: linkedItems,
+    });
+
+    // Authoritative settlement context resolution for each linked item
+    linkedItems.forEach((li) => {
+      if (order.status === "paid") {
+        if (li.localStatus === "paid" && !li.hasMissingTarget) {
+          li.settlementContext = "settled_by_current_order";
+          li.settledByOrderId = order.id;
+          li.settledByOrderReference = order.order_reference;
+          li.settledByOrderStatus = order.status;
+        } else {
+          li.settlementContext = "unsettled";
+        }
+      } else {
+        // Order is NOT paid (failed, pending, cancelled)
+        if (li.localStatus === "paid" && !li.hasMissingTarget) {
+          let settlingOrder: any = null;
+
+          // STRICT CHECK: ONLY use canonical participantEventId. Never li.id or orderItemId!
+          if (li.itemType === "event" && li.participantEventId) {
+            const peId = li.participantEventId;
+            const matchingPoi = allOrderItems.find(
+              (poi) =>
+                poi.payment_order_id !== order.id &&
+                poi.participant_event_id === peId
+            );
+            if (matchingPoi) {
+              settlingOrder = paymentOrders.find(
+                (o) => o.id === matchingPoi.payment_order_id && o.status === "paid"
+              );
+            }
+          } else if (li.itemType === "accommodation" && li.participantAccommodationId) {
+            const paId = li.participantAccommodationId;
+            const acc = accList.find((a) => a.id === paId);
+            if (acc?.payment_order_id && acc.payment_order_id !== order.id) {
+              settlingOrder = paymentOrders.find(
+                (o) => o.id === acc.payment_order_id && o.status === "paid"
+              );
+            }
+            if (!settlingOrder) {
+              const matchingPoi = allOrderItems.find(
+                (poi) =>
+                  poi.payment_order_id !== order.id &&
+                  poi.participant_accommodation_id === paId
+              );
+              if (matchingPoi) {
+                settlingOrder = paymentOrders.find(
+                  (o) => o.id === matchingPoi.payment_order_id && o.status === "paid"
+                );
+              }
+            }
+          }
+
+          if (settlingOrder) {
+            li.settlementContext = "settled_by_retry";
+            li.settledByOrderId = settlingOrder.id;
+            li.settledByOrderReference = settlingOrder.order_reference;
+            li.settledByOrderStatus = settlingOrder.status;
+          } else {
+            li.settlementContext = "unresolved_paid";
+          }
+        } else {
+          li.settlementContext = "unsettled";
+        }
+      }
+    });
 
     // Gateway verification details
     let gatewayReportedStatus = "unknown";
@@ -743,33 +991,39 @@ export async function verifyParticipantPayments(params: {
       outcomeMessage = `Verification result was inconclusive: ${rawGatewayStatus || gatewayReportedStatus}.`;
     }
 
-    // Check if any linked item is conflicting with another settled order
-    let conflictingSettledOrderRef: string | null = null;
-    linkedItems.forEach((li) => {
-      const mappedOrders = itemOrderMap.get(li.id) || [];
-      if (mappedOrders.length > 1) {
-        const otherPaid = paymentOrders.find(
-          (o) => o.id !== order.id && mappedOrders.includes(o.id) && o.status === "paid"
-        );
-        if (otherPaid) {
-          conflictingSettledOrderRef = otherPaid.order_reference;
-        }
-      }
-    });
+    // Conflicting Captured Payment Check:
+    // Only flag CONFLICTING_ITEM_MAPPING if the gateway actually captured funds for this order
+    // while the same item was settled under a separate paid order.
+    const conflictingSettledItem = linkedItems.find(
+      (li) => li.settlementContext === "settled_by_retry"
+    );
+    const hasConflictingCapturedPayment =
+      gatewayReportedStatus === "paid" && conflictingSettledItem != null;
 
-    if (conflictingSettledOrderRef && order.status !== "paid") {
+    if (hasConflictingCapturedPayment && order.status !== "paid") {
       outcome = "CONFLICTING_ITEM_MAPPING";
-      outcomeMessage = `Item is already mapped to another settled order (${conflictingSettledOrderRef}). Reconciliation blocked due to conflicting item mapping.`;
+      const otherRef = conflictingSettledItem?.settledByOrderReference || "separate settled order";
+      outcomeMessage = `Item is already mapped to another settled order (${otherRef}). Gateway captured payment for this order as well; reconciliation blocked due to conflicting item mapping.`;
     }
 
     // Missing accommodation link check
     const hasAccommodationItem = orderItems.some(
       (poi) => poi.item_type === "accommodation" || poi.participant_accommodation_id
     );
-    const hasLinkedAcc = linkedItems.some((li) => li.itemType === "accommodation");
+    const hasLinkedAcc = linkedItems.some((li) => li.itemType === "accommodation" && !li.hasMissingTarget);
     if (hasMissingAccommodationRecord || (hasAccommodationItem && !hasLinkedAcc)) {
       outcome = "MISSING_ACCOMMODATION_LINK";
       outcomeMessage = "Order contains accommodation items, but the linked accommodation record was not found or is missing.";
+    }
+
+    // Missing event registration link check
+    const hasEventItem = orderItems.some(
+      (poi) => poi.item_type === "event" || poi.participant_event_id
+    );
+    const hasValidLinkedEvt = linkedItems.some((li) => li.itemType === "event" && !li.hasMissingTarget);
+    if (hasMissingEventRecord || (hasEventItem && !hasValidLinkedEvt)) {
+      outcome = "INCOMPLETE_LOCAL_ITEM_MAPPING";
+      outcomeMessage = "Order contains event items, but the canonical participant event registration record is missing or unmapped.";
     }
 
     // Diagnostic Findings for this specific order
@@ -788,7 +1042,19 @@ export async function verifyParticipantPayments(params: {
       });
     }
 
-    // Contradictory local statuses
+    // Flag missing canonical event target ID as actionable warning
+    if (hasMissingEventRecord || (hasEventItem && !hasValidLinkedEvt)) {
+      diagnosticFindings.push({
+        type: "MISSING_ORDER_LINK",
+        severity: "warning",
+        title: "Missing Event Registration Link",
+        description: "Order references an event line item with a missing or unmapped canonical participant event ID.",
+        orderId: order.id,
+        participantId: order.payer_participant_id,
+      });
+    }
+
+    // Contradictory local statuses & Retry notices
     if (order.status === "paid") {
       const nonPaid = linkedItems.filter((i) => i.localStatus !== "paid");
       if (nonPaid.length > 0) {
@@ -801,37 +1067,53 @@ export async function verifyParticipantPayments(params: {
           participantId: order.payer_participant_id,
         });
       }
-    } else if (order.status === "pending") {
-      const paidItems = linkedItems.filter((i) => i.localStatus === "paid");
-      if (paidItems.length > 0) {
+    } else {
+      // Current order is not paid (failed, pending, cancelled)
+      // Classification A: Items settled by a subsequent retry -> Informational notice
+      const retrySettledItems = linkedItems.filter((i) => i.settlementContext === "settled_by_retry");
+      retrySettledItems.forEach((li) => {
+        diagnosticFindings.push({
+          type: "RETRY_ORDER_NOTICE",
+          severity: "info",
+          title: "Settled by Subsequent Retry",
+          description: `Historical failed checkout — item was settled by a subsequent successful retry (${li.settledByOrderReference || "verified order"}, Status: ${li.settledByOrderStatus || "paid"}).`,
+          orderId: order.id,
+          itemId: li.id,
+          participantId: order.payer_participant_id,
+        });
+      });
+
+      // Classification B: Paid items without canonical order -> Actionable warning
+      const unresolvedPaidItems = linkedItems.filter((i) => i.settlementContext === "unresolved_paid");
+      if (unresolvedPaidItems.length > 0) {
         diagnosticFindings.push({
           type: "CONTRADICTORY_LOCAL_STATUS",
           severity: "warning",
-          title: "Contradictory Local Status",
-          description: `Linked item(s) (${paidItems.map((i) => i.title).join(", ")}) are marked PAID, but payment order remains PENDING.`,
+          title: "Unresolved Canonical Settlement",
+          description: `Paid item — canonical successful payment order could not be established. (${unresolvedPaidItems.map((i) => i.title).join(", ")})`,
           orderId: order.id,
           participantId: order.payer_participant_id,
         });
       }
     }
 
-    // Unexpected amount allocation
-    if (linkedItems.length > 0) {
-      const itemsSumPaise = linkedItems.reduce((acc, it) => acc + toPaise(it.expectedAmount), 0);
-      if (itemsSumPaise !== expectedAmountPaise) {
-        diagnosticFindings.push({
-          type: "AMOUNT_ALLOCATION_MISMATCH",
-          severity: "warning",
-          title: "Amount Allocation Mismatch",
-          description: `Order expected amount (₹${expectedAmount}) differs from sum of mapped line items (₹${itemsSumPaise / 100}).`,
-          orderId: order.id,
-          participantId: order.payer_participant_id,
-        });
-      }
+    // Grounded Amount Allocation Mismatch check
+    if (allocationBreakdown.hasAllocationMismatch && linkedItems.length > 0) {
+      diagnosticFindings.push({
+        type: "AMOUNT_ALLOCATION_MISMATCH",
+        severity: "warning",
+        title: "Amount Allocation Mismatch",
+        description: `Order expected amount (₹${expectedAmount}) differs from sum of mapped line items (₹${allocationBreakdown.totalLineItemSum}). ${allocationBreakdown.allocationDifferenceText}.`,
+        orderId: order.id,
+        participantId: order.payer_participant_id,
+      });
     }
 
-    // Duplicate item mapping check
+    // Duplicate item mapping check (for non-retry conflicts)
     linkedItems.forEach((li) => {
+      if (li.settlementContext === "settled_by_retry") {
+        return; // Already cleanly classified as settled by retry!
+      }
       const mappedOrders = itemOrderMap.get(li.id) || [];
       if (mappedOrders.length > 1) {
         const otherOrders = paymentOrders.filter(
@@ -895,6 +1177,7 @@ export async function verifyParticipantPayments(params: {
       outcome,
       outcomeMessage,
       linkedItems,
+      allocationBreakdown,
       diagnosticFindings,
       orderCreatedAt: order.created_at || null,
       gatewayTransactionTime: gatewayAddedOn || null,
@@ -1029,6 +1312,11 @@ export async function verifyParticipantPayments(params: {
         ? "Free event registration verified. No payment order was required."
         : "Participant has payable events or accommodation, but no payment order was found.";
 
+      const allocationBreakdown = computeItemAllocationBreakdown({
+        orderAmount: 0,
+        items: linkedItems,
+      });
+
       results.push({
         orderId: `unlinked-${participantId}`,
         orderReference: "NO-ORDER",
@@ -1050,6 +1338,7 @@ export async function verifyParticipantPayments(params: {
         outcome,
         outcomeMessage,
         linkedItems,
+        allocationBreakdown,
         diagnosticFindings: isAllFree
           ? []
           : [
@@ -1324,10 +1613,23 @@ export function generateSanitizedDiagnosticReport(verification: VerificationResp
       lines.push(`- **Receipt Status**: \`${o.settlementReceiptStatus}\``);
       lines.push(`- **Audit Outcome**: **${o.outcome}** — ${o.outcomeMessage}`);
 
+      if (o.allocationBreakdown) {
+        lines.push(`- **Line-Item Summary**: ${o.allocationBreakdown.summaryText}`);
+        lines.push(`- **Line-Item Totals**: Distinct Items: ${o.allocationBreakdown.distinctItemCount} | Sum: ₹${o.allocationBreakdown.totalLineItemSum.toFixed(2)} | ${o.allocationBreakdown.allocationDifferenceText}`);
+      }
+
       if (o.linkedItems && o.linkedItems.length > 0) {
         lines.push("- **Linked Line Items**:");
         o.linkedItems.forEach((li) => {
-          lines.push(`  - [${li.itemType.toUpperCase()}] ${li.title}: Expected ₹${li.expectedAmount.toFixed(2)}, Local Status: \`${li.localStatus}\``);
+          let extra = "";
+          if (li.delegateName) extra += ` [Delegate: ${li.delegateName}]`;
+          if (li.dates) extra += ` [Dates: ${li.dates}]`;
+          if (li.settlementContext === "settled_by_retry") {
+            extra += ` (↳ Settled by subsequent retry: ${li.settledByOrderReference}, Status: ${li.settledByOrderStatus})`;
+          } else if (li.settlementContext === "unresolved_paid") {
+            extra += " (↳ Warning: Paid item — canonical successful payment order could not be established)";
+          }
+          lines.push(`  - [${li.itemType.toUpperCase()}] ${li.title}: Expected ₹${li.expectedAmount.toFixed(2)}, Local Status: \`${li.localStatus}\`${extra}`);
         });
       }
       lines.push("");
