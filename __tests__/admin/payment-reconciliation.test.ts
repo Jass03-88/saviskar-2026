@@ -5693,4 +5693,968 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
 
   });
 
+  // =========================================================================
+  // Part 14: Step 4 — Status-Aware PayU Normalization & Zero-Debit Parsing (Tests 133–150)
+  // =========================================================================
+  describe("Part 14: Step 4 — Status-Aware PayU Normalization & Zero-Debit Parsing (Tests 133–150)", () => {
+    function createNainaAuthoritativeDb() {
+      return {
+        participants: [
+          {
+            id: "naina-uuid-2f18f504",
+            name: "Naina Rathour",
+            email: "nainarana1912@gmail.com",
+            phone: "9876543210",
+            participant_id: "SVK26-2F18F504",
+          },
+        ],
+        events: [
+          {
+            id: "evt-ga-uuid",
+            name: "MUN — General Assembly",
+            category: "MUN",
+            registration_fee: 500,
+            payment_type: "paid",
+          },
+          {
+            id: "evt-sc-uuid",
+            name: "MUN — United Nations Security Council",
+            category: "MUN",
+            registration_fee: 500,
+            payment_type: "paid",
+          },
+        ],
+        participant_events: [
+          {
+            id: "pe-ga-uuid",
+            participant_id: "naina-uuid-2f18f504",
+            event_id: "evt-ga-uuid",
+            payment_status: "paid",
+            payment_amount: 500,
+            payment_id: "order-ga-uuid",
+          },
+          {
+            id: "pe-sc-uuid",
+            participant_id: "naina-uuid-2f18f504",
+            event_id: "evt-sc-uuid",
+            payment_status: "pending",
+            payment_amount: 500,
+            payment_id: null,
+          },
+        ],
+        participant_accommodations: [],
+        payment_orders: [
+          // Order 1: General Assembly (already paid, receipt record missing in payments table as documented)
+          {
+            id: "order-ga-uuid",
+            order_reference: "SVK-SVK26-2F18F504-20261015095641365-9D0FF8",
+            payer_participant_id: "naina-uuid-2f18f504",
+            gateway: "payu",
+            gateway_order_id: "SVK-1792055699266-49b0ga",
+            gateway_payment_id: "403993715525547",
+            amount: 500,
+            currency: "INR",
+            status: "paid",
+            created_at: "2026-10-15T09:56:41.365Z",
+            updated_at: "2026-10-15T10:00:00.000Z",
+          },
+          // Order 2: Security Council (pending order, expected ₹500)
+          {
+            id: "order-sc-uuid",
+            order_reference: "SVK-SVK26-2F18F504-20261015091457471-BBF2F1",
+            payer_participant_id: "naina-uuid-2f18f504",
+            gateway: "payu",
+            gateway_order_id: "SVK-1792055699266-49b0e3b",
+            gateway_payment_id: null,
+            amount: 500,
+            currency: "INR",
+            status: "pending",
+            created_at: "2026-10-15T09:14:57.471Z",
+            updated_at: "2026-10-15T09:14:57.471Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-ga-uuid",
+            payment_order_id: "order-ga-uuid",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-ga-uuid",
+            participant_accommodation_id: null,
+          },
+          {
+            id: "poi-sc-uuid",
+            payment_order_id: "order-sc-uuid",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-sc-uuid",
+            participant_accommodation_id: null,
+          },
+        ],
+        payments: [], // Missing receipt record for General Assembly order
+        admin_audit_logs: [],
+      };
+    }
+
+    // 1. net_amount_debit missing: show unavailable, not ₹0.00, and do not create a false numerical mismatch.
+    it("133. Regression 1: net_amount_debit missing shows unavailable, not ₹0.00, and does not create false mismatch", async () => {
+      const txRecord = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        // net_amount_debit is absent / undefined
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBeUndefined();
+      expect(normalized.netDebitPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            gatewayPaymentId: "403993715525548",
+            // No customerTransactionAmountPaise, no netDebitPaise
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.expectedAmount).toBe(500);
+      expect(order.gatewayReportedAmount).toBe(500);
+      expect(order.customerTransactionAmount).toBeNull();
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING"); // Clean match, NOT AMOUNT_MISMATCH!
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **Customer Debit (Calculated/Reported)**: Not returned by PayU");
+      expect(report).not.toContain("customer debit (₹0.00)");
+      expect(report).not.toContain("₹0.00 differs from customer debit");
+    });
+
+    // 2. net_amount_debit: null treated according to supported contract without coercing to zero
+    it("134. Regression 2: net_amount_debit: null is treated according to supported response contract without coercing to zero", async () => {
+      const txRecord = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: null,
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBeUndefined();
+      expect(normalized.netDebitPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.customerTransactionAmount).toBeNull();
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **Customer Debit (Calculated/Reported)**: Not returned by PayU");
+    });
+
+    // 3. net_amount_debit: "" preserves absent/invalid state safely
+    it("135. Regression 3: net_amount_debit: '' or whitespace preserves absent/invalid state safely", async () => {
+      const txRecordEmpty = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "",
+      };
+      const normEmpty = normalizePayUAmountFields(txRecordEmpty);
+      expect(normEmpty.customerTransactionAmountPaise).toBeUndefined();
+      expect(normEmpty.netDebitPaise).toBeUndefined();
+      expect(normEmpty.amountAmbiguityReason).toBeUndefined();
+
+      const txRecordSpaces = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "   ",
+      };
+      const normSpaces = normalizePayUAmountFields(txRecordSpaces);
+      expect(normSpaces.customerTransactionAmountPaise).toBeUndefined();
+      expect(normSpaces.netDebitPaise).toBeUndefined();
+      expect(normSpaces.amountAmbiguityReason).toBeUndefined();
+    });
+
+    // 4. Explicit numeric zero: validate according to actual contract and fail closed if payment evidence remains contradictory
+    it("136. Regression 4: Explicit numeric zero validates according to contract and fails closed when contradictory", async () => {
+      const txRecordZero = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "0.00",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecordZero);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      expect(normalized.amountAmbiguityReason).toBeDefined();
+      expect(normalized.amountAmbiguityReason).toContain(
+        "PayU customer debit discrepancy: 'net_amount_debit' is ₹0.00 for a ₹500.00 order. Zero debit cannot prove payment capture."
+      );
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason: normalized.amountAmbiguityReason,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("AMOUNT_MISMATCH");
+      expect(order.outcomeMessage).toContain("Zero debit cannot prove payment capture");
+
+      // Attempting reconciliation with contradictory zero debit MUST fail closed
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          amountAmbiguityReason: normalized.amountAmbiguityReason,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(reconRes.error).toContain("Amount field ambiguity");
+      expect(reconRes.error).toContain("Zero debit cannot prove payment capture");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 5. Valid ₹500 base amount with no customer-debit or settlement fields returned reconciles cleanly
+    it("137. Regression 5: Valid ₹500 base amount with no customer-debit or settlement fields returned allows reconciliation", async () => {
+      const txRecord = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBeUndefined();
+      expect(normalized.settlementAmountPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+          currency: "INR",
+        },
+      });
+
+      expect(reconRes.success).toBe(true);
+      expect(reconRes.settled).toBe(true);
+      expect(supabase.rpc).toHaveBeenCalledWith(
+        "process_payment_success",
+        expect.objectContaining({
+          p_amount_paise: 50000,
+          p_gateway_payment_id: "403993715525548",
+          p_gateway_order_id: "SVK-1792055699266-49b0e3b",
+        })
+      );
+    });
+
+    // 6. Genuine customer-debit or base-amount discrepancies remain visible and block unsafe reconciliation
+    it("138. Regression 6: Genuine customer-debit or base-amount discrepancies remain visible and block unsafe reconciliation", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Case A: Base amount mismatch (₹450 reported vs ₹500 expected)
+      const reconBaseMismatch = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 45000,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+      expect(reconBaseMismatch.success).toBe(false);
+      expect(reconBaseMismatch.error).toContain("Amount mismatch");
+
+      // Case B: Customer debit mismatch (₹450 debited vs ₹500 base)
+      const txDebitMismatch = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "450.00",
+      };
+      const normDebitMismatch = normalizePayUAmountFields(txDebitMismatch);
+      expect(normDebitMismatch.amountAmbiguityReason).toBeDefined();
+      expect(normDebitMismatch.amountAmbiguityReason).toContain(
+        "PayU customer debit discrepancy: 'net_amount_debit' (₹450.00) differs from base order amount (₹500.00)."
+      );
+
+      const reconDebitMismatch = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 45000,
+          netDebitPaise: 45000,
+          amountAmbiguityReason: normDebitMismatch.amountAmbiguityReason,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+      expect(reconDebitMismatch.success).toBe(false);
+      expect(reconDebitMismatch.error).toContain("Amount field ambiguity");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 7. Wrong merchant reference, payment ID or currency still blocks settlement
+    it("139. Regression 7: Wrong merchant reference, payment ID or currency strictly blocks settlement", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Wrong merchant reference (txnid)
+      const reconWrongTxnId = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-WRONG-TXNID",
+        },
+      });
+      expect(reconWrongTxnId.success).toBe(false);
+      expect(reconWrongTxnId.error).toContain("Gateway order reference mismatch");
+
+      // Missing gateway payment ID (mihpayid)
+      const reconMissingId = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          gatewayPaymentId: "",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+      expect(reconMissingId.success).toBe(false);
+      expect(reconMissingId.error).toContain("Missing gateway payment ID (mihpayid)");
+
+      // Wrong currency
+      const reconWrongCurrency = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+          currency: "USD",
+        },
+      });
+      expect(reconWrongCurrency.success).toBe(false);
+      expect(reconWrongCurrency.error).toContain("Currency mismatch");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 8. Simulation never authorizes reconciliation
+    it("140. Regression 8: Local simulation preview mode never authorizes reconciliation", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const origEnv = process.env.NODE_ENV;
+      try {
+        (process.env as any).NODE_ENV = "development";
+        const reconRes = await reconcilePaymentOrder({
+          supabaseAdmin: supabase,
+          adminId: "master-uuid",
+          adminEmail: "master@saviskar.internal",
+          paymentOrderId: "order-sc-uuid",
+        });
+
+        expect(reconRes.success).toBe(false);
+        expect(reconRes.settled).toBe(false);
+        expect(reconRes.error).toContain("Reconciliation is disabled in local preview mode");
+        expect(supabase.rpc).not.toHaveBeenCalled();
+      } finally {
+        (process.env as any).NODE_ENV = origEnv;
+      }
+    });
+
+    // 9. The already-paid General Assembly order is never modified by the Security Council verification workflow
+    it("141. Regression 9: The already-paid General Assembly order is never modified by the Security Council verification workflow", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Verify all orders for Naina
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        participantIds: ["naina-uuid-2f18f504"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason:
+              "PayU customer debit discrepancy: 'net_amount_debit' is ₹0.00 for a ₹500.00 order. Zero debit cannot prove payment capture.",
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      expect(verifyRes.orders).toHaveLength(2);
+
+      const gaOrder = verifyRes.orders.find((o) => o.orderId === "order-ga-uuid")!;
+      const scOrder = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+
+      // 1. General Assembly order preserves its paid status and missing receipt record
+      expect(gaOrder.localOrderStatus).toBe("paid");
+      expect(gaOrder.settlementReceiptStatus).toBe("receipt_missing");
+
+      // 2. Security Council order is flagged as AMOUNT_MISMATCH due to contradictory zero debit
+      expect(scOrder.localOrderStatus).toBe("pending");
+      expect(scOrder.outcome).toBe("AMOUNT_MISMATCH");
+
+      // 3. Database records remain completely untouched
+      const dbGaOrder = db.payment_orders.find((o) => o.id === "order-ga-uuid")!;
+      expect(dbGaOrder.status).toBe("paid");
+      expect(dbGaOrder.amount).toBe(500);
+
+      const dbGaItem = db.participant_events.find((pe) => pe.id === "pe-ga-uuid")!;
+      expect(dbGaItem.payment_status).toBe("paid");
+
+      // 4. Ensure payments table had zero receipts inserted for GA order (no unauthorized mutation)
+      expect(db.payments).toHaveLength(0);
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 10. Scenario 1: Gateway failure with explicit net_amount_debit: "0.00" classifies as PAYMENT_FAILED without false amount discrepancy
+    it("142. Scenario 1: Gateway failure with explicit net_amount_debit: '0.00' classifies as PAYMENT_FAILED without false amount discrepancy", async () => {
+      const txRecordFailure = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "0.00",
+        status: "failure",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecordFailure);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      // Case A: No amount ambiguity reason solely because zero differs from expected charge
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "failed",
+            rawStatus: "failure",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_FAILED");
+      expect(order.outcomeMessage).toContain("PayU reports payment failure (Status: failure)");
+      expect(order.amountAmbiguityReason).toBeNull();
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).not.toContain("Amount Ambiguity");
+      expect(report).toContain("PayU reports payment failure (Status: failure)");
+
+      // Attempting reconciliation must be strictly blocked at Gate 6a
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "failed",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(reconRes.error).toContain('Gateway status is "failed"');
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 11. Scenario 2: Gateway pending with explicit zero debit classifies as PAYMENT_PENDING without false amount warning
+    it("143. Scenario 2: Gateway pending with explicit zero debit classifies as PAYMENT_PENDING without false amount warning", async () => {
+      const txRecordPending = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "0.00",
+        status: "pending",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecordPending);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      // Case B: No false amount discrepancy on pending
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "pending",
+            rawStatus: "pending",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_PENDING");
+      expect(order.outcomeMessage).toContain("Payment is awaiting completion or confirmation by PayU");
+      expect(order.amountAmbiguityReason).toBeNull();
+
+      // Reconciliation must be strictly blocked at Gate 6a
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "pending",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(reconRes.error).toContain('Gateway status is "pending"');
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 12. Scenario 7: Malformed or invalid debit values are safely preserved as absent without error or zero coercion
+    it("144. Scenario 7: Malformed or invalid debit values are safely preserved as absent without error or zero coercion", async () => {
+      const txMalformed = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "invalid_amount_string",
+      };
+
+      const normalized = normalizePayUAmountFields(txMalformed);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBeUndefined();
+      expect(normalized.netDebitPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      expect(parsePaise("invalid_string")).toBeUndefined();
+      expect(parsePaise(NaN)).toBeUndefined();
+      expect(parsePaise({})).toBeUndefined();
+      expect(parsePaise("")).toBeUndefined();
+      expect(parsePaise("   ")).toBeUndefined();
+    });
+
+    // 13. Scenario 8: Valid successful ₹500 payment with separately reported additional charge reconciles base amount cleanly
+    it("145. Scenario 8: Valid successful ₹500 payment with separately reported additional charge reconciles base amount cleanly", async () => {
+      const txSurcharge = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        additional_charges: "15.00",
+        net_amount_debit: "515.00",
+        status: "success",
+      };
+
+      const normalized = normalizePayUAmountFields(txSurcharge);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.additionalChargesPaise).toBe(1500);
+      expect(normalized.customerTransactionAmountPaise).toBe(51500);
+      expect(normalized.netDebitPaise).toBe(51500);
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            additionalChargesPaise: 1500,
+            customerTransactionAmountPaise: 51500,
+            netDebitPaise: 51500,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING");
+      expect(order.expectedAmount).toBe(500);
+      expect(order.additionalCharges).toBe(15);
+      expect(order.customerTransactionAmount).toBe(515);
+
+      // Reconciles canonical base amount ₹500 cleanly
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          additionalChargesPaise: 1500,
+          customerTransactionAmountPaise: 51500,
+          netDebitPaise: 51500,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(true);
+      expect(reconRes.settled).toBe(true);
+      expect(supabase.rpc).toHaveBeenCalledWith(
+        "process_payment_success",
+        expect.objectContaining({
+          p_amount_paise: 50000, // Exact canonical ₹500 base amount passed to database RPC!
+          p_gateway_payment_id: "403993715525548",
+        })
+      );
+    });
+
+    // 14. Scenario 12: Multiple independent checkout attempts where one linked item is already paid preserves independence
+    it("146. Scenario 12: Multiple independent checkout attempts where one linked item is already paid preserves item status and blocks retry settlement", async () => {
+      const db = createNainaAuthoritativeDb();
+      // Suppose Security Council event pe-sc-uuid was also linked to a previous settled order
+      db.participant_events.find((pe) => pe.id === "pe-sc-uuid")!.payment_status = "paid";
+      db.payment_orders.push({
+        id: "order-sc-prior-paid",
+        order_reference: "SVK-SVK26-2F18F504-20261015080000000-PRIOR1",
+        payer_participant_id: "naina-uuid-2f18f504",
+        amount: 500,
+        currency: "INR",
+        status: "paid",
+        gateway: "payu",
+        gateway_order_id: "SVK-1792050000000-prior",
+        gateway_payment_id: "403993700000000",
+        created_at: "2026-10-15T08:00:00.000Z",
+        updated_at: "2026-10-15T08:00:00.000Z",
+      });
+      db.payment_order_items.push({
+        id: "poi-sc-prior",
+        payment_order_id: "order-sc-prior-paid",
+        item_type: "event",
+        amount: 500,
+        participant_event_id: "pe-sc-uuid",
+        participant_accommodation_id: null,
+      });
+
+      const supabase = createMockSupabase(db);
+
+      // Verify orders for participant to discover retry-chain and cross-order item linkage
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        participantIds: ["naina-uuid-2f18f504"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "failed",
+            amountPaise: 50000,
+            netDebitPaise: 0,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const scOrder = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      // Order preserves authoritative gateway failure and does not infer success from linked item
+      expect(scOrder.outcome).toBe("PAYMENT_FAILED");
+      expect(scOrder.outcomeMessage).toContain("PayU reports payment failure");
+
+      // Preserves separate order notice / contradictory local status findings
+      expect(scOrder.diagnosticFindings.some((df) => df.type === "SEPARATE_ORDER_NOTICE")).toBe(true);
+
+      // Attempting to settle this retry attempt is strictly blocked
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "failed",
+          amountPaise: 50000,
+          netDebitPaise: 0,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(supabase.rpc).not.toHaveBeenCalled();
+
+      // Item status remains paid in database
+      const itemInDb = db.participant_events.find((pe) => pe.id === "pe-sc-uuid")!;
+      expect(itemInDb.payment_status).toBe("paid");
+    });
+
+    // 15. Scenarios 13 & 14: Failed or pending gateway status can never be reconciled merely because amount warning is absent
+    it("147. Scenarios 13 & 14: Failed or pending gateway status can never be reconciled merely because amount warning is absent", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Attempt reconciliation with failed status and clean amounts
+      const reconFailed = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "failed",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          amountAmbiguityReason: undefined, // Suppressed/clean warning!
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconFailed.success).toBe(false);
+      expect(reconFailed.settled).toBe(false);
+      expect(reconFailed.error).toContain('Gateway status is "failed". Only confirmed "paid" transactions can be reconciled.');
+      expect(supabase.rpc).not.toHaveBeenCalled();
+
+      // Attempt reconciliation with pending status and clean amounts
+      const reconPending = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "pending",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          amountAmbiguityReason: undefined, // Suppressed/clean warning!
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconPending.success).toBe(false);
+      expect(reconPending.settled).toBe(false);
+      expect(reconPending.error).toContain('Gateway status is "pending". Only confirmed "paid" transactions can be reconciled.');
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 16. Failed status plus explicit zero debit and a separate genuine discrepancy: separate discrepancy remains visible
+    it("148. Failed status plus explicit zero debit and a separate genuine discrepancy preserves the separate discrepancy", async () => {
+      const txDiscordantFailed = {
+        amt: "500.00",
+        transaction_amount: "400.00", // Discordant!
+        additional_charges: "0.00",
+        net_amount_debit: "0.00",
+        status: "failure",
+      };
+
+      const normalized = normalizePayUAmountFields(txDiscordantFailed);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      // Independent discrepancy is preserved!
+      expect(normalized.amountAmbiguityReason).toBeDefined();
+      expect(normalized.amountAmbiguityReason).toContain("PayU amount fields mismatch: 'amt' (₹500) and 'transaction_amount' (₹400) differ");
+      // Spurious zero debit warning is NOT added!
+      expect(normalized.amountAmbiguityReason).not.toContain("net_amount_debit' is ₹0.00");
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "failed",
+            rawStatus: "failure",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason: normalized.amountAmbiguityReason,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_FAILED");
+      expect(order.amountAmbiguityReason).toBeDefined();
+      expect(order.amountAmbiguityReason).toContain("PayU amount fields mismatch");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **⚠️ Amount Ambiguity**: PayU amount fields mismatch");
+      expect(report).not.toContain("Zero debit cannot prove payment capture");
+    });
+
+    // 17. Pending status plus explicit zero debit and a separate genuine discrepancy: separate discrepancy remains visible
+    it("149. Pending status plus explicit zero debit and a separate genuine discrepancy preserves the separate discrepancy", async () => {
+      const txDiscordantPending = {
+        amt: "500.00",
+        transaction_amount: "400.00", // Discordant!
+        additional_charges: "0.00",
+        net_amount_debit: "0.00",
+        status: "pending",
+      };
+
+      const normalized = normalizePayUAmountFields(txDiscordantPending);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      // Independent discrepancy is preserved!
+      expect(normalized.amountAmbiguityReason).toBeDefined();
+      expect(normalized.amountAmbiguityReason).toContain("PayU amount fields mismatch: 'amt' (₹500) and 'transaction_amount' (₹400) differ");
+      expect(normalized.amountAmbiguityReason).not.toContain("net_amount_debit' is ₹0.00");
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "pending",
+            rawStatus: "pending",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason: normalized.amountAmbiguityReason,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_PENDING");
+      expect(order.amountAmbiguityReason).toBeDefined();
+      expect(order.amountAmbiguityReason).toContain("PayU amount fields mismatch");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **⚠️ Amount Ambiguity**: PayU amount fields mismatch");
+    });
+
+    // 18. Legacy/mock combined string containing both genuine mismatch and zero-debit warning cleans only zero debit
+    it("150. Legacy/mock combined string containing both genuine mismatch and zero-debit warning strips only zero-debit finding", async () => {
+      const combinedReason =
+        "PayU amount fields mismatch: 'amt' (₹500.00) and 'transaction_amount' (₹400.00) differ and cannot be reconciled with additional_charges (₹0.00). PayU customer debit discrepancy: 'net_amount_debit' is ₹0.00 for a ₹500.00 order. Zero debit cannot prove payment capture.";
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "failed",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason: combinedReason,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_FAILED");
+      // Zero debit part is stripped, but genuine mismatch remains!
+      expect(order.amountAmbiguityReason).toBe(
+        "PayU amount fields mismatch: 'amt' (₹500.00) and 'transaction_amount' (₹400.00) differ and cannot be reconciled with additional_charges (₹0.00)."
+      );
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **⚠️ Amount Ambiguity**: PayU amount fields mismatch");
+      expect(report).not.toContain("Zero debit cannot prove payment capture");
+    });
+  });
+
 });

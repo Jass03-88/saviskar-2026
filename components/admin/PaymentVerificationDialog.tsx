@@ -495,8 +495,12 @@ export function PaymentVerificationDialog({
       lines.push(`  - Customer Debit (Calculated/Reported): ${o.customerTransactionAmount != null ? `₹${o.customerTransactionAmount.toFixed(2)}` : "Not returned by PayU"}`);
       lines.push(`  - Merchant Settlement (amount_settled): ${o.settlementAmount != null ? `₹${o.settlementAmount.toFixed(2)}` : "Not returned by PayU"}`);
       lines.push(`  - Gateway Deductions / Fees (PayU disc): ${o.deductions != null ? `₹${o.deductions.toFixed(2)}` : "₹0.00"}`);
-      if (o.payuAmt != null || o.payuTransactionAmount != null) {
-        lines.push(`  - PayU Raw Fields: amt=${o.payuAmt != null ? o.payuAmt.toFixed(2) : "N/A"}, transaction_amount=${o.payuTransactionAmount != null ? o.payuTransactionAmount.toFixed(2) : "N/A"}`);
+      if (o.payuAmt != null || o.payuTransactionAmount != null || o.netDebit != null) {
+        const rawParts: string[] = [];
+        if (o.payuAmt != null) rawParts.push(`amt=${o.payuAmt.toFixed(2)}`);
+        if (o.payuTransactionAmount != null) rawParts.push(`transaction_amount=${o.payuTransactionAmount.toFixed(2)}`);
+        if (o.netDebit != null) rawParts.push(`net_amount_debit=${o.netDebit.toFixed(2)}`);
+        lines.push(`  - PayU Raw Fields: ${rawParts.join(", ")}`);
       }
       if (o.amountAmbiguityReason) {
         lines.push(`  - ⚠️ Amount Ambiguity: ${o.amountAmbiguityReason}`);
@@ -1340,7 +1344,7 @@ export function PaymentVerificationDialog({
                                   </div>
 
                                   {/* AUTHORITATIVE BANK & GATEWAY METADATA */}
-                                  {(order.bankRefNum || order.udf1 || order.deductions != null || order.payuAmt != null || order.payuTransactionAmount != null) && (
+                                  {(order.bankRefNum || order.udf1 || order.deductions != null || order.payuAmt != null || order.payuTransactionAmount != null || order.netDebit != null) && (
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-[11px] bg-white p-3.5 rounded-xl border border-black/[0.06]">
                                       <div>
                                         <span className="text-black/40 block text-[9px] uppercase font-bold">
@@ -1373,6 +1377,7 @@ export function PaymentVerificationDialog({
                                         <span className="font-mono text-black/80 block truncate">
                                           amt: {order.payuAmt != null ? `₹${order.payuAmt.toFixed(2)}` : "—"}
                                           {order.payuTransactionAmount != null ? ` | txn_amt: ₹${order.payuTransactionAmount.toFixed(2)}` : ""}
+                                          {order.netDebit != null ? ` | net_debit: ₹${order.netDebit.toFixed(2)}` : ""}
                                         </span>
                                       </div>
                                     </div>
