@@ -39,6 +39,7 @@ import AddAccommodationModal from "./AddAccommodationModal";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import { ImageUploader } from "@/components/ui/image-uploader";
 import { calculateStayDates } from "@/lib/accommodation-dates";
+import { submitPayUCheckoutForm } from "@/lib/payments/checkout-form";
 
 export function formatAccommodationDate(
   duration: number,
@@ -996,85 +997,141 @@ export default function RegistrationForm({
   }, [eventState]);
 
   function updateTeamName(eventId: string, value: string) {
-    setEventState((current) => ({
-      ...current,
-      [eventId]: {
-        ...getTeamState(eventId),
-        teamName: value,
-      },
-    }));
+    setEventState((current) => {
+      const prev = current[eventId] ?? {
+        teamName: "",
+        isTeamHead: false,
+        members: [],
+      };
+      return {
+        ...current,
+        [eventId]: {
+          ...prev,
+          teamName: value,
+        },
+      };
+    });
   }
   function updateTeamHead(
     eventId: string,
     value: boolean
   ) {
-    setEventState((current) => ({
-      ...current,
-      [eventId]: {
-        ...getTeamState(eventId),
-        isTeamHead: value,
-      },
-    }));
+    setEventState((current) => {
+      const prev = current[eventId] ?? {
+        teamName: "",
+        isTeamHead: false,
+        members: [],
+      };
+      return {
+        ...current,
+        [eventId]: {
+          ...prev,
+          isTeamHead: value,
+        },
+      };
+    });
   }
   function addTeamMember(event: EventOption) {
-    if (!event.max_team_size) return;
+    const maxTeamSize = event.max_team_size;
+    if (!maxTeamSize) return;
 
-    const state = getTeamState(event.id);
+    setEventState((current) => {
+      const prev = current[event.id] ?? {
+        teamName: "",
+        isTeamHead: false,
+        members: [],
+      };
 
-    /*
-     * Team leader = member 1.
-     */
-    const currentTotal = 1 + state.members.length;
+      /*
+       * Team leader = member 1.
+       */
+      const currentTotal = 1 + prev.members.length;
 
-    if (currentTotal >= event.max_team_size) return;
+      if (currentTotal >= maxTeamSize) return current;
 
-    setEventState((current) => ({
-      ...current,
-      [event.id]: {
-        ...getTeamState(event.id),
-        members: [
-          ...getTeamState(event.id).members,
-          {
-            name: "",
-            college: "",
-            email: "",
-            phone: "",
-            gender: "",
-            state: "",
-            idCardStoragePath: "",
-            accommodationPlanSlug: "",
-            accommodationDate: "2026-10-28",
-            extraDays: "none",
-          },
-        ],
-      },
-    }));
+      return {
+        ...current,
+        [event.id]: {
+          ...prev,
+          members: [
+            ...prev.members,
+            {
+              name: "",
+              college: "",
+              email: "",
+              phone: "",
+              gender: "",
+              state: "",
+              idCardStoragePath: "",
+              accommodationPlanSlug: "",
+              accommodationDate: "2026-10-28",
+              extraDays: "none",
+            },
+          ],
+        },
+      };
+    });
   }
 
   function removeTeamMember(eventId: string, index: number) {
     const event = eventOptions.find((e) => e.id === eventId);
-    const currentMembers = getTeamState(eventId).members;
 
-    /*
-     * Don't allow removal below the minimum required members.
-     * Leader = member 1, so minimum additional = min_team_size - 1.
-     */
-    if (
-      event?.min_team_size &&
-      currentMembers.length <= event.min_team_size - 1
-    ) {
-      return;
-    }
+    setEventState((current) => {
+      const prev = current[eventId] ?? {
+        teamName: "",
+        isTeamHead: false,
+        members: [],
+      };
 
-    setEventState((current) => ({
-      ...current,
-      [eventId]: {
-        ...getTeamState(eventId),
-        members: currentMembers.filter(
-          (_, memberIndex) => memberIndex !== index
-        ),
-      },
-    }));
+      /*
+       * Don't allow removal below the minimum required members.
+       * Leader = member 1, so minimum additional = min_team_size - 1.
+       */
+      if (
+        event?.min_team_size &&
+        prev.members.length <= event.min_team_size - 1
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [eventId]: {
+          ...prev,
+          members: prev.members.filter(
+            (_, memberIndex) => memberIndex !== index
+          ),
+        },
+      };
+    });
+  }
+
+  function updateTeamMemberMultiple(
+    eventId: string,
+    index: number,
+    updates: Partial<TeamMember>
+  ) {
+    setEventState((current) => {
+      const prev = current[eventId] ?? {
+        teamName: "",
+        isTeamHead: false,
+        members: [],
+      };
+      return {
+        ...current,
+        [eventId]: {
+          ...prev,
+          members: prev.members.map((member, memberIndex) =>
+            memberIndex === index
+              ? {
+                  ...member,
+                  ...updates,
+                }
+              : member
+          ),
+        },
+      };
+    });
   }
 
   function updateTeamMember(
@@ -1083,21 +1140,7 @@ export default function RegistrationForm({
     field: keyof TeamMember,
     value: string
   ) {
-    setEventState((current) => ({
-      ...current,
-      [eventId]: {
-        ...getTeamState(eventId),
-        members: getTeamState(eventId).members.map(
-          (member, memberIndex) =>
-            memberIndex === index
-              ? {
-                ...member,
-                [field]: value,
-              }
-              : member
-        ),
-      },
-    }));
+    updateTeamMemberMultiple(eventId, index, { [field]: value } as Partial<TeamMember>);
   }
 
   /*
@@ -1911,34 +1954,7 @@ export default function RegistrationForm({
       }
 
       // 2. Submit PayU Hosted Checkout form
-      const checkoutConfig = createResult.checkoutConfig;
-      const options = checkoutConfig?.options ?? {};
-      const postUrl = checkoutConfig?.postUrl;
-
-      if (!postUrl || !options.hash) {
-        throw new Error(
-          "Payment gateway configuration is missing or invalid."
-        );
-      }
-
-      const checkoutForm = document.createElement("form");
-      checkoutForm.method = "POST";
-      checkoutForm.action = postUrl;
-      checkoutForm.style.display = "none";
-
-      for (const [key, value] of Object.entries(options)) {
-        if (value !== undefined && value !== null) {
-          const input = document.createElement("input");
-          input.type = "hidden";
-          input.name = key;
-          input.value = String(value);
-          checkoutForm.appendChild(input);
-        }
-      }
-
-      // Submit form and keep paymentProcessing active while browser navigates away to PayU
-      document.body.appendChild(checkoutForm);
-      checkoutForm.submit();
+      submitPayUCheckoutForm(createResult.checkoutConfig);
       return;
     } catch (error) {
       console.error("Payment checkout error:", error);
@@ -3368,6 +3384,51 @@ export default function RegistrationForm({
                               </div>
                             </div>
                           )}
+
+                          {/* TEAM MEMBER ACCOMMODATION ITEMS */}
+                          {selectedEvents.map((event) => {
+                            if (!isTeamEvent(event)) return null;
+                            const state = getTeamState(event.id);
+                            return state.members.map((m, mIdx) => {
+                              if (!m.accommodationPlanSlug) return null;
+                              const plan = accommodationPlans.find((p) => p.slug === m.accommodationPlanSlug);
+                              return (
+                                <div key={`floating-member-acc-${event.id}-${mIdx}`} className="rounded-xl border border-violet-500/30 bg-violet-950/30 p-3 flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-400 text-black shadow-[0_0_10px_#34d399]">
+                                      <Check size={13} />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-medium text-white">
+                                        {m.name ? `${m.name}` : `Member 0${mIdx + 2}`} Stay ({plan?.name || m.accommodationPlanSlug})
+                                      </p>
+                                      <p className="font-mono text-[10px] text-violet-300/80">
+                                        {formatAccommodationDate(
+                                          plan?.duration || 1,
+                                          m.accommodationDate,
+                                          m.extraDays
+                                        )}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 shrink-0">
+                                    <span className="font-mono text-xs font-medium text-violet-200">
+                                      ₹{getAccommodationCost(m.accommodationPlanSlug, m.extraDays).toLocaleString("en-IN")}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateTeamMemberMultiple(event.id, mIdx, { accommodationPlanSlug: "", extraDays: "none" })}
+                                      className="flex h-7 w-7 items-center justify-center rounded-full text-white/40 transition hover:bg-red-500/20 hover:text-red-400"
+                                      aria-label={`Remove Member 0${mIdx + 2} accommodation`}
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            });
+                          })}
                         </div>
                       </motion.div>
                     )}
@@ -3721,16 +3782,19 @@ export default function RegistrationForm({
                                   </div>
                                 </Field>
 
-                                <Field label="State / UT">
+                                <Field label="COLLEGE STATE / UT">
                                   <input
                                     type="text"
                                     name="state"
                                     list="indian-states"
-                                    placeholder="Select State"
+                                    placeholder="Select college state / UT"
                                     required
                                     autoComplete="off"
                                     className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
                                   />
+                                  <p className="text-xs text-white/50 leading-relaxed">
+                                    Select the state/UT where your college or university is located, not your home state.
+                                  </p>
                                 </Field>
                               </div>
 
@@ -4203,17 +4267,20 @@ export default function RegistrationForm({
                                       </div>
                                     </Field>
 
-                                    <Field label="Member State / UT">
+                                    <Field label="COLLEGE STATE / UT">
                                       <input
                                         type="text"
                                         value={member.state}
                                         onChange={(e) => updateTeamMember(event.id, index, "state", e.target.value)}
                                         list="indian-states"
-                                        placeholder="Select State"
+                                        placeholder="Select college state / UT"
                                         required
                                         autoComplete="off"
                                         className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
                                       />
+                                      <p className="text-xs text-white/50 leading-relaxed">
+                                        Select the state/UT where your college or university is located, not your home state.
+                                      </p>
                                     </Field>
                                   </div>
 
@@ -4236,7 +4303,12 @@ export default function RegistrationForm({
                                               name={`accommodationPlanSlug-${event.id}-${index}`}
                                               value=""
                                               checked={!member.accommodationPlanSlug}
-                                              onChange={(e) => updateTeamMember(event.id, index, "accommodationPlanSlug", e.target.value)}
+                                              onChange={() => {
+                                                updateTeamMemberMultiple(event.id, index, {
+                                                  accommodationPlanSlug: "",
+                                                  extraDays: "none",
+                                                });
+                                              }}
                                               className="peer sr-only"
                                             />
                                             <span className="font-medium text-white text-sm">No Accommodation</span>
@@ -4251,23 +4323,39 @@ export default function RegistrationForm({
                                                 checked={member.accommodationPlanSlug === plan.slug}
                                                 onChange={(e) => {
                                                   const val = e.target.value;
-                                                  updateTeamMember(event.id, index, "accommodationPlanSlug", val);
                                                   if (val === "3_days") {
-                                                    if (member.accommodationDate !== "2026-10-27" && member.accommodationDate !== "2026-10-30") {
-                                                      updateTeamMember(event.id, index, "accommodationDate", "2026-10-27");
-                                                      updateTeamMember(event.id, index, "extraDays", "before_27");
-                                                    }
+                                                    const is30 = member.accommodationDate === "2026-10-30" || member.extraDays === "after_30";
+                                                    updateTeamMemberMultiple(event.id, index, {
+                                                      accommodationPlanSlug: val,
+                                                      accommodationDate: is30 ? "2026-10-30" : "2026-10-27",
+                                                      extraDays: is30 ? "after_30" : "before_27",
+                                                    });
                                                   } else if (val === "1_day") {
-                                                    if (!["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"].includes(member.accommodationDate || "")) {
-                                                      updateTeamMember(event.id, index, "accommodationDate", "2026-10-28");
-                                                      updateTeamMember(event.id, index, "extraDays", "none");
-                                                    }
+                                                    const validDate = ["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"].includes(member.accommodationDate || "")
+                                                      ? (member.accommodationDate as "2026-10-27" | "2026-10-28" | "2026-10-29" | "2026-10-30")
+                                                      : "2026-10-28";
+                                                    updateTeamMemberMultiple(event.id, index, {
+                                                      accommodationPlanSlug: val,
+                                                      accommodationDate: validDate,
+                                                      extraDays: "none",
+                                                    });
                                                   } else if (val === "2_days") {
-                                                    updateTeamMember(event.id, index, "accommodationDate", "2026-10-28");
-                                                    updateTeamMember(event.id, index, "extraDays", "none");
+                                                    updateTeamMemberMultiple(event.id, index, {
+                                                      accommodationPlanSlug: val,
+                                                      accommodationDate: "2026-10-28",
+                                                      extraDays: "none",
+                                                    });
                                                   } else if (val === "4_days") {
-                                                    updateTeamMember(event.id, index, "accommodationDate", "2026-10-27");
-                                                    updateTeamMember(event.id, index, "extraDays", "both");
+                                                    updateTeamMemberMultiple(event.id, index, {
+                                                      accommodationPlanSlug: val,
+                                                      accommodationDate: "2026-10-27",
+                                                      extraDays: "both",
+                                                    });
+                                                  } else {
+                                                    updateTeamMemberMultiple(event.id, index, {
+                                                      accommodationPlanSlug: "",
+                                                      extraDays: "none",
+                                                    });
                                                   }
                                                 }}
                                                 className="peer sr-only"
@@ -4387,8 +4475,10 @@ export default function RegistrationForm({
                                                   value="2026-10-27"
                                                   checked={member.accommodationDate === "2026-10-27" || member.extraDays === "before_27"}
                                                   onChange={() => {
-                                                    updateTeamMember(event.id, index, "accommodationDate", "2026-10-27");
-                                                    updateTeamMember(event.id, index, "extraDays", "before_27");
+                                                    updateTeamMemberMultiple(event.id, index, {
+                                                      accommodationDate: "2026-10-27",
+                                                      extraDays: "before_27",
+                                                    });
                                                   }}
                                                   className="sr-only"
                                                 />
@@ -4410,8 +4500,10 @@ export default function RegistrationForm({
                                                   value="2026-10-30"
                                                   checked={member.accommodationDate === "2026-10-30" || member.extraDays === "after_30"}
                                                   onChange={() => {
-                                                    updateTeamMember(event.id, index, "accommodationDate", "2026-10-30");
-                                                    updateTeamMember(event.id, index, "extraDays", "after_30");
+                                                    updateTeamMemberMultiple(event.id, index, {
+                                                      accommodationDate: "2026-10-30",
+                                                      extraDays: "after_30",
+                                                    });
                                                   }}
                                                   className="sr-only"
                                                 />
@@ -4549,16 +4641,19 @@ export default function RegistrationForm({
                     </div>
                   </Field>
 
-                  <Field label="State / UT">
+                  <Field label="COLLEGE STATE / UT">
                     <input
                       type="text"
                       name="state"
                       list="indian-states"
-                      placeholder="Select State"
+                      placeholder="Select college state / UT"
                       required
                       autoComplete="off"
                       className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3.5 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
                     />
+                    <p className="text-xs text-white/50 leading-relaxed">
+                      Select the state/UT where your college or university is located, not your home state.
+                    </p>
                   </Field>
                 </div>
 
@@ -4918,17 +5013,20 @@ export default function RegistrationForm({
                           </div>
                         </Field>
 
-                        <Field label="State / UT">
+                        <Field label="COLLEGE STATE / UT">
                           <input
                             type="text"
                             value={facultyState.state}
                             onChange={(e) => setFacultyState({ ...facultyState, state: e.target.value })}
                             list="indian-states"
-                            placeholder="Select State"
+                            placeholder="Select college state / UT"
                             required={facultyEnabled}
                             autoComplete="off"
                             className="w-full rounded-xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 outline-none transition-all focus:border-violet-400 focus:bg-white/[0.07] focus:ring-1 focus:ring-violet-400/40"
                           />
+                          <p className="text-xs text-white/50 leading-relaxed">
+                            Select the state/UT where your college or university is located, not your home state.
+                          </p>
                         </Field>
                       </div>
 
@@ -5280,6 +5378,36 @@ export default function RegistrationForm({
                           </span>
                         </div>
                       )}
+
+                      {/* Team Member Accommodation Line Items */}
+                      {selectedEvents.map((event) => {
+                        if (!isTeamEvent(event)) return null;
+                        const state = getTeamState(event.id);
+                        return state.members.map((m, mIdx) => {
+                          if (!m.accommodationPlanSlug) return null;
+                          const plan = accommodationPlans.find((p) => p.slug === m.accommodationPlanSlug);
+                          return (
+                            <div key={`summary-member-acc-${event.id}-${mIdx}`} className="flex items-center justify-between gap-6 text-sm">
+                              <div className="min-w-0">
+                                <span className="text-zinc-300">
+                                  {m.name ? `${m.name} (Member 0${mIdx + 2})` : `Member 0${mIdx + 2}`} Stay: {plan?.name || m.accommodationPlanSlug}
+                                </span>
+                                <span className="block text-[11px] font-mono text-violet-300/70">
+                                  {formatAccommodationDate(
+                                    plan?.duration || 1,
+                                    m.accommodationDate,
+                                    m.extraDays
+                                  )}
+                                </span>
+                              </div>
+
+                              <span className="font-mono text-sm font-medium text-white shrink-0">
+                                ₹{getAccommodationCost(m.accommodationPlanSlug, m.extraDays).toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                          );
+                        });
+                      })}
                     </div>
                   </div>
 

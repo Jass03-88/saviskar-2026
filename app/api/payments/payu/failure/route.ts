@@ -93,10 +93,60 @@ export async function POST(request: NextRequest) {
     baseUrl: redirectBase,
   });
 
-  // We can update the status of paymentOrder to 'failed' if we wanted to, 
-  // but Saviskar currently keeps it 'pending' and lets them retry creating a new gateway order
-  // or resuming the existing one. We will just redirect to the resume screen.
+  // ─── Authenticate Failure Before Mutating Order Status ─────────────
+  // A user-supplied txnid MUST NOT be sufficient to mark an order failed.
+  // We require either:
+  //   1. A cryptographically verified PayU response hash (isSignatureValid === true)
+  //   2. Authoritative server-to-server verification with PayU confirming definitive terminal failure
+  let isAuthoritativelyFailed = false;
 
-  // The resume token will show them the pending payment UI which lets them retry.
+  const isSignatureValid = validateResult.valid && !!validateResult.event;
+
+  if (isSignatureValid && validateResult.event?.status === "failed") {
+    isAuthoritativelyFailed = true;
+  } else {
+    // Hash check was invalid or absent. Query PayU server-to-server to prevent order-ID tampering.
+    try {
+      const details = await gateway.fetchPaymentDetails(gatewayOrderId);
+      const rawLower = (details.rawStatus || "").toLowerCase().trim();
+      const unmappedLower = (details.unmappedStatus || "").toLowerCase().trim();
+
+      const isTerminalFailure =
+        details.status === "failed" &&
+        (
+          rawLower === "failure" ||
+          rawLower === "failed" ||
+          rawLower === "bounced" ||
+          rawLower === "usercancelled" ||
+          rawLower === "dropped"
+        );
+
+      if (isTerminalFailure) {
+        isAuthoritativelyFailed = true;
+      } else {
+        console.warn(
+          `[PAYU FAILURE] Unauthenticated failure callback rejected: Gateway reported non-terminal/unresolved status '${details.status}' (raw: '${details.rawStatus}'). Order will NOT be marked failed.`
+        );
+      }
+    } catch (verifyErr) {
+      console.error(
+        `[PAYU FAILURE] Server-to-server verification failed for unauthenticated failure request (${gatewayOrderId}):`,
+        verifyErr instanceof Error ? verifyErr.message : String(verifyErr)
+      );
+      // Fail closed: Never mark an order failed if we cannot authenticate the failure!
+    }
+  }
+
+  if (isAuthoritativelyFailed) {
+    try {
+      await supabaseAdmin.rpc("process_payment_failure", {
+        p_gateway_order_id: gatewayOrderId,
+      });
+    } catch (err) {
+      console.error("Error executing process_payment_failure on failure route:", err);
+    }
+  }
+
+  // The resume token allows review of the transaction and retry
   return NextResponse.redirect(new URL(resumeUrl), 303);
 }

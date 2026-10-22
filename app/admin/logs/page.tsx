@@ -126,17 +126,22 @@ export default function AuditLogsPage() {
           </div>
         ) : (
           <div className="overflow-hidden rounded-[28px] bg-white shadow-[0_20px_80px_rgba(0,0,0,0.035)]">
-            <div className="hidden border-b border-black/10 bg-black/[0.025] px-6 py-4 lg:grid lg:grid-cols-[1fr_2fr_1fr_1fr] lg:gap-5">
+            <div className="hidden border-b border-black/10 bg-black/[0.025] px-6 py-4 lg:grid lg:grid-cols-[55px_1fr_2fr_1fr_1fr] lg:gap-5">
+              <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">Sr. No.</span>
               <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">Timestamp</span>
               <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">Action & Target</span>
               <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">Source / Admin</span>
               <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">Details</span>
             </div>
             <div className="divide-y divide-black/[0.07]">
-              {logs.map((log) => {
+              {logs.map((log, index) => {
                 const isConflict = log.action_type === "ACCOMMODATION_PAYMENT_OVERLAP_CONFLICT";
                 return (
-                  <div key={log.id} className={`grid w-full gap-5 px-6 py-5 text-left lg:grid-cols-[1fr_2fr_1fr_1fr] lg:items-start text-sm ${isConflict ? "bg-amber-50/40" : ""}`}>
+                  <div key={log.id} className={`grid w-full gap-5 px-6 py-5 text-left lg:grid-cols-[55px_1fr_2fr_1fr_1fr] lg:items-start text-sm ${isConflict ? "bg-amber-50/40" : ""}`}>
+                    <div className="flex items-center text-xs font-mono font-medium text-black/40">
+                      <span className="lg:hidden text-[10px] uppercase tracking-wider text-black/30 font-sans mr-2">Sr. No.</span>
+                      {index + 1}
+                    </div>
                     <div className="text-xs text-black/60 font-mono">
                       {new Date(log.created_at).toLocaleString("en-IN")}
                     </div>

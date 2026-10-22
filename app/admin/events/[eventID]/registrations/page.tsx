@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { generateEventRegistrationsCsv } from "@/lib/admin/csv-export";
+import {
+  generateEventRegistrationsCsv,
+  generateRegistrationExportCsv,
+  generateParticipantExportCsv,
+} from "@/lib/admin/csv-export";
+import {
+  exportRegistrationXlsx,
+  exportParticipantXlsx,
+} from "@/lib/admin/excel-export";
+import { CsvExportDropdown } from "@/components/admin/CsvExportDropdown";
 import {
   RefreshCw,
   Users,
@@ -860,41 +869,27 @@ export default function EventRegistrationsPage() {
     activeRegistrations.length - totalCheckedIn;
 
   // ---------------------------------------------------------
-  // CSV EXPORT
+  // EXCEL EXPORT (FOUR-SHEET WORKBOOKS)
   // ---------------------------------------------------------
 
-  function exportCSV() {
-    const csv = generateEventRegistrationsCsv(filteredRegistrations);
-
-    const blob = new Blob(
-      [csv],
-      {
-        type:
-          "text/csv;charset=utf-8;",
-      }
+  async function exportRegistrationCSV() {
+    const slug = currentEventName.toLowerCase().replace(/\s+/g, "-");
+    await exportRegistrationXlsx(
+      filteredRegistrations,
+      `saviskar-${slug}-registrations-2026.xlsx`
     );
+  }
 
-    const url =
-      URL.createObjectURL(blob);
+  async function exportParticipantCSV() {
+    const slug = currentEventName.toLowerCase().replace(/\s+/g, "-");
+    await exportParticipantXlsx(
+      filteredRegistrations,
+      `saviskar-${slug}-participants-attendees-2026.xlsx`
+    );
+  }
 
-    const link =
-      document.createElement("a");
-
-    link.href = url;
-
-    link.download = `saviskar-${currentEventName
-      .toLowerCase()
-      .replace(/\s+/g, "-")}-registrations-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
-
-    document.body.appendChild(link);
-
-    link.click();
-
-    document.body.removeChild(link);
-
-    URL.revokeObjectURL(url);
+  function exportCSV() {
+    void exportRegistrationCSV();
   }
 
   // ---------------------------------------------------------
@@ -1193,13 +1188,12 @@ export default function EventRegistrationsPage() {
               </select>
             )}
 
-            <button
-              onClick={exportCSV}
-              className="flex items-center justify-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white"
-            >
-              <Download size={15} />
-              Export CSV
-            </button>
+            <CsvExportDropdown
+              onExportRegistrations={exportRegistrationCSV}
+              onExportParticipants={exportParticipantCSV}
+              totalRegistrations={filteredRegistrations.length}
+              pillShape
+            />
 
           </div>
 
@@ -1273,6 +1267,10 @@ export default function EventRegistrationsPage() {
                   <tr className="border-b border-black/10">
 
                     <TableHead>
+                      Sr. No.
+                    </TableHead>
+
+                    <TableHead>
                       Participant
                     </TableHead>
 
@@ -1310,7 +1308,7 @@ export default function EventRegistrationsPage() {
                 <tbody>
 
                   {filteredRegistrations.map(
-                    (item) => (
+                    (item, index) => (
 
                       <tr
                         key={
@@ -1318,6 +1316,10 @@ export default function EventRegistrationsPage() {
                         }
                         className="border-b border-black/[0.06] transition hover:bg-black/[0.02]"
                       >
+
+                        <td className="px-6 py-5 text-xs font-mono font-medium text-black/40">
+                          {index + 1}
+                        </td>
 
                         <td className="px-6 py-5">
 

@@ -15,6 +15,7 @@ import {
   User,
   XCircle,
 } from "lucide-react";
+import { evaluateEventPaymentStatus } from "@/lib/admin/check-in-rules";
 
 type Participant = {
   id?: string;
@@ -45,6 +46,9 @@ type ParticipantEvent = {
   participantEventId: string;
   eventId: string;
   eventName: string;
+  eventCategory?: string | null;
+  registrationFee?: number | null;
+  paymentType?: string | null;
   registrationStatus: string | null;
   paymentStatus: string | null;
   paymentAmount: number | null;
@@ -663,11 +667,15 @@ export default function ScannerPage() {
                     </p>
                     <div className="space-y-4">
                       {participantEvents.map((event) => {
-                        const isUnpaid = Boolean(
-                          event.paymentStatus &&
-                          event.paymentStatus !== "paid" &&
-                          event.paymentStatus !== "not_required"
-                        );
+                        const paymentDecision = evaluateEventPaymentStatus({
+                          registrationFee: event.registrationFee,
+                          paymentType: event.paymentType,
+                          paymentAmount: event.paymentAmount,
+                          paymentStatus: event.paymentStatus,
+                          registrationStatus: event.registrationStatus,
+                        });
+
+                        const isUnpaid = !paymentDecision.canCheckIn;
 
                         return (
                           <div
@@ -688,11 +696,15 @@ export default function ScannerPage() {
                                 )}
                               </div>
                               <div className="flex items-center gap-2">
-                                {isUnpaid && (
-                                  <span className="rounded-full border border-red-200 bg-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-700 whitespace-nowrap">
-                                    UNPAID ({event.paymentStatus})
+                                {paymentDecision.isFree ? (
+                                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 whitespace-nowrap">
+                                    FREE EVENT
                                   </span>
-                                )}
+                                ) : isUnpaid ? (
+                                  <span className="rounded-full border border-red-200 bg-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-700 whitespace-nowrap">
+                                    {paymentDecision.badgeLabel || `UNPAID (${event.paymentStatus || "unpaid"})`}
+                                  </span>
+                                ) : null}
                                   <span
                                     className={`rounded-full px-2.5 py-1 text-[10px] font-medium whitespace-nowrap ${
                                       event.mainCheckedIn
@@ -725,7 +737,7 @@ export default function ScannerPage() {
                                     Check in Disabled (Payment Required)
                                   </button>
                                   <p className="mt-2 text-center text-xs font-medium text-red-600">
-                                    Payment is incomplete ({event.paymentStatus}). Participant cannot be checked in.
+                                    {paymentDecision.rejectionReason || `Payment is incomplete (${event.paymentStatus}). Participant cannot be checked in.`}
                                   </p>
                                 </div>
                               ) : (

@@ -32,11 +32,25 @@ import {
   Bed,
   Building2,
   SlidersHorizontal,
+  BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import { parseAdminCategories } from "@/lib/admin/scope";
-import { generateRegistrationsCsv } from "@/lib/admin/csv-export";
+import {
+  generateRegistrationsCsv,
+  generateRegistrationExportCsv,
+  generateParticipantExportCsv,
+} from "@/lib/admin/csv-export";
+import {
+  exportRegistrationXlsx,
+  exportParticipantXlsx,
+} from "@/lib/admin/excel-export";
+import { CsvExportDropdown } from "@/components/admin/CsvExportDropdown";
+import AdminPageLoader from "@/components/admin/AdminPageLoader";
+import { PaymentVerificationDialog } from "@/components/admin/PaymentVerificationDialog";
+import { ResendEmailDialog } from "@/components/admin/ResendEmailDialog";
 
 /* =========================================================
    TYPES
@@ -252,6 +266,9 @@ export default function AdminPage() {
   const [loading, setLoading] =
     useState(true);
 
+  const [hasLoaded, setHasLoaded] =
+    useState(false);
+
   const [refreshing, setRefreshing] =
     useState(false);
 
@@ -308,6 +325,18 @@ export default function AdminPage() {
     outstandingAmount: number;
     checkedIn?: number;
   } | null>(null);
+
+  const [selectedParticipantIds, setSelectedParticipantIds] =
+    useState<Set<string>>(new Set());
+
+  const [isVerificationOpen, setIsVerificationOpen] =
+    useState(false);
+
+  const [verificationMode, setVerificationMode] =
+    useState<"selected" | "audit">("selected");
+
+  const [isResendEmailOpen, setIsResendEmailOpen] =
+    useState(false);
 
   const [isBreakdownOpen, setIsBreakdownOpen] = useState(true);
   const [breakdownCategory, setBreakdownCategory] = useState<string>("all");
@@ -424,8 +453,10 @@ export default function AdminPage() {
     async (refresh = false) => {
       if (refresh) {
         setRefreshing(true);
-        setError("");
+      } else {
+        setLoading(true);
       }
+      setError("");
 
       try {
         const response = await fetch(
@@ -487,7 +518,11 @@ export default function AdminPage() {
         );
         if (payload.role) {
           setRole(payload.role);
-          setAdminIdentity({ name: payload.adminName || null, email: payload.adminEmail || null, isPrimary: !!payload.isPrimary });
+          setAdminIdentity((prev) => ({
+            name: payload.adminName || prev?.name || null,
+            email: payload.adminEmail || prev?.email || null,
+            isPrimary: typeof payload.isPrimary === "boolean" ? payload.isPrimary : !!prev?.isPrimary,
+          }));
         }
         if (typeof payload.accommodation_access === "boolean") {
           setAccommodationAccess(payload.accommodation_access);
@@ -509,6 +544,7 @@ export default function AdminPage() {
         } else {
           setAssignedEvents([]);
         }
+        setHasLoaded(true);
       } catch (loadError) {
         console.error(
           "ADMIN LOAD ERROR:",
@@ -534,92 +570,19 @@ export default function AdminPage() {
 
   useEffect(() => {
     let ignore = false;
-    async function init() {
-      try {
-        const response = await fetch(
-          "/api/admin/registrations?pageSize=2000",
-          { cache: "no-store" }
-        );
 
-        if (
-          response.status === 401 ||
-          response.status === 403
-        ) {
-          router.replace("/admin/login");
-          return;
-        }
-
-        const payload =
-          (await response.json()) as {
-            registrations?: Registration[];
-            events?: EventRecord[];
-            role?: AdminRole;
-            adminEmail?: string | null;
-            adminName?: string | null;
-            isPrimary?: boolean;
-            accommodation_access?: boolean;
-            total?: number;
-            accommodationStats?: {
-              totalBookings: number;
-              paidBookings: number;
-              pendingBookings: number;
-              expectedAmount: number;
-              paidAmount: number;
-              outstandingAmount: number;
-              checkedIn?: number;
-            };
-            error?: string;
-          };
-
-        if (!response.ok) {
-          throw new Error(
-            payload.error ??
-            "Could not load registrations."
-          );
-        }
-
-        if (!ignore) {
-          if (typeof payload.total === "number") {
-            setServerTotal(payload.total);
-          }
-          if (payload.accommodationStats) {
-            setServerAccommodationStats(payload.accommodationStats);
-          }
-          setRegistrations(
-            payload.registrations ?? []
-          );
-          setEvents(
-            payload.events ?? []
-          );
-          if (payload.role) {
-            setRole(payload.role);
-            setAdminIdentity({ name: payload.adminName || null, email: payload.adminEmail || null, isPrimary: !!payload.isPrimary });
-          }
-          if (typeof payload.accommodation_access === "boolean") {
-            setAccommodationAccess(payload.accommodation_access);
-          }
-        }
-      } catch (loadError) {
-        console.error(
-          "ADMIN LOAD ERROR:",
-          loadError
-        );
-        if (!ignore) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Could not load registrations."
-          );
-        }
-      } finally {
-        if (!ignore) {
-          setLoading(false);
-          setRefreshing(false);
-        }
+    // Immediately resolve authenticated email and identity from client session
+    supabase.auth.getUser().then(({ data }) => {
+      if (!ignore && data?.user?.email) {
+        setAdminIdentity((prev) => ({
+          name: prev?.name || (data.user.user_metadata?.name as string) || (data.user.user_metadata?.full_name as string) || null,
+          email: data.user.email ?? prev?.email ?? null,
+          isPrimary: prev?.isPrimary ?? false,
+        }));
       }
-    }
+    }).catch(() => {});
 
-    void init();
+    void loadData(false);
 
     const participantChannel =
       supabase
@@ -829,13 +792,19 @@ export default function AdminPage() {
   ======================================================= */
 
   const stats = useMemo(() => {
-    // Only count active registrations for the dashboard stats
+    // Active and archived registrations
     const activeRegistrations = registrations.filter(
       (item) => item.registration.is_archived !== true
     );
+    const archivedRegistrations = registrations.filter(
+      (item) => item.registration.is_archived === true
+    );
 
     const total =
-      serverTotal !== null ? serverTotal : activeRegistrations.length;
+      serverTotal !== null ? serverTotal : registrations.length;
+
+    const activeTotal = activeRegistrations.length;
+    const archivedTotal = archivedRegistrations.length;
 
     const checkedIn =
       activeRegistrations.filter(
@@ -865,13 +834,15 @@ export default function AdminPage() {
     const mainCheckedIn = mainCheckedInSet.size;
 
     const pending =
-      total - checkedIn;
+      activeTotal - checkedIn;
       
     const mainPending =
       uniqueParticipants - mainCheckedIn;
 
     return {
       total,
+      activeTotal,
+      archivedTotal,
       checkedIn,
       mainCheckedIn,
       pending,
@@ -1123,6 +1094,36 @@ export default function AdminPage() {
         map.values()
       );
     }, [filteredRegistrations]);
+
+  const toggleSelectRow = useCallback((participantId: string) => {
+    setSelectedParticipantIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(participantId)) next.delete(participantId);
+      else next.add(participantId);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    if (participantGroups.length === 0) return;
+    const allVisibleSelected = participantGroups.every((g) =>
+      selectedParticipantIds.has(g[0].participant.id)
+    );
+
+    setSelectedParticipantIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        participantGroups.forEach((g) => next.delete(g[0].participant.id));
+      } else {
+        participantGroups.forEach((g) => next.add(g[0].participant.id));
+      }
+      return next;
+    });
+  }, [participantGroups, selectedParticipantIds]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedParticipantIds(new Set());
+  }, []);
 
   /* =======================================================
      PARTICIPANT DETAIL
@@ -1528,42 +1529,70 @@ export default function AdminPage() {
   }
 
   /* =======================================================
-     CSV
+     EXCEL EXPORT (FOUR-SHEET WORKBOOKS)
   ======================================================= */
 
+  async function exportRegistrationCsv() {
+    await exportRegistrationXlsx(
+      filteredRegistrations,
+      "saviskar-registrations-2026.xlsx"
+    );
+  }
+
+  async function exportParticipantCsv() {
+    await exportParticipantXlsx(
+      filteredRegistrations,
+      "saviskar-participants-attendees-2026.xlsx"
+    );
+  }
+
   function exportCsv() {
-    const csv = generateRegistrationsCsv(filteredRegistrations);
-
-    const blob =
-      new Blob([csv], {
-        type: "text/csv;charset=utf-8;",
-      });
-
-    const url =
-      URL.createObjectURL(blob);
-
-    const link =
-      document.createElement("a");
-
-    link.href = url;
-
-    link.download =
-      `saviskar-registrations-${new Date()
-        .toISOString()
-        .slice(0, 10)}.csv`;
-
-    document.body.appendChild(link);
-
-    link.click();
-
-    link.remove();
-
-    URL.revokeObjectURL(url);
+    void exportRegistrationCsv();
   }
 
   /* =======================================================
      RENDER
   ======================================================= */
+
+  if (!hasLoaded) {
+    if (error) {
+      return (
+        <main className="min-h-screen bg-[#f5f5f5] px-5 py-10 md:px-10 lg:px-16 flex items-center justify-center text-black">
+          <div className="flex flex-col items-center gap-4 text-center max-w-md bg-white p-8 rounded-3xl border border-black/10 shadow-sm">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-50 text-red-600 border border-red-100">
+              <RefreshCw size={22} />
+            </div>
+            <h2 className="text-lg font-bold tracking-tight text-black">Failed to Load Dashboard</h2>
+            <p className="text-xs text-black/55 leading-relaxed">{error}</p>
+            <div className="mt-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => loadData(false)}
+                className="inline-flex items-center gap-2 rounded-full bg-black px-5 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-black/80 transition active:scale-95"
+              >
+                <RefreshCw size={14} />
+                <span>Retry</span>
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-2.5 text-xs font-semibold text-black/70 hover:bg-black/5 transition"
+              >
+                <LogOut size={14} />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          </div>
+        </main>
+      );
+    }
+    return (
+      <AdminPageLoader
+        heading="Loading Admin Dashboard..."
+        subtext="Fetching registrations and dashboard statistics."
+      />
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#f5f5f5] px-5 py-10 md:px-10 lg:px-16">
@@ -1571,191 +1600,181 @@ export default function AdminPage() {
 
         {/* HEADER */}
 
-        <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-          <div>
-            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
-              Saviskar 2026
-            </p>
+        <div className="mb-10 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          {/* Left section: Title, Description, and Admin Identity */}
+          <div className="flex flex-col gap-4">
+            <div>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-black/40">
+                Saviskar 2026
+              </p>
 
-            <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl text-black">
-              Registrations
-            </h1>
+              <h1 className="text-4xl font-semibold tracking-[-0.05em] md:text-6xl text-black">
+                Registrations
+              </h1>
 
-            <p className="mt-4 text-sm text-black/45">
-              Manage registrations and participant entry.
-            </p>
-          </div>
+              <p className="mt-3 text-sm text-black/45">
+                Manage registrations and participant entry.
+              </p>
+            </div>
 
-          {adminIdentity && (
-            <div className="flex flex-col items-end mb-4 md:mb-0 bg-white p-4 rounded-[20px] border border-black/10 shadow-sm">
-              <div className="text-xs font-semibold uppercase tracking-wider text-black/40">
-                Logged in as
+            {/* Signed-in Administrator Identity Area */}
+            <div className="inline-flex flex-col items-start rounded-2xl border border-black/10 bg-white p-4 shadow-sm sm:max-w-md">
+              <div className="text-[10px] font-mono font-semibold uppercase tracking-[0.2em] text-black/40">
+                Signed in as
               </div>
-              <div className="text-lg font-bold text-black mt-1">
-                {adminIdentity.name || adminIdentity.email}
+              <div
+                className="mt-1 text-sm font-semibold text-black break-all"
+                title={adminIdentity?.email || undefined}
+              >
+                {adminIdentity?.email || (adminIdentity?.name ? adminIdentity.name : "Authenticated Administrator")}
               </div>
-              <div className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 bg-black/5 border border-black/10 rounded-full text-black/60 mt-2">
-                {adminIdentity.isPrimary
-                  ? "Primary Master Admin"
-                  : role === "master"
-                  ? "Master Admin"
-                  : availableCategories.length === 1
-                  ? `${availableCategories[0].replace("-", " ").toUpperCase()} Category Admin`
-                  : "Admin"}
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center rounded-full border border-black/10 bg-black/5 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-black/70">
+                  {adminIdentity?.isPrimary
+                    ? "Primary Master Admin"
+                    : role === "master"
+                    ? "Master Admin"
+                    : availableCategories.length === 1
+                    ? `${availableCategories[0].replace("-", " ").toUpperCase()} Category Admin`
+                    : "Admin"}
+                </span>
+                {adminIdentity?.name && adminIdentity?.email && (
+                  <span className="text-xs text-black/45 font-medium">
+                    {adminIdentity.name}
+                  </span>
+                )}
               </div>
             </div>
-          )}
+          </div>
 
-          <div className="flex flex-wrap gap-3">
+          {/* Right section: Action Buttons in Balanced Responsive Groups */}
+          <div className="flex flex-col gap-3 lg:items-end">
+            {/* Primary Management Actions */}
+            <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
+              {role === "master" && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin/events")}
+                    className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+                  >
+                    <CalendarDays size={15} />
+                    <span>Manage Events</span>
+                  </button>
 
-            {role === "master" && (
-              <>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin/admins")}
+                    className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+                  >
+                    <Users size={15} />
+                    <span>Manage Admins</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin/logs")}
+                    className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+                  >
+                    <Clock3 size={15} />
+                    <span>Audit Logs</span>
+                  </button>
+                </>
+              )}
+
+              {(role === "master" || accommodationAccess) && (
                 <button
                   type="button"
-                  onClick={() =>
-                    router.push(
-                      "/admin/events"
-                    )
-                  }
-                  className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+                  onClick={() => router.push("/admin/accommodations")}
+                  className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
                 >
-                  <CalendarDays
-                    size={15}
-                  />
-
-                  Manage Events
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M2 19V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14" />
+                    <path d="M2 19h20" />
+                    <path d="M7 19v-9a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v9" />
+                    <path d="M12 15h.01" />
+                  </svg>
+                  <span>Accommodation</span>
                 </button>
+              )}
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(
-                      "/admin/admins"
-                    )
-                  }
-                  className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
-                >
-                  <Users size={15} />
-
-                  Manage Admins
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(
-                      "/admin/logs"
-                    )
-                  }
-                  className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
-                >
-                  <Clock3 size={15} />
-
-                  Audit Logs
-                </button>
-              </>
-            )}
-
-            {(role === "master" || accommodationAccess) && (
               <button
                 type="button"
-                onClick={() =>
-                  router.push(
-                    "/admin/accommodations"
-                  )
-                }
-                className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+                onClick={() => router.push("/admin/analytics")}
+                className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="15"
-                  height="15"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M2 19V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14" />
-                  <path d="M2 19h20" />
-                  <path d="M7 19v-9a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v9" />
-                  <path d="M12 15h.01" />
-                </svg>
-
-                Accommodation
+                <BarChart3 size={15} />
+                <span>Analytics</span>
               </button>
-            )}
+            </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                router.push(
-                  "/register?from=admin"
-                )
-              }
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] text-black/70"
-            >
-              <ExternalLink
-                size={15}
-              />
+            {/* Registration and Operational Actions */}
+            <div className="flex flex-wrap items-center gap-2.5 lg:justify-end">
+              <button
+                type="button"
+                onClick={() => router.push("/register?from=admin")}
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2.5 text-sm text-black/70 transition hover:bg-black/[0.03] shadow-sm"
+              >
+                <ExternalLink size={15} />
+                <span>Add Registration</span>
+              </button>
 
-              Add Registration
-            </button>
+              <button
+                type="button"
+                onClick={() => router.push("/admin/scanner")}
+                className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+              >
+                <QrCode size={15} />
+                <span>Entry Scanner</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() =>
-                router.push(
-                  "/admin/scanner"
-                )
-              }
-              className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
-            >
-              <QrCode size={15} />
+              <button
+                type="button"
+                onClick={() => loadData(true)}
+                disabled={refreshing}
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2.5 text-sm text-black/70 transition hover:bg-black/[0.03] disabled:opacity-50 shadow-sm"
+              >
+                <RefreshCw
+                  size={15}
+                  className={refreshing ? "animate-spin" : ""}
+                />
+                <span>Refresh</span>
+              </button>
 
-              Entry Scanner
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                loadData(true)
-              }
-              disabled={refreshing}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-5 py-3 text-sm transition hover:bg-black/[0.03] disabled:opacity-50 text-black/70"
-            >
-              <RefreshCw
-                size={15}
-                className={
-                  refreshing
-                    ? "animate-spin"
-                    : ""
-                }
-              />
-
-              Refresh
-            </button>
-
-            <button
-              type="button"
-              onClick={logout}
-              className="flex items-center gap-2 rounded-full border border-black/10 bg-black px-5 py-3 text-sm transition hover:bg-black/[0.03]"
-            >
-              <LogOut
-                size={15}
-              />
-
-              Logout
-            </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+              >
+                <LogOut size={15} />
+                <span>Logout</span>
+              </button>
+            </div>
           </div>
         </div>
 
         {/* ERROR */}
 
         {error && (
-          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-            {error}
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700 flex items-center justify-between">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => loadData(true)}
+              className="font-semibold text-red-800 underline hover:text-red-950 transition text-xs shrink-0"
+            >
+              Retry
+            </button>
           </div>
         )}
 
@@ -1766,6 +1785,12 @@ export default function AdminPage() {
           <StatCard
             title="Total registrations"
             value={stats.total}
+            subtitle={
+              <span>
+                {stats.activeTotal} active
+                {stats.archivedTotal > 0 && ` · ${stats.archivedTotal} archived`}
+              </span>
+            }
             icon={
               <CalendarDays
                 size={18}
@@ -1775,10 +1800,11 @@ export default function AdminPage() {
           />
 
           <StatCard
-            title="Participants"
+            title="Unique Participants"
             value={
               stats.uniqueParticipants
             }
+            subtitle="Unique delegates across all events & teams"
             icon={
               <Users size={18} />
             }
@@ -1922,35 +1948,37 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <div className="mt-5 grid gap-4 grid-cols-1 sm:grid-cols-3 pt-5 border-t border-black/5">
-            <div className="rounded-2xl bg-black/[0.02] p-4 border border-black/[0.03]">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Expected Revenue</p>
-              <p className="text-2xl font-semibold text-black mt-1">₹{paymentStats.expectedAmount.toLocaleString()}</p>
-              {includeAccommodation && (
-                <p className="text-[10px] text-black/45 mt-1 font-medium">
-                  Events: ₹{paymentStats.eventExpectedAmount.toLocaleString()} · Acc: ₹{paymentStats.accExpected.toLocaleString()}
-                </p>
-              )}
+          {role === "master" && (
+            <div className="mt-5 grid gap-4 grid-cols-1 sm:grid-cols-3 pt-5 border-t border-black/5">
+              <div className="rounded-2xl bg-black/[0.02] p-4 border border-black/[0.03]">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-black/40">Expected Revenue</p>
+                <p className="text-2xl font-semibold text-black mt-1">₹{paymentStats.expectedAmount.toLocaleString()}</p>
+                {includeAccommodation && (
+                  <p className="text-[10px] text-black/45 mt-1 font-medium">
+                    Events: ₹{paymentStats.eventExpectedAmount.toLocaleString()} · Acc: ₹{paymentStats.accExpected.toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-2xl bg-green-50/60 p-4 border border-green-100/60">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-green-700/70">Paid Revenue</p>
+                <p className="text-2xl font-semibold text-green-700 mt-1">₹{paymentStats.paidAmount.toLocaleString()}</p>
+                {includeAccommodation && (
+                  <p className="text-[10px] text-green-800/60 mt-1 font-medium">
+                    Events: ₹{paymentStats.eventPaidAmount.toLocaleString()} · Acc: ₹{paymentStats.accPaid.toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-2xl bg-red-50/60 p-4 border border-red-100/60">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-red-700/70">Outstanding</p>
+                <p className="text-2xl font-semibold text-red-700 mt-1">₹{paymentStats.outstandingAmount.toLocaleString()}</p>
+                {includeAccommodation && (
+                  <p className="text-[10px] text-red-800/60 mt-1 font-medium">
+                    Events: ₹{paymentStats.eventOutstandingAmount.toLocaleString()} · Acc: ₹{paymentStats.accOutstanding.toLocaleString()}
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="rounded-2xl bg-green-50/60 p-4 border border-green-100/60">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-green-700/70">Paid Revenue</p>
-              <p className="text-2xl font-semibold text-green-700 mt-1">₹{paymentStats.paidAmount.toLocaleString()}</p>
-              {includeAccommodation && (
-                <p className="text-[10px] text-green-800/60 mt-1 font-medium">
-                  Events: ₹{paymentStats.eventPaidAmount.toLocaleString()} · Acc: ₹{paymentStats.accPaid.toLocaleString()}
-                </p>
-              )}
-            </div>
-            <div className="rounded-2xl bg-red-50/60 p-4 border border-red-100/60">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-red-700/70">Outstanding</p>
-              <p className="text-2xl font-semibold text-red-700 mt-1">₹{paymentStats.outstandingAmount.toLocaleString()}</p>
-              {includeAccommodation && (
-                <p className="text-[10px] text-red-800/60 mt-1 font-medium">
-                  Events: ₹{paymentStats.eventOutstandingAmount.toLocaleString()} · Acc: ₹{paymentStats.accOutstanding.toLocaleString()}
-                </p>
-              )}
-            </div>
-          </div>
+          )}
 
           {/* Accommodation Snapshot Banner (when accommodation is toggled ON) */}
           {includeAccommodation && (
@@ -2536,25 +2564,89 @@ export default function AdminPage() {
               </select>
             )}
 
+            <CsvExportDropdown
+              onExportRegistrations={exportRegistrationCsv}
+              onExportParticipants={exportParticipantCsv}
+              totalRegistrations={filteredRegistrations.length}
+            />
+
             <button
               type="button"
-              onClick={exportCsv}
-              className="flex items-center justify-center gap-2 rounded-[18px] bg-black px-5 py-3 text-sm text-white"
+              onClick={() => {
+                setVerificationMode("audit");
+                setIsVerificationOpen(true);
+              }}
+              className="rounded-[18px] border border-amber-900/40 bg-[#78350f] hover:bg-[#92400e] text-[#fef3c7] px-4 py-3 text-sm font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+              title="Run payment reconciliation audit across anomalous, pending and retry-chain orders"
             >
-              <Download
-                size={15}
-              />
-
-              Export CSV
+              <ShieldCheck size={16} className="text-amber-300" />
+              <span>Payment Audit</span>
             </button>
+
+            {selectedParticipantIds.size > 0 && (
+              <div
+                role="toolbar"
+                aria-label="Selection actions"
+                className="flex items-center flex-wrap gap-2 animate-in fade-in duration-150"
+              >
+                <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-[18px] bg-black/[0.05] border border-black/10 text-xs font-semibold text-black">
+                  <span>{selectedParticipantIds.size}</span>
+                  <span className="font-normal text-black/60">selected</span>
+                  <button
+                    type="button"
+                    onClick={clearSelection}
+                    className="ml-1 text-[11px] font-medium text-black/40 hover:text-black underline cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVerificationMode("selected");
+                    setIsVerificationOpen(true);
+                  }}
+                  className="rounded-[18px] border border-amber-900/40 bg-[#78350f] hover:bg-[#92400e] text-[#fef3c7] px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                >
+                  <ShieldCheck size={14} className="text-amber-300" />
+                  <span>Verify Payment</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsResendEmailOpen(true)}
+                  className="rounded-[18px] border border-blue-700/40 bg-[#1e40af] hover:bg-[#1d4ed8] text-[#dbeafe] px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                >
+                  <Mail size={14} className="text-blue-300" />
+                  <span>Resend Email</span>
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className="mt-3 px-2 text-[10px] uppercase tracking-[0.16em] text-black/30">
-            Showing{" "}
-            <span className="text-black/60">
-              {filteredRegistrations.length}
-            </span>{" "}
-            event registrations
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-2 text-[10px] uppercase tracking-[0.16em] text-black/40">
+            <div>
+              Showing{" "}
+              <span className="font-semibold text-black/70">
+                {filteredRegistrations.length}
+              </span>{" "}
+              of{" "}
+              <span className="font-semibold text-black/70">
+                {stats.activeTotal}
+              </span>{" "}
+              active registrations
+              {filteredRegistrations.length !== stats.activeTotal && (
+                <span className="ml-2 font-normal text-amber-700/80 lowercase tracking-normal">
+                  ({stats.activeTotal - filteredRegistrations.length} filtered out)
+                </span>
+              )}
+            </div>
+            {stats.archivedTotal > 0 && (
+              <div className="text-black/30">
+                {stats.archivedTotal} archived {stats.archivedTotal === 1 ? "record" : "records"}
+              </div>
+            )}
           </div>
         </div>
 
@@ -2593,7 +2685,11 @@ export default function AdminPage() {
 
             {/* DESKTOP HEADER */}
 
-            <div className="hidden border-b border-black/10 bg-black/[0.025] px-6 py-4 lg:grid lg:grid-cols-[1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:gap-5">
+            <div className="hidden border-b border-black/10 bg-black/[0.025] px-6 py-4 lg:grid lg:grid-cols-[55px_1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:gap-5">
+              <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
+                Sr. No.
+              </span>
+
               <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
                 Participant
               </span>
@@ -2614,13 +2710,28 @@ export default function AdminPage() {
                 Status
               </span>
 
-              <span />
+              <div className="flex items-center justify-end gap-3">
+                <input
+                  type="checkbox"
+                  id="select-all-visible"
+                  aria-label="Select all visible registrations"
+                  checked={
+                    participantGroups.length > 0 &&
+                    participantGroups.every((g) =>
+                      selectedParticipantIds.has(g[0].participant.id)
+                    )
+                  }
+                  onChange={toggleSelectAll}
+                  className="h-4 w-4 rounded border-black/20 text-black focus:ring-black cursor-pointer"
+                  title="Select all visible registrations"
+                />
+              </div>
             </div>
 
             <div className="divide-y divide-black/[0.07]">
 
               {participantGroups.map(
-                (group) => {
+                (group, index) => {
                   const participant =
                     group[0].participant;
 
@@ -2647,8 +2758,13 @@ export default function AdminPage() {
                           group
                         )
                       }
-                      className="group grid w-full gap-5 px-6 py-5 text-left transition hover:bg-black/[0.018] lg:grid-cols-[1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:items-center"
+                      className="group grid w-full gap-5 px-6 py-5 text-left transition hover:bg-black/[0.018] lg:grid-cols-[55px_1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:items-center"
                     >
+                      {/* SR NO */}
+                      <div className="flex items-center text-xs font-mono font-medium text-black/40">
+                        <span className="lg:hidden text-[10px] uppercase tracking-wider text-black/30 font-sans mr-2">Sr. No.</span>
+                        {index + 1}
+                      </div>
 
                       {/* PARTICIPANT */}
 
@@ -2817,7 +2933,19 @@ export default function AdminPage() {
                         )}
                       </div>
 
-                      <div className="flex justify-end">
+                      <div className="flex items-center justify-end gap-3">
+                        <input
+                          type="checkbox"
+                          id={`select-participant-${participant.id}`}
+                          aria-label={`Select ${participant.name}`}
+                          checked={selectedParticipantIds.has(participant.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            toggleSelectRow(participant.id);
+                          }}
+                          className="h-4 w-4 rounded border-black/20 text-black focus:ring-black cursor-pointer"
+                        />
                         <span className="text-lg text-black/15 transition group-hover:translate-x-1 group-hover:text-black">
                           →
                         </span>
@@ -3706,6 +3834,19 @@ export default function AdminPage() {
         </div>
       );
     })()}
+
+      <PaymentVerificationDialog
+        isOpen={isVerificationOpen}
+        onClose={() => setIsVerificationOpen(false)}
+        selectedParticipantIds={Array.from(selectedParticipantIds)}
+        initialMode={verificationMode}
+      />
+
+      <ResendEmailDialog
+        isOpen={isResendEmailOpen}
+        onClose={() => setIsResendEmailOpen(false)}
+        selectedParticipantIds={Array.from(selectedParticipantIds)}
+      />
     </main>
   );
 }
@@ -3717,11 +3858,13 @@ export default function AdminPage() {
 function StatCard({
   title,
   value,
+  subtitle,
   icon,
   dark = false,
 }: {
   title: string;
   value: number;
+  subtitle?: ReactNode;
   icon: ReactNode;
   dark?: boolean;
 }) {
@@ -3756,6 +3899,15 @@ function StatCard({
       >
         {value}
       </div>
+
+      {subtitle && (
+        <div
+          className={`mt-2 text-xs font-medium ${dark ? "text-white/50" : "text-black/45"
+            }`}
+        >
+          {subtitle}
+        </div>
+      )}
     </div>
   );
 }

@@ -386,4 +386,48 @@ body {
   outline-offset: 2px !important;
 }
 
+/* =========================================================
+   ADMIN BLUE TEXT SELECTION (SCOPED TO ADMIN ONLY)
+========================================================= */
+
+.admin-root ::selection {
+  background-color: #2563EB !important;
+  color: #FFFFFF !important;
+}
+
+.admin-root::selection {
+  background-color: #2563EB !important;
+  color: #FFFFFF !important;
+}
+
+.admin-root input::selection {
+  background-color: #2563EB !important;
+  color: #FFFFFF !important;
+}
+
+.admin-root textarea::selection {
+  background-color: #2563EB !important;
+  color: #FFFFFF !important;
+}
+
+.admin-root ::-moz-selection {
+  background-color: #2563EB !important;
+  color: #FFFFFF !important;
+}
+
+.admin-root::-moz-selection {
+  background-color: #2563EB !important;
+  color: #FFFFFF !important;
+}
+
+.admin-root input::-moz-selection {
+  background-color: #2563EB !important;
+  color: #FFFFFF !important;
+}
+
+.admin-root textarea::-moz-selection {
+  background-color: #2563EB !important;
+  color: #FFFFFF !important;
+}
+
 

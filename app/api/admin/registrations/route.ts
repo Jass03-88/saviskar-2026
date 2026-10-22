@@ -665,6 +665,12 @@ export async function GET(request: Request) {
     console.warn("Global accommodation stats skipped:", accStatsErr);
   }
 
+  if (!isMaster) {
+    accommodationStats.expectedAmount = 0;
+    accommodationStats.paidAmount = 0;
+    accommodationStats.outstandingAmount = 0;
+  }
+
   const membersByParticipantEventId =
     new Map<string, Member[]>();
 
@@ -779,6 +785,9 @@ export async function GET(request: Request) {
       registrations,
       events,
       role: auth.role,
+      adminEmail: auth.user?.email ?? null,
+      adminName: ((auth.user?.user_metadata?.name as string) || (auth.user?.user_metadata?.full_name as string)) ?? null,
+      isPrimary: auth.role === "master",
       accommodation_access: auth.accommodation_access,
       assigned_category: auth.assigned_category,
       assigned_events: auth.assigned_events,

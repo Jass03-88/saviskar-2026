@@ -19,6 +19,7 @@ import {
 import Footer from "@/components/ui/Footer";
 import Navbar from "@/components/ui/Navbar";
 import MouseSpotlight from "@/components/ui/MouseSpotlight";
+import { submitPayUCheckoutForm } from "@/lib/payments/checkout-form";
 
 type ResumeTeamMember = {
   participantId: string;
@@ -287,32 +288,7 @@ function PaymentResumeContent() {
 
       // 2. Submit PayU Hosted Checkout form
       const checkoutConfig = createJson.checkoutConfig;
-      const options = checkoutConfig?.options ?? {};
-      const postUrl = checkoutConfig?.postUrl;
-
-      if (!postUrl || !options.hash) {
-        throw new Error(
-          "Payment gateway configuration is missing or invalid."
-        );
-      }
-
-      const checkoutForm = document.createElement("form");
-      checkoutForm.method = "POST";
-      checkoutForm.action = postUrl;
-      checkoutForm.style.display = "none";
-
-      for (const [key, value] of Object.entries(options)) {
-        if (value !== undefined && value !== null) {
-          const input = document.createElement("input");
-          input.type = "hidden";
-          input.name = key;
-          input.value = String(value);
-          checkoutForm.appendChild(input);
-        }
-      }
-
-      document.body.appendChild(checkoutForm);
-      checkoutForm.submit();
+      submitPayUCheckoutForm(checkoutConfig);
       
       // Keep processingPayment as true because we are navigating away.
       return;

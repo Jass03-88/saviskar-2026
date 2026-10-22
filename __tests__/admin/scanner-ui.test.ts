@@ -234,4 +234,102 @@ describe("Phase 2E - Scanner UI Modes Integration", () => {
     // We already verified in the source that it calls POST /api/admin/accommodations/check-in
     expect(true).toBe(true);
   });
+
+  it("21. Confirmed free event in scanner UI displays FREE EVENT and enables check-in", () => {
+    hookState[2] = "main";
+    hookState[3] = { name: "jashan", participantId: "SVK26-D74CC75C" };
+    hookState[4] = [
+      {
+        participantEventId: "pe_free_1",
+        eventId: "ev_ai_meme",
+        eventName: "AI Video & Meme Challenge",
+        eventCategory: "Technical Event",
+        registrationFee: 0,
+        paymentType: "free",
+        registrationStatus: "confirmed",
+        paymentStatus: "confirmed",
+        paymentAmount: 0,
+        mainCheckedIn: false,
+        checkedIn: false,
+      },
+    ];
+    hookState[5] = []; // No accommodation
+
+    const ui = renderUI();
+    const uiStr = JSON.stringify(ui);
+
+    // Free event indicator is present
+    expect(uiStr).toContain("FREE EVENT");
+
+    // UNPAID indicator is NOT present
+    expect(uiStr).not.toContain("UNPAID");
+
+    // Check-in action is ENABLED
+    expect(uiStr).toContain("Main Check-in");
+    expect(uiStr).not.toContain("Check in Disabled (Payment Required)");
+    expect(uiStr).not.toContain("Payment is incomplete");
+  });
+
+  it("22. Paid event with unpaid status displays UNPAID and disables check-in", () => {
+    hookState[2] = "main";
+    hookState[3] = { name: "Test User" };
+    hookState[4] = [
+      {
+        participantEventId: "pe_paid_1",
+        eventId: "ev_roborace",
+        eventName: "Roborace",
+        eventCategory: "Technical Event",
+        registrationFee: 300,
+        paymentType: "paid",
+        registrationStatus: "pending",
+        paymentStatus: "unpaid",
+        paymentAmount: 300,
+        mainCheckedIn: false,
+        checkedIn: false,
+      },
+    ];
+
+    const ui = renderUI();
+    const uiStr = JSON.stringify(ui);
+
+    expect(uiStr).toContain("UNPAID (unpaid)");
+    expect(uiStr).toContain("Check in Disabled (Payment Required)");
+    expect(uiStr).toContain("Payment is incomplete");
+    expect(uiStr).not.toContain("Main Check-in");
+  });
+
+  it("23. Free event with unpaid accommodation remains check-in enabled for event mode", () => {
+    hookState[2] = "event";
+    hookState[3] = { name: "Test User" };
+    hookState[4] = [
+      {
+        participantEventId: "pe_free_1",
+        eventId: "ev_open_mic",
+        eventName: "Open Mic",
+        registrationFee: 0,
+        paymentType: "free",
+        registrationStatus: "confirmed",
+        paymentStatus: "confirmed",
+        paymentAmount: 0,
+        mainCheckedIn: false,
+        checkedIn: false,
+      },
+    ];
+    // Separate accommodation that is unpaid
+    hookState[5] = [
+      {
+        id: "acc_1",
+        status: "unpaid",
+        planName: "1 Day Plan",
+      },
+    ];
+
+    const ui = renderUI();
+    const uiStr = JSON.stringify(ui);
+
+    // Event check-in is enabled despite separate unpaid accommodation
+    expect(uiStr).toContain("FREE EVENT");
+    expect(uiStr).toContain("Event Check-in");
+    expect(uiStr).not.toContain("Check in Disabled (Payment Required)");
+  });
 });

@@ -93,7 +93,7 @@ export type FetchedPaymentDetails = {
    * - "paid" / "captured": payment succeeded and funds captured
    * - "pending" / "in progress": payment initiated and currently awaiting capture
    * - "failed" / "cancelled": payment failed, dropped, or cancelled
-   * - "not_found": transaction never initiated or recorded by gateway
+   * - "not_found": transaction was not found by gateway; does not guarantee that no customer debit occurred
    */
   status: "paid" | "pending" | "failed" | "not_found" | string;
 
@@ -114,6 +114,36 @@ export type FetchedPaymentDetails = {
 
   /** Gateway timestamp when transaction was recorded */
   addedOn?: string;
+
+  /** Explicit gateway additional charges/surcharge in paise, if returned by gateway */
+  additionalCharges?: number;
+
+  /** Bank reference number returned by PayU / issuing bank */
+  bankRefNum?: string;
+
+  /** UDF1 metadata echoed back by gateway */
+  udf1?: string;
+
+  /** Net settlement amount credited to merchant in paise */
+  settlementAmount?: number;
+
+  /** Explicit amount_settled field in paise if returned by gateway */
+  amountSettledPaise?: number;
+
+  /** Gateway deductions or discounts in paise */
+  deductions?: number;
+
+  /** Total customer transaction amount debited in paise */
+  customerTransactionAmount?: number;
+
+  /** Raw amt field from PayU in paise */
+  payuAmtPaise?: number;
+
+  /** Raw transaction_amount field from PayU in paise */
+  payuTransactionAmountPaise?: number;
+
+  /** Unresolved amount-field discrepancy or ambiguity reason string */
+  amountAmbiguityReason?: string;
 };
 
 export class PaymentVerificationError extends Error {
