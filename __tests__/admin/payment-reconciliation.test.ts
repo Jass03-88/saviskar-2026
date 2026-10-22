@@ -8,6 +8,8 @@ import {
   ReconciliationOutcome,
   formatIndianTimestamp,
   getReconciliationConfirmationSummary,
+  computeItemAllocationBreakdown,
+  formatINR,
 } from "@/lib/admin/payment-verification";
 import {
   generateEmailPreviews,
@@ -4660,6 +4662,1035 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
         })
       );
     });
+  });
+
+  describe("Part 10: Step 3 — Retry-Chain Diagnostics & Explicit Line-Item Breakdown", () => {
+    // 1. Historical failed order whose exact event item is demonstrably settled by a separate paid retry
+    it("116. Cover 1: Historical failed order whose exact event item is settled by a separate paid retry", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-retry-evt", name: "Gautam Hari Om", email: "gautam@test.internal", participant_id: "SVK-GAUTAM" },
+        ],
+        payment_orders: [
+          {
+            id: "order-fail-evt",
+            order_reference: "SVK-2026-PAY-FAIL-EVT",
+            gateway: "payu",
+            gateway_order_id: "TXN-FAIL-EVT",
+            amount: 500,
+            currency: "INR",
+            status: "failed",
+            payer_participant_id: "part-retry-evt",
+            created_at: "2026-10-20T10:00:00Z",
+          },
+          {
+            id: "order-paid-evt",
+            order_reference: "SVK-2026-PAY-PAID-EVT",
+            gateway: "payu",
+            gateway_order_id: "TXN-PAID-EVT",
+            amount: 500,
+            currency: "INR",
+            status: "paid",
+            payer_participant_id: "part-retry-evt",
+            created_at: "2026-10-20T10:30:00Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-1",
+            payment_order_id: "order-fail-evt",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-mun-exact-1",
+            events: { id: "evt-mun", name: "MUN General Assembly", category: "Literary", registration_fee: 500 },
+            participant_events: { id: "pe-mun-exact-1", participant_id: "part-retry-evt", payment_status: "paid" },
+          },
+          {
+            id: "poi-2",
+            payment_order_id: "order-paid-evt",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-mun-exact-1",
+            events: { id: "evt-mun", name: "MUN General Assembly", category: "Literary", registration_fee: 500 },
+            participant_events: { id: "pe-mun-exact-1", participant_id: "part-retry-evt", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-mun-exact-1", participant_id: "part-retry-evt", payment_status: "paid", payment_amount: 500 },
+        ],
+        participant_accommodations: [],
+        payments: [
+          { id: "pay-receipt-1", gateway_order_id: "TXN-PAID-EVT", gateway_payment_id: "MIH-PAID-EVT", amount: 500, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-retry-evt"],
+        mockGatewayResults: {
+          "TXN-FAIL-EVT": { status: "failed", amountPaise: 50000 },
+          "TXN-PAID-EVT": { status: "paid", amountPaise: 50000 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-fail-evt")!;
+      // A: Historical failed attempt remains PAYMENT_FAILED, not CONFLICTING_ITEM_MAPPING
+      expect(failedOrder.outcome).toBe("PAYMENT_FAILED");
+      expect(failedOrder.localOrderStatus).toBe("failed");
+
+      // Informational notice is present
+      const retryNotice = failedOrder.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE");
+      expect(retryNotice).toBeDefined();
+      expect(retryNotice?.severity).toBe("info");
+      expect(retryNotice?.description).toContain("Historical failed checkout — item was settled by a subsequent successful retry");
+      expect(retryNotice?.description).toContain("SVK-2026-PAY-PAID-EVT");
+
+      // No warning about contradictory status
+      const contradictoryWarning = failedOrder.diagnosticFindings.find((f) => f.type === "CONTRADICTORY_LOCAL_STATUS");
+      expect(contradictoryWarning).toBeUndefined();
+
+      // Linked item details show retry settlement
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("settled_by_retry");
+      expect(failedOrder.linkedItems[0].settledByOrderReference).toBe("SVK-2026-PAY-PAID-EVT");
+    });
+
+    // 2. Historical failed accommodation order whose exact booking is linked to a verified successful retry
+    it("117. Cover 2: Historical failed accommodation order whose exact booking is linked to a verified successful retry", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-retry-acc", name: "Rutba Shakeel", email: "rutba@test.internal", participant_id: "SVK-RUTBA" },
+        ],
+        payment_orders: [
+          {
+            id: "order-fail-acc",
+            order_reference: "SVK-2026-PAY-FAIL-ACC",
+            gateway: "payu",
+            gateway_order_id: "TXN-FAIL-ACC",
+            amount: 999,
+            currency: "INR",
+            status: "failed",
+            payer_participant_id: "part-retry-acc",
+            created_at: "2026-10-20T11:00:00Z",
+          },
+          {
+            id: "order-paid-acc",
+            order_reference: "SVK-2026-PAY-PAID-ACC",
+            gateway: "payu",
+            gateway_order_id: "TXN-PAID-ACC",
+            amount: 999,
+            currency: "INR",
+            status: "paid",
+            payer_participant_id: "part-retry-acc",
+            created_at: "2026-10-20T11:45:00Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-acc-fail",
+            payment_order_id: "order-fail-acc",
+            item_type: "accommodation",
+            amount: 999,
+            participant_accommodation_id: "pa-exact-booking-1",
+            participant_accommodations: {
+              id: "pa-exact-booking-1",
+              participant_id: "part-retry-acc",
+              amount: 999,
+              status: "paid",
+              start_date: "2026-03-01",
+              end_date: "2026-03-03",
+              accommodation_plans: { name: "Standard 2-Day Accommodations" },
+            },
+          },
+          {
+            id: "poi-acc-paid",
+            payment_order_id: "order-paid-acc",
+            item_type: "accommodation",
+            amount: 999,
+            participant_accommodation_id: "pa-exact-booking-1",
+            participant_accommodations: {
+              id: "pa-exact-booking-1",
+              participant_id: "part-retry-acc",
+              amount: 999,
+              status: "paid",
+              start_date: "2026-03-01",
+              end_date: "2026-03-03",
+              accommodation_plans: { name: "Standard 2-Day Accommodations" },
+            },
+          },
+        ],
+        participant_events: [],
+        participant_accommodations: [
+          {
+            id: "pa-exact-booking-1",
+            participant_id: "part-retry-acc",
+            payment_order_id: "order-paid-acc",
+            amount: 999,
+            status: "paid",
+            start_date: "2026-03-01",
+            end_date: "2026-03-03",
+            accommodation_plans: { name: "Standard 2-Day Accommodations" },
+          },
+        ],
+        payments: [
+          { id: "pay-receipt-acc", gateway_order_id: "TXN-PAID-ACC", gateway_payment_id: "MIH-PAID-ACC", amount: 999, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-retry-acc"],
+        mockGatewayResults: {
+          "TXN-FAIL-ACC": { status: "failed", amountPaise: 99900 },
+          "TXN-PAID-ACC": { status: "paid", amountPaise: 99900 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-fail-acc")!;
+      expect(failedOrder.outcome).toBe("PAYMENT_FAILED");
+
+      const retryNotice = failedOrder.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE");
+      expect(retryNotice).toBeDefined();
+      expect(retryNotice?.severity).toBe("info");
+      expect(retryNotice?.description).toContain("SVK-2026-PAY-PAID-ACC");
+
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("settled_by_retry");
+    });
+
+    // 3. Paid item with no provable successful canonical order remains an actionable warning (Classification B)
+    it("118. Cover 3: Paid item with no provable successful canonical order remains an actionable warning", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-unres", name: "Unresolved Participant", email: "unres@test.internal", participant_id: "SVK-UNRES" },
+        ],
+        payment_orders: [
+          {
+            id: "order-unres-pend",
+            order_reference: "SVK-2026-PAY-UNRES",
+            gateway: "payu",
+            gateway_order_id: "TXN-UNRES",
+            amount: 500,
+            currency: "INR",
+            status: "pending",
+            payer_participant_id: "part-unres",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-unres",
+            payment_order_id: "order-unres-pend",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-unres",
+            events: { id: "evt-1", name: "Coding Challenge", category: "Technical", registration_fee: 500 },
+            participant_events: { id: "pe-unres", participant_id: "part-unres", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-unres", participant_id: "part-unres", payment_status: "paid", payment_amount: 500 },
+        ],
+        participant_accommodations: [],
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-unres"],
+        mockGatewayResults: {
+          "TXN-UNRES": { status: "pending", amountPaise: 50000 },
+        },
+      });
+
+      const order = res.orders[0];
+      const warning = order.diagnosticFindings.find((f) => f.type === "CONTRADICTORY_LOCAL_STATUS");
+      expect(warning).toBeDefined();
+      expect(warning?.severity).toBe("warning");
+      expect(warning?.description).toContain("Paid item — canonical successful payment order could not be established");
+
+      expect(order.linkedItems[0].settlementContext).toBe("unresolved_paid");
+    });
+
+    // 4. A paid item linked only to unrelated paid orders is not classified as settled by retry
+    it("119. Cover 4: A paid item linked only to unrelated paid orders is not classified as settled by retry", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-unrelated", name: "Gautam Hari Om", email: "gautam@test.internal", participant_id: "SVK-GAUTAM" },
+        ],
+        payment_orders: [
+          {
+            id: "order-fail-mun-sec",
+            order_reference: "SVK-2026-PAY-SEC-FAIL",
+            gateway: "payu",
+            gateway_order_id: "TXN-SEC-FAIL",
+            amount: 500,
+            status: "failed",
+            payer_participant_id: "part-unrelated",
+          },
+          {
+            id: "order-paid-mun-gen",
+            order_reference: "SVK-2026-PAY-GEN-PAID",
+            gateway: "payu",
+            gateway_order_id: "TXN-GEN-PAID",
+            amount: 500,
+            status: "paid",
+            payer_participant_id: "part-unrelated",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-sec",
+            payment_order_id: "order-fail-mun-sec",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-sec-council", // Distinct item!
+            events: { id: "evt-sec", name: "MUN Security Council", registration_fee: 500 },
+            participant_events: { id: "pe-sec-council", participant_id: "part-unrelated", payment_status: "paid" },
+          },
+          {
+            id: "poi-gen",
+            payment_order_id: "order-paid-mun-gen",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-gen-assembly", // Different item!
+            events: { id: "evt-gen", name: "MUN General Assembly", registration_fee: 500 },
+            participant_events: { id: "pe-gen-assembly", participant_id: "part-unrelated", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-sec-council", participant_id: "part-unrelated", payment_status: "paid" },
+          { id: "pe-gen-assembly", participant_id: "part-unrelated", payment_status: "paid" },
+        ],
+        participant_accommodations: [],
+        payments: [
+          { id: "pay-gen", gateway_order_id: "TXN-GEN-PAID", amount: 500, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-unrelated"],
+        mockGatewayResults: {
+          "TXN-SEC-FAIL": { status: "failed", amountPaise: 50000 },
+          "TXN-GEN-PAID": { status: "paid", amountPaise: 50000 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-fail-mun-sec")!;
+      // Must NOT be classified as settled by SVK-2026-PAY-GEN-PAID
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("unresolved_paid");
+      const retryNotice = failedOrder.diagnosticFindings.find(
+        (f) => f.type === "RETRY_ORDER_NOTICE" && f.description.includes("SVK-2026-PAY-GEN-PAID")
+      );
+      expect(retryNotice).toBeUndefined();
+    });
+
+    // 5. Pending or failed items remain unresolved and are not labelled as settled
+    it("120. Cover 5: Pending or failed items remain unresolved and are not labelled as settled", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-pend", name: "Pending User", email: "pend@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-fail-all",
+            order_reference: "SVK-2026-PAY-PEND-ALL",
+            gateway: "payu",
+            gateway_order_id: "TXN-PEND-ALL",
+            amount: 500,
+            status: "failed",
+            payer_participant_id: "part-pend",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-pend",
+            payment_order_id: "order-fail-all",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-pend",
+            events: { id: "evt-1", name: "RoboWars", registration_fee: 500 },
+            participant_events: { id: "pe-pend", participant_id: "part-pend", payment_status: "pending" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-pend", participant_id: "part-pend", payment_status: "pending" },
+        ],
+        participant_accommodations: [],
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-pend"],
+        mockGatewayResults: {
+          "TXN-PEND-ALL": { status: "failed", amountPaise: 50000 },
+        },
+      });
+
+      const order = res.orders[0];
+      expect(order.linkedItems[0].settlementContext).toBe("unsettled");
+      expect(order.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE")).toBeUndefined();
+    });
+
+    // 6. Allocation breakdown distinguishes event count from accommodation count
+    it("121. Cover 6: Allocation breakdown distinguishes event count from accommodation count", () => {
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 8489,
+        items: [
+          { id: "evt-1", itemType: "event", expectedAmount: 3000 },
+          { id: "acc-1", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-2", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-3", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-4", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-5", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-6", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-7", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-8", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-9", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-10", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-11", itemType: "accommodation", expectedAmount: 499 },
+        ],
+      });
+
+      expect(breakdown.distinctItemCount).toBe(12);
+      expect(breakdown.eventCount).toBe(1);
+      expect(breakdown.eventSubtotal).toBe(3000);
+      expect(breakdown.accommodationCount).toBe(11);
+      expect(breakdown.accommodationSubtotal).toBe(5489);
+      expect(breakdown.totalLineItemSum).toBe(8489);
+      expect(breakdown.differencePaise).toBe(0);
+      expect(breakdown.summaryText).toBe("1 Event (₹3,000) + 11 Accommodations (₹5,489)");
+      expect(breakdown.allocationDifferenceText).toBe("Allocation difference: ₹0");
+      expect(breakdown.hasAllocationMismatch).toBe(false);
+    });
+
+    // 7. Twelve accommodations total ₹5,988, against a ₹8,988 order, producing an exact ₹3,000 allocation difference
+    it("122. Cover 7: Pari Jha synthetic historical order: 12 accommodations total ₹5,988 with ₹3,000 allocation difference", () => {
+      const items = Array.from({ length: 12 }).map((_, idx) => ({
+        id: `acc-pari-hist-${idx + 1}`,
+        itemType: "accommodation",
+        expectedAmount: 499,
+      }));
+
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 8988,
+        items,
+      });
+
+      expect(breakdown.distinctItemCount).toBe(12);
+      expect(breakdown.eventCount).toBe(0);
+      expect(breakdown.accommodationCount).toBe(12);
+      expect(breakdown.accommodationSubtotal).toBe(5988);
+      expect(breakdown.totalOrderAmount).toBe(8988);
+      expect(breakdown.totalLineItemSum).toBe(5988);
+      expect(breakdown.differencePaise).toBe(300000); // Integer paise!
+      expect(breakdown.differenceINR).toBe(3000);
+      expect(breakdown.hasAllocationMismatch).toBe(true);
+      expect(breakdown.summaryText).toBe("12 Accommodations (₹5,988)");
+      expect(breakdown.allocationDifferenceText).toBe("Allocation difference: ₹3,000 — missing/unmapped item requires investigation");
+    });
+
+    // 8. One ₹3,000 event plus eleven ₹499 accommodations totals ₹8,489, producing zero allocation difference
+    it("123. Cover 8: Pari Jha synthetic later order: 1 event (₹3,000) + 11 accommodations (₹5,489) produces zero difference", () => {
+      const items = [
+        { id: "evt-nukkad", itemType: "event", expectedAmount: 3000 },
+        ...Array.from({ length: 11 }).map((_, idx) => ({
+          id: `acc-pari-later-${idx + 1}`,
+          itemType: "accommodation",
+          expectedAmount: 499,
+        })),
+      ];
+
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 8489,
+        items,
+      });
+
+      expect(breakdown.distinctItemCount).toBe(12);
+      expect(breakdown.eventCount).toBe(1);
+      expect(breakdown.eventSubtotal).toBe(3000);
+      expect(breakdown.accommodationCount).toBe(11);
+      expect(breakdown.accommodationSubtotal).toBe(5489);
+      expect(breakdown.totalOrderAmount).toBe(8489);
+      expect(breakdown.totalLineItemSum).toBe(8489);
+      expect(breakdown.differencePaise).toBe(0);
+      expect(breakdown.differenceINR).toBe(0);
+      expect(breakdown.hasAllocationMismatch).toBe(false);
+      expect(breakdown.summaryText).toBe("1 Event (₹3,000) + 11 Accommodations (₹5,489)");
+      expect(breakdown.allocationDifferenceText).toBe("Allocation difference: ₹0");
+    });
+
+    // 9. Duplicate or malformed mappings cannot silently inflate the displayed line-item sum
+    it("124. Cover 9: Duplicate and malformed items do not silently inflate displayed line-item sum", () => {
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 1000,
+        items: [
+          { id: "evt-1", itemType: "event", expectedAmount: 500, participantEventId: "pe-dup-1" },
+          // Duplicate of evt-1 (same canonical participantEventId)
+          { id: "evt-1-repeat", itemType: "event", expectedAmount: 500, participantEventId: "pe-dup-1" },
+          // Malformed item: invalid amount
+          { id: "bad-item-1", itemType: "event", expectedAmount: NaN },
+          // Malformed item: negative amount
+          { id: "bad-item-2", itemType: "accommodation", expectedAmount: -200 },
+        ],
+      });
+
+      // Exactly 1 valid distinct item counted in sum
+      expect(breakdown.totalLineItemSum).toBe(500);
+      expect(breakdown.eventCount).toBe(1);
+      expect(breakdown.hasInvalidOrUnavailableItems).toBe(true);
+      expect(breakdown.invalidItemsCount).toBe(2);
+      expect(breakdown.differenceINR).toBe(500);
+    });
+
+    // 10. Separate retry attempts remain independent
+    it("125. Cover 10: Separate retry attempts calculate their own line-item allocation independently", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-pari-synth", name: "Pari Jha", email: "pari@test.internal", participant_id: "SVK-PARI" },
+        ],
+        payment_orders: [
+          {
+            id: "order-pari-hist-8988",
+            order_reference: "SVK-2026-PAY-HIST-8988",
+            gateway: "payu",
+            gateway_order_id: "TXN-PARI-HIST",
+            amount: 8988,
+            currency: "INR",
+            status: "failed",
+            payer_participant_id: "part-pari-synth",
+          },
+          {
+            id: "order-pari-later-8489",
+            order_reference: "SVK-2026-PAY-LATER-8489",
+            gateway: "payu",
+            gateway_order_id: "TXN-PARI-LATER",
+            amount: 8489,
+            currency: "INR",
+            status: "paid",
+            payer_participant_id: "part-pari-synth",
+          },
+        ],
+        payment_order_items: [
+          // Order 1 has 12 accommodations (total ₹5,988)
+          ...Array.from({ length: 12 }).map((_, idx) => ({
+            id: `poi-hist-${idx + 1}`,
+            payment_order_id: "order-pari-hist-8988",
+            item_type: "accommodation",
+            amount: 499,
+            participant_accommodation_id: `acc-pari-${idx + 1}`,
+            participant_accommodations: {
+              id: `acc-pari-${idx + 1}`,
+              participant_id: "part-pari-synth",
+              amount: 499,
+              status: "paid",
+              accommodation_plans: { name: "1 Day Accommodation" },
+            },
+          })),
+          // Order 2 has 1 event (₹3,000) and 11 accommodations (₹5,489)
+          {
+            id: "poi-later-evt",
+            payment_order_id: "order-pari-later-8489",
+            item_type: "event",
+            amount: 3000,
+            participant_event_id: "pe-nukkad",
+            events: { id: "evt-nukkad", name: "Nukkad Natak", registration_fee: 3000 },
+            participant_events: { id: "pe-nukkad", participant_id: "part-pari-synth", payment_status: "paid" },
+          },
+          ...Array.from({ length: 11 }).map((_, idx) => ({
+            id: `poi-later-acc-${idx + 1}`,
+            payment_order_id: "order-pari-later-8489",
+            item_type: "accommodation",
+            amount: 499,
+            participant_accommodation_id: `acc-pari-${idx + 1}`,
+            participant_accommodations: {
+              id: `acc-pari-${idx + 1}`,
+              participant_id: "part-pari-synth",
+              amount: 499,
+              status: "paid",
+              accommodation_plans: { name: "1 Day Accommodation" },
+            },
+          })),
+        ],
+        participant_events: [
+          { id: "pe-nukkad", participant_id: "part-pari-synth", payment_status: "paid" },
+        ],
+        participant_accommodations: Array.from({ length: 12 }).map((_, idx) => ({
+          id: `acc-pari-${idx + 1}`,
+          participant_id: "part-pari-synth",
+          payment_order_id: idx < 11 ? "order-pari-later-8489" : "order-pari-hist-8988",
+          amount: 499,
+          status: "paid",
+          accommodation_plans: { name: "1 Day Accommodation" },
+        })),
+        payments: [
+          { id: "pay-pari-receipt", gateway_order_id: "TXN-PARI-LATER", amount: 8489, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-pari-synth"],
+        mockGatewayResults: {
+          "TXN-PARI-HIST": { status: "failed", amountPaise: 898800 },
+          "TXN-PARI-LATER": { status: "paid", amountPaise: 848900 },
+        },
+      });
+
+      const orderHist = res.orders.find((o) => o.orderId === "order-pari-hist-8988")!;
+      const orderLater = res.orders.find((o) => o.orderId === "order-pari-later-8489")!;
+
+      // Order 1 has its own breakdown: 12 Accommodations (₹5,988), diff ₹3,000
+      expect(orderHist.allocationBreakdown?.summaryText).toBe("12 Accommodations (₹5,988)");
+      expect(orderHist.allocationBreakdown?.differenceINR).toBe(3000);
+      expect(orderHist.allocationBreakdown?.hasAllocationMismatch).toBe(true);
+
+      // Order 2 has its own breakdown: 1 Event (₹3,000) + 11 Accommodations (₹5,489), diff ₹0
+      expect(orderLater.allocationBreakdown?.summaryText).toBe("1 Event (₹3,000) + 11 Accommodations (₹5,489)");
+      expect(orderLater.allocationBreakdown?.differenceINR).toBe(0);
+      expect(orderLater.allocationBreakdown?.hasAllocationMismatch).toBe(false);
+    });
+
+    // 11. No diagnostic finding enables reconciliation
+    it("126. Cover 11: Retry-chain diagnostic finding does NOT make a failed historical order eligible for reconciliation", async () => {
+      const historicalFailedOrder: any = {
+        orderId: "order-fail-hist-123",
+        orderReference: "SVK-2026-PAY-FAIL-HIST",
+        gatewayOrderId: "TXN-FAIL-HIST",
+        gatewayPaymentId: "MIH-FAIL-HIST-999",
+        expectedAmount: 8988,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "failed",
+        outcome: "PAYMENT_FAILED",
+        outcomeMessage: "PayU reports payment failure.",
+        linkedItems: [
+          {
+            id: "acc-1",
+            itemType: "accommodation",
+            title: "Accommodation",
+            expectedAmount: 499,
+            localStatus: "paid",
+            settlementContext: "settled_by_retry",
+            settledByOrderReference: "SVK-2026-PAY-LATER-PAID",
+          },
+        ],
+        diagnosticFindings: [
+          {
+            type: "RETRY_ORDER_NOTICE",
+            severity: "info",
+            title: "Settled by Subsequent Retry",
+            description: "Historical failed checkout — item was settled by a subsequent successful retry.",
+          },
+        ],
+      };
+
+      const summary = getReconciliationConfirmationSummary(historicalFailedOrder);
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toBe("PayU reports payment failure.");
+    });
+
+    // 12. Missing or ambiguous canonical order mappings remain visible as warnings
+    it("127. Cover 12: Missing accommodation bookings and allocation mismatches remain visible as warnings", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-warn", name: "Warning User", email: "warn@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-missing-acc",
+            order_reference: "SVK-2026-PAY-MISSING-ACC",
+            gateway: "payu",
+            gateway_order_id: "TXN-MISSING-ACC",
+            amount: 1500,
+            status: "pending",
+            payer_participant_id: "part-warn",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-missing-acc",
+            payment_order_id: "order-missing-acc",
+            item_type: "accommodation",
+            amount: 999,
+            participant_accommodation_id: "non-existent-acc-id", // Missing record!
+          },
+        ],
+        participant_events: [],
+        participant_accommodations: [], // Empty!
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-warn"],
+        mockGatewayResults: {
+          "TXN-MISSING-ACC": { status: "pending", amountPaise: 150000 },
+        },
+      });
+
+      const order = res.orders[0];
+      // Outcome is MISSING_ACCOMMODATION_LINK
+      expect(order.outcome).toBe("MISSING_ACCOMMODATION_LINK");
+
+      // Amount Allocation Mismatch warning is also emitted because 1500 != 999
+      const allocMismatch = order.diagnosticFindings.find((f) => f.type === "AMOUNT_ALLOCATION_MISMATCH");
+      expect(allocMismatch).toBeDefined();
+      expect(allocMismatch?.severity).toBe("warning");
+      expect(allocMismatch?.description).toContain("Allocation difference: ₹501 — missing/unmapped item requires investigation");
+    });
+    // 13. Valid event target ID matches the exact subsequent successful retry
+    it("128. Cover 13: Valid event target ID still matches the exact subsequent successful retry", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-128", name: "Canonical Event User", email: "user128@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-128-fail",
+            order_reference: "SVK-2026-PAY-128-FAIL",
+            gateway: "payu",
+            gateway_order_id: "TXN-128-FAIL",
+            amount: 500,
+            status: "failed",
+            payer_participant_id: "part-128",
+            created_at: "2026-10-20T10:00:00Z",
+          },
+          {
+            id: "order-128-paid",
+            order_reference: "SVK-2026-PAY-128-PAID",
+            gateway: "payu",
+            gateway_order_id: "TXN-128-PAID",
+            amount: 500,
+            status: "paid",
+            payer_participant_id: "part-128",
+            created_at: "2026-10-20T10:30:00Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-join-128-fail",
+            payment_order_id: "order-128-fail",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-canonical-128",
+            events: { id: "evt-128", name: "Hackathon", registration_fee: 500 },
+            participant_events: { id: "pe-canonical-128", participant_id: "part-128", payment_status: "paid" },
+          },
+          {
+            id: "poi-join-128-paid",
+            payment_order_id: "order-128-paid",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-canonical-128",
+            events: { id: "evt-128", name: "Hackathon", registration_fee: 500 },
+            participant_events: { id: "pe-canonical-128", participant_id: "part-128", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-canonical-128", participant_id: "part-128", payment_status: "paid", payment_amount: 500 },
+        ],
+        participant_accommodations: [],
+        payments: [
+          { id: "pay-128", gateway_order_id: "TXN-128-PAID", gateway_payment_id: "MIH-128", amount: 500, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-128"],
+        mockGatewayResults: {
+          "TXN-128-FAIL": { status: "failed", amountPaise: 50000 },
+          "TXN-128-PAID": { status: "paid", amountPaise: 50000 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-128-fail")!;
+      expect(failedOrder.outcome).toBe("PAYMENT_FAILED");
+
+      // Verify canonical event ID and join-row ID are preserved separately
+      expect(failedOrder.linkedItems[0].orderItemId).toBe("poi-join-128-fail");
+      expect(failedOrder.linkedItems[0].participantEventId).toBe("pe-canonical-128");
+      expect(failedOrder.linkedItems[0].hasMissingTarget).toBeFalsy();
+
+      // Retry matching succeeded via exact canonical event ID
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("settled_by_retry");
+      expect(failedOrder.linkedItems[0].settledByOrderReference).toBe("SVK-2026-PAY-128-PAID");
+
+      const retryNotice = failedOrder.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE");
+      expect(retryNotice).toBeDefined();
+      expect(retryNotice?.severity).toBe("info");
+      expect(retryNotice?.description).toContain("SVK-2026-PAY-128-PAID");
+    });
+
+    // 14. Missing participant_event_id with a valid join-row ID is flagged, not treated as a valid event mapping
+    it("129. Cover 14: Missing participant_event_id with a valid join-row ID is flagged as invalid mapping", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-129", name: "Unmapped Join Row User", email: "user129@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-129",
+            order_reference: "SVK-2026-PAY-129",
+            gateway: "payu",
+            gateway_order_id: "TXN-129",
+            amount: 500,
+            status: "pending",
+            payer_participant_id: "part-129",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-join-row-valid-uuid-129",
+            payment_order_id: "order-129",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: null as any, // Missing canonical target ID!
+            events: { id: "evt-129", name: "RoboWars", registration_fee: 500 },
+          },
+        ],
+        participant_events: [],
+        participant_accommodations: [],
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-129"],
+        mockGatewayResults: {
+          "TXN-129": { status: "pending", amountPaise: 50000 },
+        },
+      });
+
+      const order = res.orders[0];
+      // Outcome is flagged as INCOMPLETE_LOCAL_ITEM_MAPPING
+      expect(order.outcome).toBe("INCOMPLETE_LOCAL_ITEM_MAPPING");
+
+      // Verify join-row ID is stored separately as orderItemId, and not used as canonical event ID
+      const item = order.linkedItems[0];
+      expect(item.orderItemId).toBe("poi-join-row-valid-uuid-129");
+      expect(item.participantEventId).toBeUndefined();
+      expect(item.hasMissingTarget).toBe(true);
+      expect(item.localStatus).toBe("missing");
+
+      // Allocation breakdown excludes unmapped item from valid event count and sum
+      expect(order.allocationBreakdown?.eventCount).toBe(0);
+      expect(order.allocationBreakdown?.totalLineItemSum).toBe(0);
+      expect(order.allocationBreakdown?.invalidItemsCount).toBe(1);
+      expect(order.allocationBreakdown?.hasInvalidOrUnavailableItems).toBe(true);
+      expect(order.allocationBreakdown?.differenceINR).toBe(500);
+
+      // Diagnostic warning MISSING_ORDER_LINK is emitted
+      const missingLinkWarning = order.diagnosticFindings.find((f) => f.type === "MISSING_ORDER_LINK");
+      expect(missingLinkWarning).toBeDefined();
+      expect(missingLinkWarning?.severity).toBe("warning");
+      expect(missingLinkWarning?.description).toContain("missing or unmapped canonical participant event ID");
+    });
+
+    // 15. A join-row UUID coincidentally appearing elsewhere cannot establish a retry relationship
+    it("130. Cover 15: Join-row UUID coincidentally appearing elsewhere cannot establish a retry relationship", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-130", name: "Coincidence User", email: "user130@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-130-fail",
+            order_reference: "SVK-2026-PAY-130-FAIL",
+            gateway: "payu",
+            gateway_order_id: "TXN-130-FAIL",
+            amount: 500,
+            status: "failed",
+            payer_participant_id: "part-130",
+            created_at: "2026-10-20T08:00:00Z",
+          },
+          {
+            id: "order-130-paid",
+            order_reference: "SVK-2026-PAY-130-PAID",
+            gateway: "payu",
+            gateway_order_id: "TXN-130-PAID",
+            amount: 500,
+            status: "paid",
+            payer_participant_id: "part-130",
+            created_at: "2026-10-20T09:00:00Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "coincident-uuid-999", // Join row ID
+            payment_order_id: "order-130-fail",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: null as any, // Missing canonical ID!
+            events: { id: "evt-fail", name: "Event A", registration_fee: 500 },
+          },
+          {
+            id: "poi-paid-other",
+            payment_order_id: "order-130-paid",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "coincident-uuid-999", // Coincidentally same string as join-row ID above
+            events: { id: "evt-paid", name: "Event B", registration_fee: 500 },
+            participant_events: { id: "coincident-uuid-999", participant_id: "part-130", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "coincident-uuid-999", participant_id: "part-130", payment_status: "paid", payment_amount: 500 },
+        ],
+        participant_accommodations: [],
+        payments: [
+          { id: "pay-130", gateway_order_id: "TXN-130-PAID", gateway_payment_id: "MIH-130", amount: 500, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-130"],
+        mockGatewayResults: {
+          "TXN-130-FAIL": { status: "failed", amountPaise: 50000 },
+          "TXN-130-PAID": { status: "paid", amountPaise: 50000 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-130-fail")!;
+      // Must NOT be marked as settled by retry!
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("unsettled");
+      expect(failedOrder.linkedItems[0].settledByOrderReference).toBeUndefined();
+
+      // Must NOT have a RETRY_ORDER_NOTICE
+      const retryNotice = failedOrder.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE");
+      expect(retryNotice).toBeUndefined();
+
+      // Must have missing link warning and incomplete mapping outcome
+      expect(failedOrder.outcome).toBe("INCOMPLETE_LOCAL_ITEM_MAPPING");
+      const missingWarning = failedOrder.diagnosticFindings.find((f) => f.type === "MISSING_ORDER_LINK");
+      expect(missingWarning).toBeDefined();
+    });
+
+    // 16. Duplicate valid event mappings are handled without distorting totals
+    it("131. Cover 16: Duplicate valid event mappings are handled without distorting totals", () => {
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 1499,
+        items: [
+          {
+            id: "pe-canonical-dup-1",
+            orderItemId: "poi-join-1",
+            itemType: "event",
+            expectedAmount: 1000,
+            participantEventId: "pe-canonical-dup-1",
+          },
+          {
+            id: "pe-canonical-dup-1-repeat",
+            orderItemId: "poi-join-2",
+            itemType: "event",
+            expectedAmount: 1000,
+            participantEventId: "pe-canonical-dup-1",
+          },
+          {
+            id: "pa-canonical-1",
+            orderItemId: "poi-join-3",
+            itemType: "accommodation",
+            expectedAmount: 499,
+            participantAccommodationId: "pa-canonical-1",
+          },
+        ],
+      });
+
+      // Valid distinct item count is 2 (1 event + 1 accommodation)
+      expect(breakdown.distinctItemCount).toBe(2);
+      expect(breakdown.eventCount).toBe(1);
+      expect(breakdown.eventSubtotal).toBe(1000);
+      expect(breakdown.accommodationCount).toBe(1);
+      expect(breakdown.accommodationSubtotal).toBe(499);
+
+      // Total sum is 1499 (1000 + 499), NOT inflated to 2499
+      expect(breakdown.totalLineItemSum).toBe(1499);
+      expect(breakdown.totalLineItemSumPaise).toBe(149900);
+      expect(breakdown.differenceINR).toBe(0);
+      expect(breakdown.hasAllocationMismatch).toBe(false);
+    });
+
+    // 17. Invalid event mappings remain visible as warnings and cannot enable settlement
+    it("132. Cover 17: Invalid event mappings remain visible as warnings and cannot enable settlement", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-132", name: "Invalid Event User", email: "user132@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-132",
+            order_reference: "SVK-2026-PAY-132",
+            gateway: "payu",
+            gateway_order_id: "TXN-132",
+            gateway_payment_id: "MIH-132-SUCCESS",
+            amount: 1000,
+            status: "pending",
+            payer_participant_id: "part-132",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-join-invalid-132",
+            payment_order_id: "order-132",
+            item_type: "event",
+            amount: 1000,
+            participant_event_id: "" as any, // Invalid/empty canonical target ID!
+            events: { id: "evt-132", name: "Solo Dance", registration_fee: 1000 },
+          },
+        ],
+        participant_events: [],
+        participant_accommodations: [],
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-132"],
+        mockGatewayResults: {
+          "TXN-132": {
+            status: "paid",
+            amountPaise: 100000,
+            gatewayPaymentId: "MIH-132-SUCCESS",
+          },
+        },
+      });
+
+      const order = res.orders[0];
+      // Outcome is flagged as INCOMPLETE_LOCAL_ITEM_MAPPING despite gateway paid status
+      expect(order.outcome).toBe("INCOMPLETE_LOCAL_ITEM_MAPPING");
+
+      // Warning remains visible in diagnostic findings
+      const warning = order.diagnosticFindings.find((f) => f.type === "MISSING_ORDER_LINK");
+      expect(warning).toBeDefined();
+      expect(warning?.severity).toBe("warning");
+
+      // Reconciliation confirmation summary blocks settlement
+      const summary = getReconciliationConfirmationSummary(order);
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("missing or unmapped");
+    });
+
   });
 
 });
