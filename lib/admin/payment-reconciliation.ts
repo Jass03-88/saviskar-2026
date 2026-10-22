@@ -19,6 +19,7 @@ export type ReconcilePaymentParams = {
     gatewayOrderId?: string;
     additionalChargesPaise?: number;
     customerTransactionAmountPaise?: number;
+    netDebitPaise?: number;
     settlementAmountPaise?: number;
     amountAmbiguityReason?: string;
   };
@@ -214,6 +215,7 @@ export async function reconcilePaymentOrder(
   let gatewayOrderId = "";
   let gatewayAdditionalChargesPaise = 0;
   let gatewayCustomerTxnAmountPaise: number | undefined;
+  let gatewayNetDebitPaise: number | undefined;
   let gatewayAmountAmbiguityReason: string | undefined;
 
   if (mockGatewayResult) {
@@ -225,6 +227,7 @@ export async function reconcilePaymentOrder(
     gatewayOrderId = mockGatewayResult.gatewayOrderId || order.gateway_order_id;
     gatewayAdditionalChargesPaise = mockGatewayResult.additionalChargesPaise || 0;
     gatewayCustomerTxnAmountPaise = mockGatewayResult.customerTransactionAmountPaise;
+    gatewayNetDebitPaise = mockGatewayResult.netDebitPaise;
     gatewayAmountAmbiguityReason = mockGatewayResult.amountAmbiguityReason;
   } else {
     // Production Gateway Call
@@ -238,6 +241,7 @@ export async function reconcilePaymentOrder(
       gatewayOrderId = details.gatewayOrderId || order.gateway_order_id;
       gatewayAdditionalChargesPaise = details.additionalCharges || 0;
       gatewayCustomerTxnAmountPaise = details.customerTransactionAmount;
+      gatewayNetDebitPaise = details.netDebitPaise;
       gatewayAmountAmbiguityReason = details.amountAmbiguityReason;
     } catch (err) {
       const msg = err instanceof PaymentVerificationError ? err.message : String(err);

@@ -77,6 +77,7 @@ export type OrderVerificationResult = {
   settlementAmount?: number | null;
   deductions?: number | null;
   customerTransactionAmount?: number | null;
+  netDebit?: number | null;
   bankRefNum?: string | null;
   udf1?: string | null;
   payuAmt?: number | null;
@@ -108,6 +109,7 @@ export type OrderVerificationResult = {
     settlementAmount?: number;
     deductions?: number;
     customerTransactionAmount?: number;
+    netDebit?: number;
     payuAmt?: number;
     payuTransactionAmount?: number;
     amountAmbiguityReason?: string;
@@ -352,6 +354,16 @@ export function isLocalOrTestEnvironment(): boolean {
  * 3. Deduplicates shared orders across participants and multi-event registrations.
  * 4. Isolates local/test preview mode from live external gateway endpoints.
  */
+/**
+ * Safely removes only the false-positive zero-debit warning from an ambiguity reason string
+ * while strictly preserving any independent genuine amount or settlement discrepancies.
+ */
+function stripZeroDebitAmbiguityWarning(reason: string): string | null {
+  const zeroDebitPattern = /\s*PayU customer debit discrepancy:\s*'net_amount_debit'\s*is\s*₹0\.00\s*for\s*a\s*₹[\d.,]+\s*order\.\s*Zero debit cannot prove payment capture\.?\s*/gi;
+  const stripped = reason.replace(zeroDebitPattern, " ").trim();
+  return stripped.length > 0 ? stripped : null;
+}
+
 export async function verifyParticipantPayments(params: {
   supabaseAdmin: SupabaseClient;
   participantIds?: string[];
@@ -370,6 +382,7 @@ export async function verifyParticipantPayments(params: {
     settlementAmountPaise?: number;
     deductionsPaise?: number;
     customerTransactionAmountPaise?: number;
+    netDebitPaise?: number;
     payuAmtPaise?: number;
     payuTransactionAmountPaise?: number;
     amountAmbiguityReason?: string;
@@ -818,6 +831,7 @@ export async function verifyParticipantPayments(params: {
     let settlementAmountPaise: number | null = null;
     let deductionsPaise: number | null = null;
     let customerTxnAmountPaise: number | null = null;
+    let netDebitPaise: number | null = null;
     let gatewayAdditionalChargesPaise: number | null = null;
     let payuAmtPaise: number | null = null;
     let payuTxnAmtPaise: number | null = null;
@@ -838,6 +852,9 @@ export async function verifyParticipantPayments(params: {
       settlementAmountPaise = mock.settlementAmountPaise ?? null;
       deductionsPaise = mock.deductionsPaise ?? null;
       customerTxnAmountPaise = mock.customerTransactionAmountPaise ?? null;
+      if (mock.netDebitPaise != null) {
+        netDebitPaise = mock.netDebitPaise;
+      }
       if (mock.additionalChargesPaise != null) {
         gatewayAdditionalChargesPaise = mock.additionalChargesPaise;
       }
@@ -849,6 +866,14 @@ export async function verifyParticipantPayments(params: {
       }
       if (mock.amountAmbiguityReason != null) {
         amountAmbiguityReason = mock.amountAmbiguityReason;
+      }
+      // Status-aware cleanup: if gatewayReportedStatus is "failed" or "pending", zero debit is normal; strip only the zero-debit finding
+      if (
+        (gatewayReportedStatus === "failed" || gatewayReportedStatus === "pending") &&
+        netDebitPaise === 0 &&
+        amountAmbiguityReason
+      ) {
+        amountAmbiguityReason = stripZeroDebitAmbiguityWarning(amountAmbiguityReason);
       }
       isLocalPreview = true;
     } else if (isLocalOrTestEnvironment()) {
@@ -884,12 +909,21 @@ export async function verifyParticipantPayments(params: {
         settlementAmountPaise = details.settlementAmount ?? null;
         deductionsPaise = details.deductions ?? null;
         customerTxnAmountPaise = details.customerTransactionAmount ?? null;
+        netDebitPaise = details.netDebitPaise ?? null;
         if (details.additionalCharges != null) {
           gatewayAdditionalChargesPaise = details.additionalCharges;
         }
         payuAmtPaise = details.payuAmtPaise ?? null;
         payuTxnAmtPaise = details.payuTransactionAmountPaise ?? null;
         amountAmbiguityReason = details.amountAmbiguityReason ?? null;
+        // Status-aware cleanup: if gatewayReportedStatus is "failed" or "pending", zero debit is normal; strip only the zero-debit finding
+        if (
+          (gatewayReportedStatus === "failed" || gatewayReportedStatus === "pending") &&
+          netDebitPaise === 0 &&
+          amountAmbiguityReason
+        ) {
+          amountAmbiguityReason = stripZeroDebitAmbiguityWarning(amountAmbiguityReason);
+        }
       } catch (err) {
         if (err instanceof PaymentVerificationError) {
           gatewayError = err.message;
@@ -1166,6 +1200,7 @@ export async function verifyParticipantPayments(params: {
       settlementAmount: settlementAmountPaise != null ? settlementAmountPaise / 100 : null,
       deductions: deductionsPaise != null ? deductionsPaise / 100 : null,
       customerTransactionAmount: customerTxnAmountPaise != null ? customerTxnAmountPaise / 100 : null,
+      netDebit: netDebitPaise != null ? netDebitPaise / 100 : null,
       bankRefNum,
       udf1,
       payuAmt: payuAmtPaise != null ? payuAmtPaise / 100 : null,
@@ -1195,6 +1230,7 @@ export async function verifyParticipantPayments(params: {
         settlementAmount: settlementAmountPaise ?? undefined,
         deductions: deductionsPaise ?? undefined,
         customerTransactionAmount: customerTxnAmountPaise ?? undefined,
+        netDebit: netDebitPaise ?? undefined,
         payuAmt: payuAmtPaise ?? undefined,
         payuTransactionAmount: payuTxnAmtPaise ?? undefined,
         amountAmbiguityReason: amountAmbiguityReason || undefined,
@@ -1600,12 +1636,12 @@ export function generateSanitizedDiagnosticReport(verification: VerificationResp
       if (o.deductions != null) {
         lines.push(`- **Gateway Deductions / Fees (PayU disc)**: ₹${o.deductions.toFixed(2)}`);
       }
-      if (o.payuAmt != null || o.payuTransactionAmount != null) {
-        lines.push(
-          `- **PayU Raw Fields**: amt: ${o.payuAmt != null ? o.payuAmt.toFixed(2) : "N/A"}, transaction_amount: ${
-            o.payuTransactionAmount != null ? o.payuTransactionAmount.toFixed(2) : "N/A"
-          }`
-        );
+      if (o.payuAmt != null || o.payuTransactionAmount != null || o.netDebit != null) {
+        const rawParts: string[] = [];
+        if (o.payuAmt != null) rawParts.push(`amt: ${o.payuAmt.toFixed(2)}`);
+        if (o.payuTransactionAmount != null) rawParts.push(`transaction_amount: ${o.payuTransactionAmount.toFixed(2)}`);
+        if (o.netDebit != null) rawParts.push(`net_amount_debit: ${o.netDebit.toFixed(2)}`);
+        lines.push(`- **PayU Raw Fields**: ${rawParts.join(", ")}`);
       }
       if (o.amountAmbiguityReason) {
         lines.push(`- **⚠️ Amount Ambiguity**: ${o.amountAmbiguityReason}`);
