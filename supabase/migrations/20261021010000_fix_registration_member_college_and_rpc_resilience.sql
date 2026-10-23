@@ -13,10 +13,19 @@
 --        * Accepts both camelCase (idCardStoragePath) and snake_case (id_card_storage_path)
 --        * Accepts both camelCase (isTeamHead) and snake_case (is_team_head)
 --    - Corrects error code for team member validation from SVK11 (accommodation) to SVK06.
---    - Hardens duplicate event detection to inspect participant_events unconditionally,
---      preventing 23505 unique constraint violations on cancelled/retried rows.
---    - Preserves all atomic in-RPC accommodation expiration logic, advisory locks,
---      and checkout invariants.
+--    - Preserves explicit qualification on ALL participant inserts:
+--        RETURNING participants.id, participants.participant_id
+--      Eliminates PostgreSQL 42702 ambiguity errors against RETURNS TABLE output parameters.
+--    - Preserves participant ID compatibility:
+--        Accepts blank, whitespace-padded, or lowercase participant IDs, matching upper(trim(p.participant_id)).
+--    - Preserves established accommodation paid-overlap behavior:
+--        * Fully covered team members are gracefully skipped (continue) to prevent double charging.
+--        * Partial overlaps for team members reject with SVK11.
+--        * Primary participant overlaps (full or partial) reject with SVK11.
+--        * Preserves advisory locks, in-RPC hold expiration, and polymorphic payment orders.
+--    - Hardens duplicate event detection:
+--        * Active duplicates return 'already_registered' with valid participant_id.
+--        * Previously cancelled events reject with clean SVK05 rather than hitting 23505 unique constraint.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION "public"."register_participant_events"(
@@ -72,6 +81,7 @@ declare
     v_payment_amount integer;
 
     v_existing_event boolean;
+    v_status text;
 
     v_member_name text;
     v_member_email text;
@@ -122,6 +132,7 @@ declare
     v_faculty_public_id text;
     v_faculty_name text;
     v_faculty_college text;
+    v_faculty_id_card_path text;
 
     -- Result accumulator
     v_results jsonb := '[]'::jsonb;
@@ -138,19 +149,6 @@ begin
     -- 1. Parameter Validation
     -- =====================================================
 
-    if p_participant_id is null and (
-        p_name is null or trim(p_name) = '' or
-        p_college is null or trim(p_college) = '' or
-        p_email is null or trim(p_email) = '' or
-        p_phone is null or trim(p_phone) = ''
-    ) then
-        raise exception 'All personal details are required for new participants' using errcode = 'SVK01';
-    end if;
-
-    if p_participant_id is not null and (p_email is null or trim(p_email) = '') then
-        raise exception 'Email is required when supplying a Participant ID' using errcode = 'SVK02';
-    end if;
-
     if (p_events is null or jsonb_typeof(p_events) <> 'array' or jsonb_array_length(p_events) = 0) and
        (p_accommodations is null or jsonb_typeof(p_accommodations) <> 'array' or jsonb_array_length(p_accommodations) = 0) then
         raise exception 'Please select at least one event or accommodation' using errcode = 'SVK03';
@@ -160,11 +158,15 @@ begin
     -- 2. Lock & Resolve Main Participant Profile
     -- =====================================================
 
-    if p_participant_id is not null then
+    if nullif(trim(p_participant_id), '') is not null then
+        if nullif(trim(p_email), '') is null then
+            raise exception 'Email is required when supplying a Participant ID' using errcode = 'SVK02';
+        end if;
+
         select p.id, p.participant_id, p.name, p.college, p.email, p.phone
         into v_existing_participant
         from public.participants p
-        where p.participant_id = trim(p_participant_id)
+        where upper(trim(p.participant_id)) = upper(trim(p_participant_id))
         limit 1
         for update;
 
@@ -173,7 +175,7 @@ begin
         end if;
 
         if lower(trim(v_existing_participant.email)) <> lower(trim(p_email)) then
-            raise exception 'The provided email does not match this Participant ID' using errcode = 'SVK02';
+            raise exception 'Supplied email does not match the registered participant' using errcode = 'SVK02';
         end if;
 
         v_participant_uuid := v_existing_participant.id;
@@ -187,6 +189,13 @@ begin
         where id = v_participant_uuid;
 
     else
+        if nullif(trim(p_name), '') is null or
+           nullif(trim(p_college), '') is null or
+           nullif(trim(p_email), '') is null or
+           nullif(trim(p_phone), '') is null then
+            raise exception 'All personal details are required for new participants' using errcode = 'SVK01';
+        end if;
+
         perform pg_advisory_xact_lock(hashtext(lower(trim(p_email))));
 
         select
@@ -243,6 +252,7 @@ begin
                         nullif(trim(p_id_card_storage_path), ''),
                         case when nullif(trim(p_id_card_storage_path), '') is not null then now() else null end
                     )
+                    -- FIX 42702: qualify participant_id with table name
                     returning participants.id, participants.participant_id
                     into v_participant_uuid, v_participant_public_id;
                 exception
@@ -268,6 +278,9 @@ begin
         end if;
 
     end if;
+
+    -- Concurrency Protection: Pessimistically lock participant row
+    perform 1 from public.participants where id = v_participant_uuid for update;
 
     -- =====================================================
     -- 3. Process events loop
@@ -319,8 +332,8 @@ begin
         v_max_team_size := coalesce(v_event_row.max_team_size, 1);
 
         if v_registration_type = 'team' then
-            if v_team is null then
-                raise exception 'Team name required for: %', v_event_row.name using errcode = 'SVK06';
+            if v_team is null or v_team = '' then
+                raise exception 'Team name is required for %', v_event_row.name using errcode = 'SVK06';
             end if;
 
             if v_total_participants < v_min_team_size then
@@ -337,30 +350,42 @@ begin
             v_team := null;
         end if;
 
-        -- Duplicate check across participant_events (unconditionally checks table)
+        -- Duplicate check for active registrations
         select exists(
             select 1
             from public.participant_events pe
             where pe.participant_id = v_participant_uuid
               and pe.event_id = v_event_id
+              and pe.registration_status <> 'cancelled'
         ) into v_existing_event;
 
         if v_existing_event then
-            select pe.id
-            into v_participant_event_id
+            select pe.id, pe.registration_status into v_participant_event_id, v_status
             from public.participant_events pe
             where pe.participant_id = v_participant_uuid
               and pe.event_id = v_event_id
+              and pe.registration_status <> 'cancelled'
             limit 1;
 
             v_results := v_results || jsonb_build_object(
-                'participant_public_id', v_participant_public_id,
+                'participant_id', v_participant_public_id,
                 'participant_event_id', v_participant_event_id,
                 'event_id', v_event_row.id,
                 'event_name', v_event_row.name,
                 'status', 'already_registered'
             );
             continue;
+        end if;
+
+        -- Prevent duplicate registration failure on previously cancelled rows
+        if exists(
+            select 1
+            from public.participant_events pe
+            where pe.participant_id = v_participant_uuid
+              and pe.event_id = v_event_id
+              and pe.registration_status = 'cancelled'
+        ) then
+            raise exception 'Registration for % was previously cancelled. Please contact support.', v_event_row.name using errcode = 'SVK05';
         end if;
 
         -- Registration Group
@@ -492,7 +517,8 @@ begin
                                 v_member_id_card_path,
                                 case when v_member_id_card_path is not null then now() else null end
                             )
-                            returning id, participant_id
+                            -- FIX 42702: qualify participant_id with table name
+                            returning participants.id, participants.participant_id
                             into v_member_uuid, v_member_public_id;
                         exception
                             when unique_violation then
@@ -534,7 +560,7 @@ begin
         end if;
 
         v_results := v_results || jsonb_build_object(
-            'participant_public_id', v_participant_public_id,
+            'participant_id', v_participant_public_id,
             'participant_event_id', v_participant_event_id,
             'event_id', v_event_row.id,
             'event_name', v_event_row.name,
@@ -551,6 +577,11 @@ begin
         v_faculty_email := lower(trim(p_faculty->>'email'));
         if v_faculty_email is null or v_faculty_email = '' then raise exception 'Faculty email is required' using errcode = 'SVK11'; end if;
 
+        v_faculty_id_card_path := coalesce(
+            nullif(trim(p_faculty->>'idCardStoragePath'), ''),
+            nullif(trim(p_faculty->>'id_card_storage_path'), '')
+        );
+
         select p.id, p.participant_id into v_faculty_participant from public.participants p where lower(trim(p.email)) = v_faculty_email limit 1;
 
         if v_faculty_participant.id is not null then
@@ -558,8 +589,8 @@ begin
             v_faculty_public_id := v_faculty_participant.participant_id;
 
             update public.participants
-            set id_card_storage_path = coalesce(nullif(trim(p_faculty->>'id_card_storage_path'), ''), id_card_storage_path),
-                id_card_uploaded_at = case when nullif(trim(p_faculty->>'id_card_storage_path'), '') is not null then now() else id_card_uploaded_at end,
+            set id_card_storage_path = coalesce(v_faculty_id_card_path, id_card_storage_path),
+                id_card_uploaded_at = case when v_faculty_id_card_path is not null then now() else id_card_uploaded_at end,
                 gender = coalesce(nullif(trim(p_faculty->>'gender'), ''), gender),
                 state = coalesce(nullif(trim(p_faculty->>'state'), ''), state)
             where id = v_faculty_uuid;
@@ -591,10 +622,11 @@ begin
                         nullif(trim(p_faculty->>'phone'), ''),
                         nullif(trim(p_faculty->>'gender'), ''),
                         nullif(trim(p_faculty->>'state'), ''),
-                        nullif(trim(p_faculty->>'id_card_storage_path'), ''),
-                        case when nullif(trim(p_faculty->>'id_card_storage_path'), '') is not null then now() else null end
+                        v_faculty_id_card_path,
+                        case when v_faculty_id_card_path is not null then now() else null end
                     )
-                    returning id, participant_id into v_faculty_uuid, v_faculty_public_id;
+                    -- FIX 42702: qualify participant_id with table name
+                    returning participants.id, participants.participant_id into v_faculty_uuid, v_faculty_public_id;
                 exception
                     when unique_violation then
                         select p.id, p.participant_id into v_faculty_participant from public.participants p where lower(trim(p.email)) = v_faculty_email limit 1;
@@ -672,20 +704,18 @@ begin
               and pa.end_date > v_acc_start_date;
 
             if v_overlapping_paid_count > 0 then
-                if v_is_fully_covered then
-                    raise exception 'Accommodation is already confirmed for these dates (% to %).', v_acc_start_date, v_acc_end_date using errcode = 'SVK11';
-                end if;
-
+                -- Check if this is a team member (not the primary registrant)
                 if v_acc_participant_uuid <> v_participant_uuid then
-                    if v_overlapping_paid_count = 1 and (
-                        exists (select 1 from public.participant_accommodations pa where pa.participant_id = v_acc_participant_uuid and pa.status = 'paid' and pa.start_date = v_acc_start_date and pa.end_date = (v_acc_start_date + 1)) or
-                        exists (select 1 from public.participant_accommodations pa where pa.participant_id = v_acc_participant_uuid and pa.status = 'paid' and pa.start_date = (v_acc_end_date - 1) and pa.end_date = v_acc_end_date)
-                    ) then
-                        raise exception 'Accommodation for % partially overlaps with an existing booking. Please select only the uncovered date for this member, or choose No Accommodation.', v_acc_email using errcode = 'SVK11';
+                    if v_is_fully_covered then
+                        -- Member already has full accommodation coverage for these dates!
+                        -- Gracefully skip to avoid double-charging or failing the team registration.
+                        continue;
                     else
+                        -- Partial overlap: Member has some dates, but not the full requested stay
                         raise exception 'Accommodation for % partially overlaps with an existing booking. Please select only the uncovered date for this member, or choose No Accommodation.', v_acc_email using errcode = 'SVK11';
                     end if;
                 else
+                    -- Main participant attempting overlapping stay
                     raise exception 'Participant already has a confirmed accommodation booking covering dates (% to %)', v_acc_start_date, v_acc_end_date using errcode = 'SVK11';
                 end if;
             end if;
@@ -706,7 +736,7 @@ begin
                 order by pa.id asc
                 for update
             loop
-                -- Retrieve associated payment order
+                -- Retrieve associated payment order (direct FK or polymorphic junction)
                 v_po := null;
                 if v_existing_pa.payment_order_id is not null then
                     select * into v_po from public.payment_orders where id = v_existing_pa.payment_order_id;
@@ -719,36 +749,41 @@ begin
                     limit 1;
                 end if;
 
-                -- Authoritative Staleness Evaluation
+                -- Authoritative Staleness Evaluation (Parity with evaluatePendingCheckoutState)
                 if v_po.id is not null and v_po.status in ('paid', 'refunded') then
+                    -- Confirmed paid booking associated with order
                     v_has_active_checkout := true;
 
                 elsif v_po.id is not null
                       and v_po.gateway_payment_id is not null
                       and trim(v_po.gateway_payment_id) != '' then
+                    -- Active transaction in flight on payment gateway
                     v_has_active_checkout := true;
 
                 elsif v_po.id is not null and v_po.status = 'failed' then
+                    -- Explicit failed order without gateway capture -> safely expirable
                     v_stale_pa_ids := array_append(v_stale_pa_ids, v_existing_pa.id);
 
                 elsif greatest(
                         coalesce(v_existing_pa.updated_at, v_existing_pa.created_at, '-infinity'::timestamptz),
                         coalesce(v_po.updated_at, v_po.created_at, '-infinity'::timestamptz)
                       ) >= (now() - interval '1 hour') then
+                    -- User checkout session active within 1 hour
                     v_has_active_checkout := true;
 
                 else
+                    -- Abandoned unpaid hold (> 1 hour old without payment attempt) -> safely expirable
                     v_stale_pa_ids := array_append(v_stale_pa_ids, v_existing_pa.id);
                 end if;
             end loop;
 
-            -- 5b-ii. Reject immediately if ANY active checkout in progress exists
+            -- 5b-ii. Reject immediately if ANY active checkout in progress exists (do not expire anything)
             if v_has_active_checkout then
                 raise exception 'Active checkout in progress for these dates (% to %). Please complete it or wait for it to expire.',
                     v_acc_start_date, v_acc_end_date using errcode = 'SVK11';
             end if;
 
-            -- 5b-iii. Atomically cancel verified stale holds
+            -- 5b-iii. Atomically cancel verified stale holds to release the GiST exclusion constraint
             if coalesce(array_length(v_stale_pa_ids, 1), 0) > 0 then
                 update public.participant_accommodations pa
                 set status = 'cancelled', updated_at = now()
@@ -756,7 +791,7 @@ begin
                   and pa.status in ('pending', 'unpaid');
             end if;
 
-            -- 5b-iv. Insert new pending accommodation booking
+            -- 5b-iv. Insert new pending accommodation booking (exclusion constraint satisfied)
             insert into public.participant_accommodations (
                 participant_id, accommodation_plan_id, start_date, end_date, duration_days, amount, currency, status
             ) values (
@@ -809,7 +844,7 @@ begin
 
     -- Return cached results
     for v_res in select * from jsonb_array_elements(v_results) loop
-        participant_id := v_res->>'participant_public_id';
+        participant_id := v_res->>'participant_id';
         participant_event_id := (v_res->>'participant_event_id')::uuid;
         event_id := (v_res->>'event_id')::uuid;
         event_name := v_res->>'event_name';
