@@ -42,6 +42,12 @@ vi.mock("@supabase/supabase-js", () => ({
           error: null,
         });
       }
+      if (name === "process_payment_success") {
+        if (mockPaymentOrder) {
+          mockPaymentOrder.status = "paid";
+        }
+        return Promise.resolve({ data: { success: true, action: "settled" }, error: null });
+      }
       return Promise.resolve({ data: null, error: null });
     },
     from: (table: string) => {

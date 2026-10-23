@@ -225,10 +225,11 @@ export async function GET(request: Request) {
     }
   }
 
-  // 1. Fetch paginated participant_events with optional eventId / scope filter
-  // Note: PostgREST has a server-side limit of 1000 rows per query.
+  // 1. Fetch paginated participant_events with optional eventId / scope filter in 1000-row chunks
+  // PostgREST enforces a hard server-side limit of 1000 rows per query.
   // When pageSize > 1000 or the requested range exceeds 1000 rows,
   // we paginate in 1000-row chunks to retrieve all records up to `to`.
+  const CHUNK_SIZE = 1000;
   const buildPeQuery = (selectLegacy = false) => {
     const selectCols = selectLegacy
       ? "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at"
@@ -244,10 +245,10 @@ export async function GET(request: Request) {
       q = q.in("event_id", allowedEventIds);
     }
 
-    return q.order("created_at", { ascending: false });
+    // Deterministic tie-breaking sort order ensures no duplicates or skipped rows across chunk boundaries
+    return q.order("created_at", { ascending: false }).order("id", { ascending: false });
   };
 
-  const CHUNK_SIZE = 1000;
   let participantEventsData: ParticipantEvent[] = [];
   let totalCount: number | null = null;
   let peError: any = null;
@@ -271,16 +272,28 @@ export async function GET(request: Request) {
     peError = firstBatch.error;
   }
 
-  // If more records are requested and totalCount exceeds the first batch, fetch subsequent chunks
-  if (!peError && typeof totalCount === "number" && totalCount > 0) {
-    const effectiveTo = Math.min(to, totalCount - 1);
+  if (peError) {
+    console.error("Admin registrations query failed on initial batch:", peError);
+    return NextResponse.json(
+      { error: "Could not load registrations." },
+      { status: 500 }
+    );
+  }
+
+  const effectiveTotalCount = typeof totalCount === "number" ? totalCount : participantEventsData.length;
+
+  // If more records are requested and total count exceeds the first batch, fetch subsequent chunks
+  if (effectiveTotalCount > 0) {
+    const effectiveTo = Math.min(to, effectiveTotalCount - 1);
     for (let currentStart = from + CHUNK_SIZE; currentStart <= effectiveTo; currentStart += CHUNK_SIZE) {
       const currentEnd = Math.min(effectiveTo, currentStart + CHUNK_SIZE - 1);
       const nextBatch = await buildPeQuery(useLegacyQuery).range(currentStart, currentEnd);
       if (nextBatch.error) {
         console.error("Admin registrations batch query failed at offset:", currentStart, nextBatch.error);
-        peError = nextBatch.error;
-        break;
+        return NextResponse.json(
+          { error: "Could not load complete registrations dataset." },
+          { status: 500 }
+        );
       }
       if (nextBatch.data && nextBatch.data.length > 0) {
         participantEventsData.push(...(nextBatch.data as unknown as ParticipantEvent[]));
@@ -290,16 +303,7 @@ export async function GET(request: Request) {
     }
   }
 
-  if (peError) {
-    console.error("Admin registrations query failed:", peError);
-    return NextResponse.json(
-      { error: "Could not load registrations." },
-      { status: 500 }
-    );
-  }
-
-  const participantEvents =
-    (participantEventsData ?? []) as ParticipantEvent[];
+  const participantEvents = (participantEventsData ?? []) as ParticipantEvent[];
 
   const participantIds = Array.from(
     new Set(participantEvents.map((pe) => pe.participant_id).filter(Boolean))
