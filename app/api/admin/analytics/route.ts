@@ -7,6 +7,7 @@ import {
   VALID_ADMIN_CATEGORIES,
 } from "@/lib/admin/scope";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
+import { fetchInBatches, fetchAllRows } from "@/lib/supabase/batch";
 
 export const dynamic = "force-dynamic";
 
@@ -62,14 +63,21 @@ export async function GET(request: Request) {
       availableCategories = [...VALID_ADMIN_CATEGORIES];
     }
 
-    // 3. Parse and Validate Requested Category Filter (?category=...)
+    // 3. Parse and Validate Requested Filters (?category=... & ?college=...)
     let queryCategory: string | null = null;
+    let queryCollege: string | null = null;
+
     if (request) {
       try {
         const url = new URL(request.url);
         queryCategory = url.searchParams.get("category")?.trim().toLowerCase() || null;
+        const colParam = url.searchParams.get("college")?.trim();
+        if (colParam && colParam.toLowerCase() !== "all") {
+          queryCollege = colParam;
+        }
       } catch {
         queryCategory = null;
+        queryCollege = null;
       }
     }
 
@@ -131,12 +139,22 @@ export async function GET(request: Request) {
           assignedEvents: auth.assigned_events,
           availableCategories,
           selectedCategory,
+          availableColleges: [],
+          selectedCollege: queryCollege || "all",
           categoryScopeLabel: formatCategoryScopeLabel(auth.assigned_category),
           accommodationAccess: auth.accommodation_access,
           overview: {
             totalParticipants: 0,
+            withAccommodation: 0,
+            withoutAccommodation: 0,
+            totalHeadcount: 0,
+            headcountWithAccommodation: 0,
+            headcountWithoutAccommodation: 0,
             totalRegistrations: 0,
+            registrationsWithAccommodation: 0,
+            registrationsWithoutAccommodation: 0,
             totalTeams: 0,
+            totalSolo: 0,
             totalCheckedIn: 0,
             checkInRate: 0,
             totalColleges: 0,
@@ -166,65 +184,151 @@ export async function GET(request: Request) {
           );
     const filteredEventIdSet = new Set(filteredEvents.map((ev) => ev.id));
 
-    // 6. Fetch Participant Events (non-cancelled) for Scoped Events
-    let peQuery = supabaseAdmin
-      .from("participant_events")
-      .select(
-        "id, participant_id, event_id, registration_status, payment_status, payment_amount, team_name, checked_in, main_checked_in, created_at"
-      )
-      .neq("registration_status", "cancelled");
+    // 6. Fetch Participant Events (non-cancelled, non-archived)
+    const { data: rawPEs, error: peError } = await fetchAllRows(async (start, end) => {
+      let q = supabaseAdmin
+        .from("participant_events")
+        .select(
+          "id, participant_id, event_id, registration_status, payment_status, payment_amount, team_name, checked_in, main_checked_in, is_archived, created_at",
+          { count: "exact" }
+        )
+        .neq("registration_status", "cancelled");
 
-    if (!isMaster || scopedEventIds.length < allEvents.length) {
-      peQuery = peQuery.in("event_id", scopedEventIds);
-    }
+      if (!isMaster || scopedEventIds.length < allEvents.length) {
+        q = q.in("event_id", scopedEventIds);
+      }
 
-    const { data: rawPEs, error: peError } = await peQuery;
+      return q.order("created_at", { ascending: false }).range(start, end);
+    });
     if (peError) throw peError;
 
-    const allScopedPEs = rawPEs || [];
+    // Filter out archived registrations
+    const allScopedPEs = (rawPEs || []).filter((pe: any) => pe.is_archived !== true);
 
     // Filter participant_events to those in filteredEvents (for the selected category)
-    const participantEvents = allScopedPEs.filter((pe) =>
+    const categoryPEs = allScopedPEs.filter((pe) =>
       filteredEventIdSet.has(pe.event_id)
     );
+    const categoryPEIds = categoryPEs.map((pe) => pe.id);
 
-    const relevantParticipantIds = Array.from(
-      new Set(participantEvents.map((pe) => pe.participant_id))
+    // 7. Fetch Team Members for filtered participant events to count ALL participants
+    let eventMembers: any[] = [];
+    if (categoryPEIds.length > 0) {
+      const { data: rawMembers, error: membersError } = await fetchInBatches<{
+        id: string;
+        participant_event_id: string;
+        participant_id: string | null;
+        name?: string;
+        is_team_leader?: boolean;
+      }>(categoryPEIds, (chunk) =>
+        supabaseAdmin
+          .from("participant_event_members")
+          .select("id, participant_event_id, participant_id, name, is_team_leader")
+          .in("participant_event_id", chunk)
+      );
+      if (membersError) throw membersError;
+      eventMembers = rawMembers || [];
+    }
+
+    // Map members per participant_event
+    const peMembersMap = new Map<string, any[]>();
+    for (const m of eventMembers) {
+      if (!peMembersMap.has(m.participant_event_id)) {
+        peMembersMap.set(m.participant_event_id, []);
+      }
+      peMembersMap.get(m.participant_event_id)!.push(m);
+    }
+
+    // 8. Fetch ALL Participants to get full college mapping & demographics
+    const { data: rawParts, error: partError } = await fetchAllRows(async (start, end) => {
+      return supabaseAdmin
+        .from("participants")
+        .select("id, participant_id, name, college, gender, state, created_at", { count: "exact" })
+        .order("created_at", { ascending: false })
+        .range(start, end);
+    });
+    if (partError) throw partError;
+    const allParticipants = rawParts || [];
+    const participantMap = new Map(allParticipants.map((p) => [p.id, p]));
+
+    // 9. Fetch Accommodations (non-cancelled / non-failed)
+    const { data: rawAccs, error: accsError } = await fetchAllRows(async (start, end) => {
+      return supabaseAdmin
+        .from("participant_accommodations")
+        .select("id, participant_id, status, amount, start_date, end_date, checked_in", { count: "exact" })
+        .not("status", "in", '("cancelled","failed")')
+        .range(start, end);
+    });
+    if (accsError) throw accsError;
+    const allAccommodations = rawAccs || [];
+
+    // Set of participant IDs who have an active accommodation booking
+    const activeAccParticipantIds = new Set<string>();
+    for (const acc of allAccommodations) {
+      if (acc.participant_id) {
+        activeAccParticipantIds.add(acc.participant_id);
+      }
+    }
+
+    // 10. Build Available Colleges List (from all participants, normalized & sorted by count)
+    const collegeCounts = new Map<string, { college: string; count: number }>();
+    for (const p of allParticipants) {
+      const raw = (p.college || "").trim();
+      if (!raw) continue;
+      const key = raw.toLowerCase();
+      if (!collegeCounts.has(key)) {
+        collegeCounts.set(key, { college: raw, count: 0 });
+      }
+      const c = collegeCounts.get(key)!;
+      c.count++;
+      // Prefer clean capitalized version if available
+      if (raw !== raw.toLowerCase() && c.college === c.college.toLowerCase()) {
+        c.college = raw;
+      }
+    }
+    const availableColleges = Array.from(collegeCounts.values()).sort(
+      (a, b) => b.count - a.count
     );
 
-    // 7. Fetch Participants for the relevantParticipantIds
-    let participants: any[] = [];
-    if (relevantParticipantIds.length > 0) {
-      const { data: rawParts, error: partError } = await supabaseAdmin
-        .from("participants")
-        .select("id, participant_id, name, college, gender, state, created_at");
+    // 11. Apply College Filter (if requested)
+    const queryCollegeLower = queryCollege ? queryCollege.toLowerCase().trim() : null;
+    const selectedCollege = queryCollege ? queryCollege.trim() : "all";
 
-      if (partError) throw partError;
-      const relevantSet = new Set(relevantParticipantIds);
-      participants = (rawParts || []).filter((p) => relevantSet.has(p.id));
-    }
-    const participantMap = new Map(participants.map((p) => [p.id, p]));
+    // Filter registrations: include registration if leader OR any member matches queryCollege
+    const filteredPEs = categoryPEs.filter((pe) => {
+      if (!queryCollegeLower) return true;
 
-    // 8. Fetch Accommodations (only if master or has accommodation_access)
-    let rawAccs: any[] = [];
-    if (isMaster || auth.accommodation_access) {
-      const { data: accsData } = await supabaseAdmin
-        .from("participant_accommodations")
-        .select("id, participant_id, status, amount, start_date, end_date, checked_in")
-        .neq("status", "cancelled");
-      rawAccs = accsData || [];
-    }
+      // Check leader
+      const leaderPart = participantMap.get(pe.participant_id);
+      if (
+        leaderPart &&
+        (leaderPart.college || "").toLowerCase().trim() === queryCollegeLower
+      ) {
+        return true;
+      }
 
-    // ==========================================
-    // AGGREGATIONS FOR SELECTED CATEGORY / SCOPE
-    // ==========================================
+      // Check team members
+      const members = peMembersMap.get(pe.id) || [];
+      return members.some((m) => {
+        const memPart = m.participant_id ? participantMap.get(m.participant_id) : null;
+        return (
+          memPart &&
+          (memPart.college || "").toLowerCase().trim() === queryCollegeLower
+        );
+      });
+    });
 
-    // A. Overview Calculations
-    const totalParticipants = participants.length;
-    const totalRegistrations = participantEvents.length;
+    // 12. Collect Unique Participants and Headcount in Scope
+    const uniqueParticipantIdSet = new Set<string>();
+    let totalHeadcount = 0;
+    let headcountWithAccommodation = 0;
+    let headcountWithoutAccommodation = 0;
 
-    const teamsSet = new Set<string>();
+    let totalTeams = 0;
+    let totalSolo = 0;
     let totalCheckedIn = 0;
+    let registrationsWithAccommodation = 0;
+
     let eventExpectedRevenue = 0;
     let eventPaidRevenue = 0;
     let eventOutstandingRevenue = 0;
@@ -239,17 +343,85 @@ export async function GET(request: Request) {
       }
     >();
 
-    for (const pe of participantEvents) {
-      if (pe.team_name && pe.team_name.trim()) {
-        teamsSet.add(`${pe.event_id}:::${pe.team_name.trim().toLowerCase()}`);
-      }
+    const eventLookupMap = new Map(allEvents.map((e) => [e.id, e]));
 
+    for (const pe of filteredPEs) {
       const isCheckedIn = pe.checked_in || pe.main_checked_in;
       if (isCheckedIn) totalCheckedIn++;
 
+      const ev = eventLookupMap.get(pe.event_id);
+      const isTeamEvent =
+        ev && ev.registration_type && ev.registration_type !== "individual";
+      const hasTeamName = Boolean(pe.team_name && pe.team_name.trim());
+      const members = peMembersMap.get(pe.id) || [];
+      const hasMembers = members.length > 0;
+
+      if (isTeamEvent || hasTeamName || hasMembers) {
+        totalTeams++;
+      } else {
+        totalSolo++;
+      }
+
+      // Track registration accommodation status
+      let regHasAcco = false;
+
+      if (hasMembers) {
+        for (const m of members) {
+          const memPart = m.participant_id ? participantMap.get(m.participant_id) : null;
+          // When filtering by college, only include members matching the college
+          if (queryCollegeLower) {
+            if (
+              !memPart ||
+              (memPart.college || "").toLowerCase().trim() !== queryCollegeLower
+            ) {
+              continue;
+            }
+          }
+
+          if (m.participant_id) {
+            uniqueParticipantIdSet.add(m.participant_id);
+            if (activeAccParticipantIds.has(m.participant_id)) {
+              headcountWithAccommodation++;
+              regHasAcco = true;
+            } else {
+              headcountWithoutAccommodation++;
+            }
+          } else {
+            headcountWithoutAccommodation++;
+          }
+          totalHeadcount++;
+        }
+      } else {
+        const leaderPart = participantMap.get(pe.participant_id);
+        if (
+          !queryCollegeLower ||
+          (leaderPart &&
+            (leaderPart.college || "").toLowerCase().trim() === queryCollegeLower)
+        ) {
+          if (pe.participant_id) {
+            uniqueParticipantIdSet.add(pe.participant_id);
+            if (activeAccParticipantIds.has(pe.participant_id)) {
+              headcountWithAccommodation++;
+              regHasAcco = true;
+            } else {
+              headcountWithoutAccommodation++;
+            }
+          } else {
+            headcountWithoutAccommodation++;
+          }
+          totalHeadcount++;
+        }
+      }
+
+      if (regHasAcco) {
+        registrationsWithAccommodation++;
+      }
+
+      // Financial calculations (Master clearance only)
       const amt = Number(pe.payment_amount) || 0;
       const isPaid =
-        pe.payment_status === "confirmed" || pe.payment_status === "paid";
+        pe.payment_status === "paid" ||
+        (pe.payment_status === "confirmed" && amt > 0);
       const isUnpaid =
         pe.payment_status === "pending" || pe.payment_status === "unpaid";
 
@@ -275,17 +447,55 @@ export async function GET(request: Request) {
       eventStatsMap.set(pe.event_id, cur);
     }
 
+    // If viewing All Categories, also include participants with active accommodation who might not have registered for events yet
+    if (selectedCategory === "all") {
+      for (const acc of allAccommodations) {
+        if (!acc.participant_id) continue;
+        const p = participantMap.get(acc.participant_id);
+        if (!p) continue;
+        if (queryCollegeLower) {
+          if ((p.college || "").toLowerCase().trim() !== queryCollegeLower) {
+            continue;
+          }
+        }
+        uniqueParticipantIdSet.add(acc.participant_id);
+      }
+    }
+
+    // Total participants (including all team members)
+    const totalParticipants = uniqueParticipantIdSet.size;
+    let withAccommodation = 0;
+    let withoutAccommodation = 0;
+
+    for (const pid of uniqueParticipantIdSet) {
+      if (activeAccParticipantIds.has(pid)) {
+        withAccommodation++;
+      } else {
+        withoutAccommodation++;
+      }
+    }
+
+    const totalRegistrations = filteredPEs.length;
+    const registrationsWithoutAccommodation =
+      totalRegistrations - registrationsWithAccommodation;
     const checkInRate =
       totalRegistrations > 0
         ? Math.round((totalCheckedIn / totalRegistrations) * 100)
         : 0;
 
-    // Accommodation Revenue (Master only)
+    // Filter Accommodations for Revenue & Reporting
+    const relevantAccs = allAccommodations.filter((acc) => {
+      if (!acc.participant_id) return false;
+      if (!queryCollegeLower) return true;
+      const p = participantMap.get(acc.participant_id);
+      return p && (p.college || "").toLowerCase().trim() === queryCollegeLower;
+    });
+
     let accExpectedRevenue = 0;
     let accPaidRevenue = 0;
     let accOutstandingRevenue = 0;
 
-    for (const acc of rawAccs) {
+    for (const acc of relevantAccs) {
       const amt = Number(acc.amount) || 0;
       const isPaid = acc.status === "paid" || acc.status === "confirmed";
       const isUnpaid = acc.status === "pending" || acc.status === "unpaid";
@@ -320,7 +530,7 @@ export async function GET(request: Request) {
         }
       : null;
 
-    // B. State-Wise Breakdown
+    // 13. State-Wise Breakdown (computed across all unique participants in scope)
     const stateCountsMap = new Map<
       string,
       {
@@ -330,13 +540,16 @@ export async function GET(request: Request) {
       }
     >();
 
-    // Index known states for case-insensitive matching
     const knownStatesLower = new Map<string, string>();
     for (const st of INDIAN_STATES_AND_UT) {
       knownStatesLower.set(st.toLowerCase(), st);
     }
 
-    for (const p of participants) {
+    const participantsInScope = Array.from(uniqueParticipantIdSet)
+      .map((id) => participantMap.get(id))
+      .filter(Boolean) as any[];
+
+    for (const p of participantsInScope) {
       let stateName = (p.state || "").trim();
       if (!stateName || stateName.toLowerCase() === "select...") {
         stateName = "Unspecified / Other";
@@ -361,8 +574,8 @@ export async function GET(request: Request) {
       stateCountsMap.set(stateName, stObj);
     }
 
-    // Count registrations per state for selected category
-    for (const pe of participantEvents) {
+    // Count registrations per state
+    for (const pe of filteredPEs) {
       const p = participantMap.get(pe.participant_id);
       if (p) {
         let stateName = (p.state || "").trim();
@@ -399,7 +612,7 @@ export async function GET(request: Request) {
       })
       .sort((a, b) => b.participantCount - a.participantCount);
 
-    // C. Event-Wise Breakdown
+    // 14. Event-Wise Breakdown
     const eventWise = filteredEvents
       .map((ev) => {
         const stats = eventStatsMap.get(ev.id) || {
@@ -424,13 +637,12 @@ export async function GET(request: Request) {
           count: stats.count,
           checkedIn: stats.checkedIn,
           fillRate,
-          // Revenue field ONLY included for master admins!
           ...(isMaster ? { revenue: stats.revenue } : {}),
         };
       })
       .sort((a, b) => b.count - a.count);
 
-    // D. Category Breakdown (computed across permitted categories in scopedEvents)
+    // 15. Category Breakdown
     const categoryStatsMap = new Map<
       string,
       { count: number; eventCount: number; checkedIn: number }
@@ -447,9 +659,8 @@ export async function GET(request: Request) {
       }
     }
 
-    const eventMap = new Map(allEvents.map((e) => [e.id, e]));
-    for (const pe of allScopedPEs) {
-      const ev = eventMap.get(pe.event_id);
+    for (const pe of filteredPEs) {
+      const ev = eventLookupMap.get(pe.event_id);
       const cat = (ev?.category || "").toLowerCase().trim();
       if (categoryStatsMap.has(cat)) {
         const cur = categoryStatsMap.get(cat)!;
@@ -467,17 +678,17 @@ export async function GET(request: Request) {
         eventCount: data.eventCount,
         checkedIn: data.checkedIn,
         percentage:
-          allScopedPEs.length > 0
-            ? Math.round((data.count / allScopedPEs.length) * 1000) / 10
+          filteredPEs.length > 0
+            ? Math.round((data.count / filteredPEs.length) * 1000) / 10
             : 0,
       }))
       .sort((a, b) => b.count - a.count);
 
-    // E. Demographics (Gender & Colleges for selected category)
+    // 16. Demographics (Gender & Colleges computed across all participants in scope)
     const genderCounts = { male: 0, female: 0, other: 0, unspecified: 0 };
     const collegesMap = new Map<string, { count: number; state: string | null }>();
 
-    for (const p of participants) {
+    for (const p of participantsInScope) {
       const g = (p.gender || "").toLowerCase().trim();
       if (g === "male" || g === "m") genderCounts.male++;
       else if (g === "female" || g === "f") genderCounts.female++;
@@ -499,9 +710,9 @@ export async function GET(request: Request) {
         state: data.state,
       }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 15);
+      .slice(0, 20);
 
-    // F. Accommodation Analytics (if authorized)
+    // 17. Accommodation Analytics (if authorized)
     let accommodations = null;
     if (isMaster || auth.accommodation_access) {
       let paidBookings = 0;
@@ -509,7 +720,7 @@ export async function GET(request: Request) {
       let checkedInBookings = 0;
       const dateOccupancyMap = new Map<string, number>();
 
-      for (const a of rawAccs) {
+      for (const a of relevantAccs) {
         if (a.status === "paid" || a.status === "confirmed") paidBookings++;
         else if (a.status === "pending" || a.status === "unpaid") pendingBookings++;
 
@@ -524,7 +735,7 @@ export async function GET(request: Request) {
       }
 
       accommodations = {
-        totalBookings: rawAccs.length,
+        totalBookings: relevantAccs.length,
         paidBookings,
         pendingBookings,
         checkedIn: checkedInBookings,
@@ -541,9 +752,9 @@ export async function GET(request: Request) {
       };
     }
 
-    // G. Registration Timeline (Daily Counts over last 14 days)
+    // 18. Registration Timeline (Daily counts over last 14 days)
     const timelineMap = new Map<string, number>();
-    for (const pe of participantEvents) {
+    for (const pe of filteredPEs) {
       if (pe.created_at) {
         const dateStr = pe.created_at.slice(0, 10);
         timelineMap.set(dateStr, (timelineMap.get(dateStr) || 0) + 1);
@@ -564,12 +775,22 @@ export async function GET(request: Request) {
         assignedEvents: auth.assigned_events,
         availableCategories,
         selectedCategory,
+        availableColleges,
+        selectedCollege,
         categoryScopeLabel: formatCategoryScopeLabel(auth.assigned_category),
         accommodationAccess: auth.accommodation_access,
         overview: {
           totalParticipants,
+          withAccommodation,
+          withoutAccommodation,
+          totalHeadcount,
+          headcountWithAccommodation,
+          headcountWithoutAccommodation,
           totalRegistrations,
-          totalTeams: teamsSet.size,
+          registrationsWithAccommodation,
+          registrationsWithoutAccommodation,
+          totalTeams,
+          totalSolo,
           totalCheckedIn,
           checkInRate,
           totalColleges: collegesMap.size,

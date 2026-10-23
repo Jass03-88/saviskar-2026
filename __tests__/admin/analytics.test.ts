@@ -116,47 +116,101 @@ function createMockAdminClient() {
       }
       if (table === "participant_events") {
         return {
-          select: () => ({
-            neq: (_field: string, _val: any) => ({
-              in: (_inField: string, ids: string[]) =>
+          select: () => {
+            let filteredData = mockParticipantEventsDb;
+            const chain: any = {
+              neq: () => chain,
+              limit: () => chain,
+              order: () => chain,
+              in: (_inField: string, ids: string[]) => {
+                filteredData = mockParticipantEventsDb.filter((pe) => ids.includes(pe.event_id));
+                return chain;
+              },
+              range: (start = 0, end = 999) =>
                 Promise.resolve({
-                  data: mockParticipantEventsDb.filter((pe) => ids.includes(pe.event_id)),
+                  data: filteredData.slice(start, end + 1),
+                  count: filteredData.length,
                   error: null,
                 }),
               then: (resolve: any) =>
-                resolve({ data: mockParticipantEventsDb, error: null }),
-            }),
-          }),
+                resolve({ data: filteredData, count: filteredData.length, error: null }),
+            };
+            return chain;
+          },
+        };
+      }
+      if (table === "participant_event_members") {
+        return {
+          select: () => {
+            const chain: any = {
+              in: () => Promise.resolve({ data: [], error: null }),
+              limit: () => chain,
+              order: () => chain,
+              range: () => Promise.resolve({ data: [], count: 0, error: null }),
+              then: (resolve: any) => resolve({ data: [], error: null }),
+            };
+            return chain;
+          },
         };
       }
       if (table === "participants") {
         return {
-          select: () => Promise.resolve({ data: mockParticipantsDb, error: null }),
+          select: () => {
+            const chain: any = {
+              order: () => chain,
+              limit: () => chain,
+              range: (start = 0, end = 999) =>
+                Promise.resolve({
+                  data: mockParticipantsDb.slice(start, end + 1),
+                  count: mockParticipantsDb.length,
+                  error: null,
+                }),
+              then: (resolve: any) => resolve({ data: mockParticipantsDb, count: mockParticipantsDb.length, error: null }),
+            };
+            return chain;
+          },
         };
       }
       if (table === "participant_accommodations") {
         return {
-          select: () => ({
-            neq: () =>
-              Promise.resolve({
-                data: [
-                  {
-                    id: "acc-1",
-                    participant_id: "p-1",
-                    status: "paid",
-                    amount: 499,
-                    start_date: "2026-10-28",
-                    end_date: "2026-10-29",
-                    checked_in: true,
-                  },
-                ],
-                error: null,
-              }),
-          }),
+          select: () => {
+            const accData = [
+              {
+                id: "acc-1",
+                participant_id: "p-1",
+                status: "paid",
+                amount: 499,
+                start_date: "2026-10-28",
+                end_date: "2026-10-29",
+                checked_in: true,
+              },
+            ];
+            const chain: any = {
+              neq: () => chain,
+              not: () => chain,
+              order: () => chain,
+              limit: () => chain,
+              range: (start = 0, end = 999) =>
+                Promise.resolve({
+                  data: accData.slice(start, end + 1),
+                  count: accData.length,
+                  error: null,
+                }),
+              then: (resolve: any) => resolve({ data: accData, count: accData.length, error: null }),
+            };
+            return chain;
+          },
         };
       }
       return {
-        select: () => Promise.resolve({ data: [], error: null }),
+        select: () => {
+          const chain: any = {
+            limit: () => Promise.resolve({ data: [], error: null }),
+            in: () => Promise.resolve({ data: [], error: null }),
+            then: (resolve: any) => resolve({ data: [], error: null }),
+          };
+          return chain;
+        },
       };
     },
   };

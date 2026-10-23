@@ -4,7 +4,7 @@ import { sendRegistrationEmail } from "@/lib/send-registration-email";
 import { checkRateLimitAsync, getClientIp } from "@/lib/rate-limit";
 import { generatePaymentResumeUrl } from "@/lib/payments/resume-token";
 import { getRegistrationSession } from "@/lib/auth/session";
-import { SITE_ACCESS } from "@/lib/config/site-access";
+import { getSiteAccess } from "@/lib/config/site-access";
 import { calculateStayDates } from "@/lib/accommodation-dates";
 import { formatAccommodationOverlapError } from "@/lib/accommodation-expiration";
 
@@ -167,9 +167,10 @@ export async function POST(
   // =====================================================
   // 0. ACCESS GATE
   // =====================================================
-  if (!SITE_ACCESS.REGISTRATIONS_ENABLED) {
+  const siteAccess = await getSiteAccess();
+  if (!siteAccess.REGISTRATIONS_ENABLED) {
     return errorResponse(
-      "Online registrations are currently closed or in preview mode.",
+      "Online registrations are currently restricted by administration.",
       403
     );
   }

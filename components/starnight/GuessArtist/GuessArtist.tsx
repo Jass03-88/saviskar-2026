@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Image from "next/image";
+import Link from "next/link";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Radio,
@@ -11,9 +13,10 @@ import {
   Lock,
   CheckCircle2,
   Music,
-  Send,
   Flame,
+  ArrowRight,
 } from "lucide-react";
+import NeonConfetti from "../NeonConfetti";
 
 const TARGET_FREQ = 102.6;
 const FREQ_MIN = 88.0;
@@ -24,8 +27,8 @@ export default function GuessArtist() {
   const [isLocked, setIsLocked] = useState<boolean>(false);
   const [stageIgnited, setStageIgnited] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(false);
-  const [prediction, setPrediction] = useState<string>("");
-  const [submittedPrediction, setSubmittedPrediction] = useState<string | null>(null);
+  const [showConfetti, setShowConfetti] = useState<boolean>(false);
+  const confettiFiredRef = useRef<boolean>(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -38,22 +41,17 @@ export default function GuessArtist() {
   const alignment = Math.max(0, 1 - diff / 4.5);
   const isTargetClose = diff <= 0.45;
 
-  // Track locked status
+  // Track locked status & trigger reveal confetti
   useEffect(() => {
     if (isTargetClose) {
       setIsLocked(true);
+      if (!confettiFiredRef.current) {
+        confettiFiredRef.current = true;
+        setStageIgnited(true);
+        setShowConfetti(true);
+      }
     }
   }, [isTargetClose]);
-
-  // Load existing prediction from localStorage
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("saviskar26_artist_prediction");
-      if (saved) setSubmittedPrediction(saved);
-    } catch {
-      // ignore
-    }
-  }, []);
 
   // Web Audio synth tone for subtle auditory feedback
   const startAudio = useCallback(() => {
@@ -225,18 +223,10 @@ export default function GuessArtist() {
     };
   }, [alignment, isLocked]);
 
-  // Handle guess submission
-  const handleGuessSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!prediction.trim()) return;
-    const clean = prediction.trim();
-    setSubmittedPrediction(clean);
-    try {
-      localStorage.setItem("saviskar26_artist_prediction", clean);
-    } catch {
-      // ignore
-    }
-    setPrediction("");
+  const handleIgnite = () => {
+    setStageIgnited(true);
+    setShowConfetti(false);
+    setTimeout(() => setShowConfetti(true), 30);
   };
 
   return (
@@ -244,6 +234,11 @@ export default function GuessArtist() {
       id="reveal-console"
       className="relative min-h-screen w-full overflow-hidden bg-black py-24 text-white md:py-32"
     >
+      {/* Stadium Celebration Confetti Layer */}
+      <NeonConfetti
+        active={showConfetti}
+        onComplete={() => setShowConfetti(false)}
+      />
       {/* Stadium core ambient background glow */}
       <motion.div
         animate={{
@@ -469,7 +464,7 @@ export default function GuessArtist() {
 
                 <button
                   type="button"
-                  onClick={() => setStageIgnited(true)}
+                  onClick={handleIgnite}
                   className="group relative inline-flex items-center gap-3 overflow-hidden rounded-full border border-violet-400 bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 px-9 py-4 font-mono text-sm font-bold uppercase tracking-wider text-white shadow-[0_0_50px_rgba(168,85,247,0.45)] transition-all hover:scale-105 hover:shadow-[0_0_80px_rgba(168,85,247,0.7)]"
                 >
                   <Zap
@@ -511,11 +506,11 @@ export default function GuessArtist() {
                 </h3>
               </div>
 
-              {/* Day 1 & Day 2 Classified Teaser Cards */}
+              {/* Day 1 & Day 2 Official Headliner Cards */}
               <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-                {/* Day 1 Teaser */}
+                {/* Day 1 Card: Asees Kaur */}
                 <div
-                  className="relative overflow-hidden border border-violet-400/40 bg-gradient-to-b from-white/[0.08] to-black/80 p-8 backdrop-blur-xl"
+                  className="group relative overflow-hidden border border-violet-400/40 bg-gradient-to-b from-white/[0.08] to-black/85 p-6 backdrop-blur-xl transition-all duration-500 hover:border-violet-400/70 hover:shadow-[0_0_50px_rgba(168,85,247,0.3)] md:p-8"
                   style={{
                     clipPath:
                       "polygon(0 18px, 18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px))",
@@ -526,31 +521,57 @@ export default function GuessArtist() {
                   <div className="pointer-events-none absolute bottom-2 left-2 h-3.5 w-3.5 border-b-2 border-l-2 border-violet-400" />
                   <div className="pointer-events-none absolute bottom-2 right-2 h-3.5 w-3.5 border-b-2 border-r-2 border-violet-400" />
 
+                  {/* Top Badge & Confirmed Status */}
                   <div className="flex items-center justify-between">
                     <span className="border border-violet-400/40 bg-violet-500/20 px-3.5 py-1 font-mono text-xs font-semibold text-violet-200">
                       [DAY 01 // HEADLINER]
                     </span>
-                    <span className="flex items-center gap-1.5 font-mono text-[11px] text-amber-300">
-                      <Lock size={12} />
-                      REVEAL IMMINENT
+                    <span className="flex items-center gap-1.5 font-mono text-[11px] text-emerald-400">
+                      <CheckCircle2 size={12} />
+                      TRANSMISSION CONFIRMED
                     </span>
                   </div>
 
-                  <h4 className="mt-5 text-2xl font-bold text-white md:text-3xl">
-                    GLOBAL STREAMING SENSATION
+                  {/* Artist Photo Spotlight */}
+                  <div className="relative mt-5 aspect-[16/10] w-full overflow-hidden rounded-xl border border-violet-400/30 bg-black/80">
+                    <Image
+                      src="/images/artists/artist-5-2026-day1.webp"
+                      alt="Asees Kaur live headline performance at CGC Saviskar 2026 Star Night"
+                      fill
+                      sizes="(max-width: 768px) 100vw, 50vw"
+                      className="object-cover object-top transition-transform duration-700 group-hover:scale-105"
+                      priority
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/25 to-transparent" />
+                    <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_60%,rgba(0,0,0,0.5)_100%)]" />
+
+                    {/* Corner Reticles */}
+                    <div className="pointer-events-none absolute left-2 top-2 h-2.5 w-2.5 border-l border-t border-violet-400" />
+                    <div className="pointer-events-none absolute right-2 top-2 h-2.5 w-2.5 border-r border-t border-violet-400" />
+                    <div className="pointer-events-none absolute bottom-2 left-2 h-2.5 w-2.5 border-b border-l border-violet-400" />
+                    <div className="pointer-events-none absolute bottom-2 right-2 h-2.5 w-2.5 border-b border-r border-violet-400" />
+
+                    <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full border border-violet-400/50 bg-black/80 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-violet-200 backdrop-blur-md">
+                      <Sparkles size={11} className="text-violet-400" />
+                      <span>LIVE IN CONCERT • 28 OCT 2026</span>
+                    </div>
+                  </div>
+
+                  <h4 className="mt-5 text-2xl font-bold tracking-tight text-white md:text-3xl">
+                    ASEES KAUR
                   </h4>
                   <p className="mt-1 text-xs uppercase tracking-wider text-violet-300 font-mono">
-                    [GENRE: STADIUM_ANTHEMS // POP_ROCK_FUSION]
+                    [GENRE: BOLLYWOOD_PLAYBACK // ROMANTIC_POP_SOUL]
                   </p>
 
                   <div className="mt-6 space-y-3 font-mono text-xs text-white/70">
                     <div className="flex items-start gap-2">
                       <Sparkles size={14} className="mt-0.5 text-violet-400 shrink-0" />
-                      <span>Has dominated Spotify Global charts with over 2B+ cumulative streams.</span>
+                      <span>Award-winning playback powerhouse behind chartbusters: &ldquo;Raataan Lambiyan&rdquo;, &ldquo;Makhna&rdquo;, &ldquo;Bolna&rdquo;, and &ldquo;Ve Maahi&rdquo;.</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <Music size={14} className="mt-0.5 text-violet-400 shrink-0" />
-                      <span>Known for turning 30,000+ person festival crowds into an electric ocean of mosh pits.</span>
+                      <span>Commanding 35,000+ collegiate voices in a sea of flashlight beams and soulful chorus on Day 01.</span>
                     </div>
                   </div>
 
@@ -559,14 +580,14 @@ export default function GuessArtist() {
                       {"// OFFICIAL STATUS"}
                     </span>
                     <p className="mt-1 text-xs text-emerald-400">
-                      CONTRACT EXECUTED • VAULT SEALED TILL OFFICIAL SOCIAL DROP
+                      CONFIRMED HEADLINER • LIVE ON STAGE 28 OCTOBER 2026
                     </p>
                   </div>
                 </div>
 
-                {/* Day 2 Teaser */}
+                {/* Day 2 Card: Ranjit Bawa */}
                 <div
-                  className="relative overflow-hidden border border-cyan-400/40 bg-gradient-to-b from-white/[0.08] to-black/80 p-8 backdrop-blur-xl"
+                  className="group relative overflow-hidden border border-cyan-400/40 bg-gradient-to-b from-white/[0.08] to-black/85 p-6 backdrop-blur-xl transition-all duration-500 hover:border-cyan-400/70 hover:shadow-[0_0_50px_rgba(6,182,212,0.3)] md:p-8"
                   style={{
                     clipPath:
                       "polygon(0 18px, 18px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px))",
@@ -577,31 +598,57 @@ export default function GuessArtist() {
                   <div className="pointer-events-none absolute bottom-2 left-2 h-3.5 w-3.5 border-b-2 border-l-2 border-cyan-400" />
                   <div className="pointer-events-none absolute bottom-2 right-2 h-3.5 w-3.5 border-b-2 border-r-2 border-cyan-400" />
 
+                  {/* Top Badge & Confirmed Status */}
                   <div className="flex items-center justify-between">
                     <span className="border border-cyan-400/40 bg-cyan-500/20 px-3.5 py-1 font-mono text-xs font-semibold text-cyan-200">
                       [DAY 02 // GRAND FINALE]
                     </span>
-                    <span className="flex items-center gap-1.5 font-mono text-[11px] text-amber-300">
-                      <Lock size={12} />
-                      REVEAL IMMINENT
+                    <span className="flex items-center gap-1.5 font-mono text-[11px] text-emerald-400">
+                      <CheckCircle2 size={12} />
+                      TRANSMISSION CONFIRMED
                     </span>
                   </div>
 
-                  <h4 className="mt-5 text-2xl font-bold text-white md:text-3xl">
-                    BOLLYWOOD & SUFI SYMPHONY ICON
+                  {/* Artist Photo Spotlight */}
+                  <div className="relative mt-5 aspect-[16/10] w-full overflow-hidden rounded-xl border border-cyan-400/30 bg-black/80">
+                    <Image
+                      src="/images/artists/artist-6-2026-day2.webp"
+                      alt="Ranjit Bawa Grand Finale live performance at CGC Saviskar 2026 Star Night"
+                      fill
+                      sizes="(max-width: 768px) 100vw, 50vw"
+                      className="object-cover object-center transition-transform duration-700 group-hover:scale-105"
+                      priority
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/25 to-transparent" />
+                    <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_60%,rgba(0,0,0,0.5)_100%)]" />
+
+                    {/* Corner Reticles */}
+                    <div className="pointer-events-none absolute left-2 top-2 h-2.5 w-2.5 border-l border-t border-cyan-400" />
+                    <div className="pointer-events-none absolute right-2 top-2 h-2.5 w-2.5 border-r border-t border-cyan-400" />
+                    <div className="pointer-events-none absolute bottom-2 left-2 h-2.5 w-2.5 border-b border-l border-cyan-400" />
+                    <div className="pointer-events-none absolute bottom-2 right-2 h-2.5 w-2.5 border-b border-r border-cyan-400" />
+
+                    <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full border border-cyan-400/50 bg-black/80 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-cyan-200 backdrop-blur-md">
+                      <Sparkles size={11} className="text-cyan-400" />
+                      <span>GRAND FINALE • 29 OCT 2026</span>
+                    </div>
+                  </div>
+
+                  <h4 className="mt-5 text-2xl font-bold tracking-tight text-white md:text-3xl">
+                    RANJIT BAWA
                   </h4>
                   <p className="mt-1 text-xs uppercase tracking-wider text-cyan-300 font-mono">
-                    [GENRE: BOLLYWOOD_ORCHESTRA // LIVE_DHOL_FUSION]
+                    [GENRE: PUNJABI_FOLK // BHANGRA_ANTHEMS]
                   </p>
 
                   <div className="mt-6 space-y-3 font-mono text-xs text-white/70">
                     <div className="flex items-start gap-2">
                       <Sparkles size={14} className="mt-0.5 text-cyan-400 shrink-0" />
-                      <span>Architect of multi-generational Bollywood blockbusters and cinematic anthems.</span>
+                      <span>The iconic voice of Punjabi folk &amp; Bhangra: &ldquo;Yaari Chandigarh Waliye&rdquo;, &ldquo;Jatt Di Akal&rdquo;, &ldquo;Sher Marna&rdquo;, and &ldquo;Tareek&rdquo;.</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <Music size={14} className="mt-0.5 text-cyan-400 shrink-0" />
-                      <span>A full live stage ensemble with live strings, dhol percussion, and unmatched crowd euphoria.</span>
+                      <span>High-octane stadium energy backed by raw live dhol, earth-quaking bass, and massive festival euphoria.</span>
                     </div>
                   </div>
 
@@ -610,15 +657,15 @@ export default function GuessArtist() {
                       {"// OFFICIAL STATUS"}
                     </span>
                     <p className="mt-1 text-xs text-emerald-400">
-                      STADIUM AUDIO PLUG-IN VERIFIED • LIVE AIRING ON YOUTUBE
+                      CONFIRMED HEADLINER • GRAND FINALE 29 OCTOBER 2026
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Fan Prediction Form Box */}
+              {/* Star Night Celebration & Passes Banner (Replaces Guess Form) */}
               <div
-                className="relative mt-12 overflow-hidden border border-white/20 bg-black/75 p-8 text-center backdrop-blur-xl md:p-10 shadow-[0_20px_60px_rgba(0,0,0,0.8)]"
+                className="relative mt-12 overflow-hidden border border-violet-400/30 bg-gradient-to-r from-violet-950/40 via-black/85 to-indigo-950/40 p-8 text-center backdrop-blur-xl md:p-10 shadow-[0_20px_60px_rgba(0,0,0,0.8)]"
                 style={{
                   clipPath:
                     "polygon(0 20px, 20px 0, calc(100% - 20px) 0, 100% 20px, 100% calc(100% - 20px), calc(100% - 20px) 100%, 20px 100%, 0 calc(100% - 20px))",
@@ -630,63 +677,45 @@ export default function GuessArtist() {
                 <div className="pointer-events-none absolute bottom-2 right-2 h-4 w-4 border-b-2 border-r-2 border-violet-400" />
 
                 <span className="font-mono text-xs uppercase tracking-[0.3em] text-violet-300">
-                  [COMMUNITY ARENA POLL // FAN PREDICTIONS]
+                  [SYS.TRANSMISSION // ALL HEADLINERS DECRYPTED]
                 </span>
                 <h4 className="mt-2 text-2xl font-bold uppercase tracking-tight text-white md:text-3xl">
-                  Who Do You Think Is Taking The Stage?
+                  Ready For The Biggest Concert of 2026?
                 </h4>
                 <p className="mx-auto mt-2 max-w-xl font-mono text-xs text-white/60 sm:text-sm">
-                  &gt; Drop your prediction below. The first 100 students with verified correct guesses receive VIP Mainstage Backstage Access!
+                  &gt; 35,000+ collegiate voices singing as one. Ground-shaking bass and stadium pyrotechnics across 2 monumental headline nights.
                 </p>
 
-                {submittedPrediction ? (
-                  <motion.div
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="mx-auto mt-6 inline-flex flex-col items-center rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-6"
+                <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+                  {/* Theme Confetti Trigger */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowConfetti(false);
+                      setTimeout(() => setShowConfetti(true), 50);
+                    }}
+                    className="inline-flex items-center gap-2.5 rounded-full border border-violet-400/60 bg-violet-600/30 px-7 py-3.5 font-mono text-xs font-semibold uppercase tracking-wider text-violet-200 transition-all hover:bg-violet-600/50 hover:shadow-[0_0_35px_rgba(168,85,247,0.45)] hover:scale-105 active:scale-95"
                   >
-                    <div className="flex items-center gap-2 font-mono text-sm font-semibold text-emerald-300">
-                      <CheckCircle2 size={18} />
-                      PREDICTION RECORDED: &ldquo;{submittedPrediction}&rdquo;
-                    </div>
-                    <p className="mt-1 font-mono text-xs text-white/50">
-                      Saved to CGC Saviskar Fan Board • Check CGC socials for reveal announcements!
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setSubmittedPrediction(null)}
-                      className="mt-3 text-xs text-violet-300 underline hover:text-white"
-                    >
-                      Change my prediction
-                    </button>
-                  </motion.div>
-                ) : (
-                  <form
-                    onSubmit={handleGuessSubmit}
-                    className="mx-auto mt-6 flex max-w-md flex-col gap-3 sm:flex-row"
+                    <Sparkles size={15} className="text-amber-300 animate-spin" />
+                    <span>Celebrate with Stadium Confetti</span>
+                  </button>
+
+                  {/* Register link */}
+                  <Link
+                    href="/register"
+                    className="inline-flex items-center gap-2.5 rounded-full border border-white/20 bg-white/10 px-7 py-3.5 font-mono text-xs font-semibold uppercase tracking-wider text-white transition-all hover:bg-white/20 hover:scale-105 active:scale-95"
                   >
-                    <input
-                      type="text"
-                      placeholder="Type artist / band name..."
-                      value={prediction}
-                      onChange={(e) => setPrediction(e.target.value)}
-                      className="flex-1 rounded-full border border-white/15 bg-black/60 px-5 py-3 text-sm text-white placeholder-white/40 focus:border-violet-400 focus:outline-none focus:ring-1 focus:ring-violet-400"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!prediction.trim()}
-                      className="inline-flex items-center justify-center gap-2 rounded-full border border-violet-400 bg-violet-600 px-6 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-white transition-all hover:bg-violet-500 disabled:opacity-50"
-                    >
-                      <span>VOTE</span>
-                      <Send size={13} />
-                    </button>
-                  </form>
-                )}
+                    <span>Get Passes</span>
+                    <ArrowRight size={14} />
+                  </Link>
+                </div>
 
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-6 font-mono text-xs text-white/40">
-                  <span>★ 4,200+ Predictions Submitted</span>
+                  <span>★ 35,000+ Attendees</span>
                   <span>•</span>
-                  <span>Exclusive to CGC University</span>
+                  <span>CGC Mainstage Concert Arena</span>
+                  <span>•</span>
+                  <span>28–29 October 2026</span>
                 </div>
               </div>
             </motion.div>

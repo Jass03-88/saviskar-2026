@@ -9,7 +9,7 @@ import { getRegistrationSession } from "@/lib/auth/session";
 import Footer from "@/components/ui/Footer";
 import Navbar from "@/components/ui/Navbar";
 import TerminalPlaceholder from "@/components/ui/TerminalPlaceholder";
-import { SITE_ACCESS } from "@/lib/config/site-access";
+import { getSiteAccess } from "@/lib/config/site-access";
 
 export const metadata: Metadata = {
   title: "Register & Claim Passes | CGC Saviskar 2026 — CGC University Mohali",
@@ -60,7 +60,8 @@ export default async function RegisterPage({
 }: {
   searchParams: Promise<{ from?: string }>;
 }) {
-  if (!SITE_ACCESS.REGISTRATIONS_ENABLED) {
+  const siteAccess = await getSiteAccess();
+  if (!siteAccess.REGISTRATIONS_ENABLED) {
     return (
       <TerminalPlaceholder
         moduleCode="ACCREDITATION.SYS"

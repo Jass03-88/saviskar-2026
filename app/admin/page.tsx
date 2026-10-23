@@ -34,6 +34,7 @@ import {
   SlidersHorizontal,
   BarChart3,
   ShieldCheck,
+  Lock,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
@@ -51,6 +52,9 @@ import { CsvExportDropdown } from "@/components/admin/CsvExportDropdown";
 import AdminPageLoader from "@/components/admin/AdminPageLoader";
 import { PaymentVerificationDialog } from "@/components/admin/PaymentVerificationDialog";
 import { ResendEmailDialog } from "@/components/admin/ResendEmailDialog";
+import { SitePageLocksModal } from "@/components/admin/SitePageLocksModal";
+import type { SiteAccessConfig } from "@/lib/config/site-access";
+import { isCgcInstitution } from "@/lib/admin/college-filter";
 
 /* =========================================================
    TYPES
@@ -316,6 +320,7 @@ export default function AdminPage() {
   const [paymentOverviewCategory, setPaymentOverviewCategory] = useState<"all" | "technical" | "non-technical" | "cultural">("all");
   const [includeAccommodation, setIncludeAccommodation] = useState(false);
   const [accommodationFilter, setAccommodationFilter] = useState<"all" | "with" | "without">("all");
+  const [institutionFilter, setInstitutionFilter] = useState<"all" | "external" | "cgc">("all");
   const [serverAccommodationStats, setServerAccommodationStats] = useState<{
     totalBookings: number;
     paidBookings: number;
@@ -342,8 +347,42 @@ export default function AdminPage() {
   const [breakdownCategory, setBreakdownCategory] = useState<string>("all");
   const [breakdownPaymentType, setBreakdownPaymentType] = useState<"all" | "paid" | "free">("all");
   const [breakdownSearch, setBreakdownSearch] = useState("");
+  const [breakdownOriginFilter, setBreakdownOriginFilter] = useState<"all" | "external" | "cgc">("all");
+
+  const handleInstitutionFilterChange = useCallback((val: "all" | "external" | "cgc") => {
+    setInstitutionFilter(val);
+    setBreakdownOriginFilter(val);
+  }, []);
+
+  useEffect(() => {
+    setBreakdownOriginFilter(institutionFilter);
+  }, [institutionFilter]);
+
   const [isPaymentOverviewOpen, setIsPaymentOverviewOpen] = useState(false);
   const [isEventAnalyticsOpen, setIsEventAnalyticsOpen] = useState(false);
+  const [isPageLocksOpen, setIsPageLocksOpen] = useState(false);
+  const [siteLocks, setSiteLocks] = useState<SiteAccessConfig | null>(null);
+
+  const fetchSiteLocks = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/site-access");
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.siteAccess) {
+          setSiteLocks(data.siteAccess);
+        }
+        if (typeof data?.isPrimary === "boolean") {
+          setAdminIdentity((prev) =>
+            prev
+              ? { ...prev, isPrimary: data.isPrimary }
+              : { name: null, email: null, isPrimary: data.isPrimary }
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch site locks:", err);
+    }
+  }, []);
 
   const [selectedParticipant, setSelectedParticipant] =
     useState<Participant | null>(null);
@@ -460,7 +499,7 @@ export default function AdminPage() {
 
       try {
         const response = await fetch(
-          "/api/admin/registrations?pageSize=50000",
+          "/api/admin/registrations?pageSize=10000",
           { cache: "no-store" }
         );
 
@@ -654,6 +693,12 @@ export default function AdminPage() {
     };
   }, [loadData, router]);
 
+  useEffect(() => {
+    if (adminIdentity?.isPrimary) {
+      void fetchSiteLocks();
+    }
+  }, [adminIdentity?.isPrimary, fetchSiteLocks]);
+
   /* =======================================================
      LOGOUT
   ======================================================= */
@@ -762,6 +807,20 @@ export default function AdminPage() {
             return true;
           })();
 
+          const matchesInstitution = (() => {
+            if (institutionFilter === "all") return true;
+            const isCgc =
+              isCgcInstitution(participant.college, participant.email) ||
+              Boolean(
+                item.members?.some((m) =>
+                  isCgcInstitution(m.participants?.college)
+                )
+              );
+            if (institutionFilter === "external") return !isCgc;
+            if (institutionFilter === "cgc") return isCgc;
+            return true;
+          })();
+
           return (
             matchesSearch &&
             matchesEvent &&
@@ -770,7 +829,8 @@ export default function AdminPage() {
             matchesPayment &&
             matchesArchive &&
             matchesException &&
-            matchesAccommodation
+            matchesAccommodation &&
+            matchesInstitution
           );
         }
       );
@@ -785,7 +845,26 @@ export default function AdminPage() {
       exceptionFilter,
       filterState,
       accommodationFilter,
+      institutionFilter,
     ]);
+
+  const institutionCounts = useMemo(() => {
+    let cgc = 0;
+    let external = 0;
+    for (const item of registrations) {
+      if (item.registration.is_archived === true) continue;
+      const isCgc =
+        isCgcInstitution(item.participant.college, item.participant.email) ||
+        Boolean(
+          item.members?.some((m) =>
+            isCgcInstitution(m.participants?.college)
+          )
+        );
+      if (isCgc) cgc++;
+      else external++;
+    }
+    return { cgc, external, total: cgc + external };
+  }, [registrations]);
 
   /* =======================================================
      STATS
@@ -979,8 +1058,76 @@ export default function AdminPage() {
   }, [registrations, includeAccommodation, localAccommodationSummary]);
 
   /* =======================================================
-     EVENT ANALYTICS
+     EVENT ANALYTICS & BREAKDOWN DATA SOURCE
   ======================================================= */
+
+  const breakdownSourceRegistrations = useMemo(() => {
+    if (breakdownOriginFilter === "all") return registrations;
+    return registrations.filter((item) => {
+      const isCgc =
+        isCgcInstitution(item.participant.college, item.participant.email) ||
+        Boolean(
+          item.members?.some((m) =>
+            isCgcInstitution(m.participants?.college)
+          )
+        );
+      if (breakdownOriginFilter === "external") return !isCgc;
+      if (breakdownOriginFilter === "cgc") return isCgc;
+      return true;
+    });
+  }, [registrations, breakdownOriginFilter]);
+
+  const breakdownAccommodationSummary = useMemo(() => {
+    if (breakdownOriginFilter === "all") {
+      return localAccommodationSummary;
+    }
+    const accMap = new Map<string, AccommodationDetail>();
+    breakdownSourceRegistrations.forEach((item) => {
+      if (item.accommodation && !accMap.has(item.accommodation.id || item.participant.id)) {
+        accMap.set(item.accommodation.id || item.participant.id, item.accommodation);
+      }
+      item.members?.forEach((m) => {
+        if (m.accommodation && !accMap.has(m.accommodation.id || m.participant_id || m.id)) {
+          accMap.set(m.accommodation.id || m.participant_id || m.id, m.accommodation);
+        }
+      });
+    });
+
+    const accList = Array.from(accMap.values());
+    let totalBookings = accList.length;
+    let paidBookings = 0;
+    let pendingBookings = 0;
+    let expectedAmount = 0;
+    let paidAmount = 0;
+    let outstandingAmount = 0;
+    let checkedIn = 0;
+
+    accList.forEach((acc) => {
+      const amt = Number(acc.amount) || 0;
+      expectedAmount += amt;
+      if (acc.status === "paid") {
+        paidBookings++;
+        paidAmount += amt;
+      } else {
+        pendingBookings++;
+        outstandingAmount += amt;
+      }
+      if (acc.checked_in) {
+        checkedIn++;
+      }
+    });
+
+    return {
+      totalBookings,
+      paidBookings,
+      pendingBookings,
+      expectedAmount,
+      paidAmount,
+      outstandingAmount,
+      checkedIn,
+      localEventBookings: totalBookings,
+    };
+  }, [breakdownOriginFilter, localAccommodationSummary, breakdownSourceRegistrations]);
 
   const eventAnalytics =
     useMemo(() => {
@@ -988,7 +1135,7 @@ export default function AdminPage() {
         .map((event) => {
           // Event analytics only count active registrations
           const count =
-            registrations.filter(
+            breakdownSourceRegistrations.filter(
               (item) =>
                 item.registration
                   .event_id ===
@@ -997,7 +1144,7 @@ export default function AdminPage() {
             ).length;
 
           const checked =
-            registrations.filter(
+            breakdownSourceRegistrations.filter(
               (item) =>
                 item.registration.event_id === event.id &&
                 item.registration.checked_in === true &&
@@ -1005,14 +1152,14 @@ export default function AdminPage() {
             ).length;
 
           const mainChecked =
-            registrations.filter(
+            breakdownSourceRegistrations.filter(
               (item) =>
                 item.registration.event_id === event.id &&
                 item.registration.main_checked_in === true &&
                 item.registration.is_archived !== true
             ).length;
 
-          const paidRegs = registrations.filter(
+          const paidRegs = breakdownSourceRegistrations.filter(
             (item) =>
               item.registration.event_id === event.id &&
               item.registration.is_archived !== true &&
@@ -1027,13 +1174,24 @@ export default function AdminPage() {
           const pendingCount = event.payment_type === "paid" ? count - paidCount : 0;
           const pendingAmount = pendingCount * (event.registration_fee || 0);
 
-          const individualCount = registrations.filter(
-            (item) => item.registration.event_id === event.id && item.registration.is_archived !== true && !item.registration.team_name
+          const eventRegs = breakdownSourceRegistrations.filter(
+            (item) => item.registration.event_id === event.id && item.registration.is_archived !== true
+          );
+
+          const individualCount = eventRegs.filter(
+            (item) => !item.registration.team_name
           ).length;
 
-          const teamCount = registrations.filter(
-            (item) => item.registration.event_id === event.id && item.registration.is_archived !== true && item.registration.team_name
+          const teamCount = eventRegs.filter(
+            (item) => !!item.registration.team_name
           ).length;
+
+          const headcount = eventRegs.reduce((sum, item) => {
+            if (item.members && item.members.length > 0) {
+              return sum + item.members.length;
+            }
+            return sum + 1;
+          }, 0);
 
           return {
             ...event,
@@ -1046,12 +1204,13 @@ export default function AdminPage() {
             pendingAmount,
             individualCount,
             teamCount,
+            headcount,
           };
         })
         .filter(
           (event) => event.count > 0
         );
-    }, [events, registrations]);
+    }, [events, breakdownSourceRegistrations]);
 
   const availableCategories = useMemo(() => {
     if (assignedCategory && assignedCategory.trim()) {
@@ -1679,6 +1838,23 @@ export default function AdminPage() {
                     <Clock3 size={15} />
                     <span>Audit Logs</span>
                   </button>
+
+                  {adminIdentity?.isPrimary && (
+                    <button
+                      type="button"
+                      onClick={() => setIsPageLocksOpen(true)}
+                      className="flex items-center gap-2 rounded-full border border-purple-300 bg-purple-50 px-4 py-2.5 text-sm font-semibold text-purple-900 transition hover:bg-purple-100 hover:scale-[1.02] shadow-sm"
+                      title="Lock or unlock public pages on the site (Primary Master Admin only)"
+                    >
+                      <Lock size={15} className="text-purple-700" />
+                      <span>Page Locks</span>
+                      {siteLocks && (
+                        <span className="ml-0.5 rounded-full bg-purple-200/80 px-1.5 py-0.5 text-[10px] font-bold text-purple-900">
+                          {Object.values(siteLocks).filter((v) => !v).length} locked
+                        </span>
+                      )}
+                    </button>
+                  )}
                 </>
               )}
 
@@ -2031,22 +2207,73 @@ export default function AdminPage() {
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-black/35">
                 Unified Analytics
               </p>
-              <div className="mt-1 flex items-center gap-3">
+              <div className="mt-1 flex flex-wrap items-center gap-2 sm:gap-3">
                 <h2 className="text-xl font-semibold text-black md:text-2xl">
                   Registration & Payment Breakdown
                 </h2>
                 <span className="rounded-full bg-black/5 px-2.5 py-0.5 text-[10px] font-bold text-black/50">
                   {eventAnalytics.length} events
                 </span>
+                {breakdownOriginFilter === "external" && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                    <Building2 size={11} className="text-emerald-700" />
+                    External Only
+                  </span>
+                )}
+                {breakdownOriginFilter === "cgc" && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-2.5 py-0.5 text-[10px] font-bold text-blue-800">
+                    <Building2 size={11} className="text-blue-700" />
+                    CGC Only
+                  </span>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Quick toggle button in header */}
+              <button
+                type="button"
+                onClick={() =>
+                  handleInstitutionFilterChange(
+                    breakdownOriginFilter === "external" ? "all" : "external"
+                  )
+                }
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                  breakdownOriginFilter === "external"
+                    ? "border-emerald-500 bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-300"
+                    : "border-black/10 bg-black/[0.03] text-black hover:bg-black/[0.06]"
+                }`}
+                title="Filter event-wise counts and table to only external registrations (excluding CGC)"
+              >
+                <Building2
+                  size={13}
+                  className={
+                    breakdownOriginFilter === "external"
+                      ? "text-white"
+                      : "text-emerald-600"
+                  }
+                />
+                <span>
+                  {breakdownOriginFilter === "external"
+                    ? "External Only (Active)"
+                    : "External Only"}
+                </span>
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                    breakdownOriginFilter === "external"
+                      ? "bg-white/20 text-white"
+                      : "bg-emerald-100 text-emerald-800"
+                  }`}
+                >
+                  {institutionCounts.external}
+                </span>
+              </button>
+
               {eventFilter !== "all" && (
                 <button
                   type="button"
                   onClick={() => setEventFilter("all")}
-                  className="rounded-full bg-black/5 px-3 py-1.5 text-xs font-semibold text-black hover:bg-black/10 transition"
+                  className="rounded-full bg-black/5 px-3 py-1.5 text-xs font-semibold text-black hover:bg-black/10 transition cursor-pointer"
                 >
                   Clear event filter
                 </button>
@@ -2054,7 +2281,7 @@ export default function AdminPage() {
               <button
                 type="button"
                 onClick={() => setIsBreakdownOpen((prev) => !prev)}
-                className="flex items-center gap-2 rounded-full border border-black/10 bg-black/[0.03] hover:bg-black/[0.06] px-4 py-2 text-xs font-semibold text-black transition"
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-black/[0.03] hover:bg-black/[0.06] px-4 py-2 text-xs font-semibold text-black transition cursor-pointer"
                 aria-expanded={isBreakdownOpen}
               >
                 <span>{isBreakdownOpen ? "Hide Breakdown" : "View Breakdown"}</span>
@@ -2118,12 +2345,48 @@ export default function AdminPage() {
                   ))}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Origin / Campus Filter */}
+                  <div className="flex items-center rounded-full bg-black/[0.03] p-1 border border-black/5">
+                    <button
+                      type="button"
+                      onClick={() => handleInstitutionFilterChange("all")}
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition cursor-pointer ${
+                        breakdownOriginFilter === "all" ? "bg-white text-black shadow-xs" : "text-black/50 hover:text-black"
+                      }`}
+                    >
+                      All Campuses
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleInstitutionFilterChange("external")}
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition flex items-center gap-1 cursor-pointer ${
+                        breakdownOriginFilter === "external"
+                          ? "bg-emerald-600 text-white shadow-xs font-bold"
+                          : "text-black/50 hover:text-emerald-700"
+                      }`}
+                      title="Filter event-wise counts to only external colleges / institutions (excluding CGC)"
+                    >
+                      <Building2 size={11} className={breakdownOriginFilter === "external" ? "text-white" : "text-emerald-600"} />
+                      External Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleInstitutionFilterChange("cgc")}
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition cursor-pointer ${
+                        breakdownOriginFilter === "cgc" ? "bg-white text-black shadow-xs font-bold" : "text-black/50 hover:text-black"
+                      }`}
+                    >
+                      CGC Only
+                    </button>
+                  </div>
+
+                  {/* Payment Type */}
                   <div className="flex items-center rounded-full bg-black/[0.03] p-1 border border-black/5">
                     <button
                       type="button"
                       onClick={() => setBreakdownPaymentType("all")}
-                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition ${
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition cursor-pointer ${
                         breakdownPaymentType === "all" ? "bg-white text-black shadow-xs" : "text-black/50 hover:text-black"
                       }`}
                     >
@@ -2132,7 +2395,7 @@ export default function AdminPage() {
                     <button
                       type="button"
                       onClick={() => setBreakdownPaymentType("paid")}
-                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition ${
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition cursor-pointer ${
                         breakdownPaymentType === "paid" ? "bg-white text-green-700 shadow-xs" : "text-black/50 hover:text-black"
                       }`}
                     >
@@ -2141,7 +2404,7 @@ export default function AdminPage() {
                     <button
                       type="button"
                       onClick={() => setBreakdownPaymentType("free")}
-                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition ${
+                      className={`rounded-full px-3 py-1 text-[10px] font-semibold transition cursor-pointer ${
                         breakdownPaymentType === "free" ? "bg-white text-black shadow-xs" : "text-black/50 hover:text-black"
                       }`}
                     >
@@ -2162,7 +2425,7 @@ export default function AdminPage() {
               {/* Grid of Blended Cards */}
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {/* Accommodation Card (if opted or included) */}
-                {(includeAccommodation || localAccommodationSummary.totalBookings > 0) &&
+                {(includeAccommodation || breakdownAccommodationSummary.totalBookings > 0) &&
                   (breakdownCategory === "all" || breakdownCategory === "hospitality") && (
                     <div
                       onClick={() => setAccommodationFilter(accommodationFilter === "with" ? "all" : "with")}
@@ -2200,15 +2463,15 @@ export default function AdminPage() {
                               ? "border-green-400 bg-green-500/20 text-white"
                               : "border-green-200 bg-green-50 text-green-700"
                           }`}>
-                            Paid: ₹{localAccommodationSummary.paidAmount.toLocaleString()} ({localAccommodationSummary.paidBookings})
+                            Paid: ₹{breakdownAccommodationSummary.paidAmount.toLocaleString()} ({breakdownAccommodationSummary.paidBookings})
                           </span>
-                          {localAccommodationSummary.pendingBookings > 0 && (
+                          {breakdownAccommodationSummary.pendingBookings > 0 && (
                             <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider border ${
                               accommodationFilter === "with"
                                 ? "border-amber-400 bg-amber-500/20 text-white"
                                 : "border-amber-200 bg-amber-50 text-amber-700"
                             }`}>
-                              Pending: {localAccommodationSummary.pendingBookings}
+                              Pending: {breakdownAccommodationSummary.pendingBookings}
                             </span>
                           )}
                         </div>
@@ -2217,17 +2480,21 @@ export default function AdminPage() {
                       <div className="mt-5 flex items-end justify-between pt-3 border-t border-black/5">
                         <div>
                           <p className={`text-2xl font-bold ${accommodationFilter === "with" ? "text-white" : "text-black"}`}>
-                            {localAccommodationSummary.totalBookings}
+                            {breakdownAccommodationSummary.totalBookings}
                           </p>
                           <p className={`text-[9px] uppercase tracking-wider font-semibold ${
                             accommodationFilter === "with" ? "text-violet-300" : "text-black/40"
                           }`}>
-                            Bookings
+                            {breakdownOriginFilter === "external"
+                              ? "Ext. Bookings"
+                              : breakdownOriginFilter === "cgc"
+                              ? "CGC Bookings"
+                              : "Bookings"}
                           </p>
                         </div>
                         <div className="text-right">
                           <p className={`text-xs font-semibold ${accommodationFilter === "with" ? "text-white/80" : "text-black/60"}`}>
-                            {localAccommodationSummary.checkedIn} checked in
+                            {breakdownAccommodationSummary.checkedIn} checked in
                           </p>
                           <p className={`text-[9px] ${accommodationFilter === "with" ? "text-violet-300" : "text-black/35"}`}>
                             Click to filter table
@@ -2341,7 +2608,11 @@ export default function AdminPage() {
                             <p className={`mt-1 text-[9px] uppercase tracking-wider font-semibold ${
                               isSelected ? "text-white/40" : "text-black/35"
                             }`}>
-                              Registrations
+                              {breakdownOriginFilter === "external"
+                                ? "Ext. Registrations"
+                                : breakdownOriginFilter === "cgc"
+                                ? "CGC Registrations"
+                                : "Registrations"}
                             </p>
                           </div>
 
@@ -2351,6 +2622,11 @@ export default function AdminPage() {
                             </p>
                             <p className={`text-[9px] mt-0.5 ${isSelected ? "text-white/40" : "text-black/35"}`}>
                               {event.individualCount} Solo · {event.teamCount} Team
+                              {event.headcount > event.count && (
+                                <span className={isSelected ? "text-emerald-300 font-semibold" : "text-emerald-700 font-semibold"}>
+                                  {" "}· {event.headcount} {breakdownOriginFilter === "external" ? "ext. delegates" : "delegates"}
+                                </span>
+                              )}
                             </p>
                           </div>
                         </div>
@@ -2539,6 +2815,61 @@ export default function AdminPage() {
               <option value="without">No Accommodation</option>
             </select>
 
+            {/* External Only Direct Toggle Button */}
+            <button
+              type="button"
+              onClick={() =>
+                handleInstitutionFilterChange(
+                  institutionFilter === "external" ? "all" : "external"
+                )
+              }
+              className={`rounded-[18px] border px-4 py-3 text-sm font-semibold flex items-center gap-2 transition shadow-sm cursor-pointer ${
+                institutionFilter === "external"
+                  ? "border-emerald-500 bg-emerald-600 text-white shadow-emerald-500/25 ring-2 ring-emerald-400"
+                  : "border-black/10 bg-white text-black hover:bg-black/5"
+              }`}
+              title="Show only external registrations, excluding all CGC campuses (CGC Mohali, Landran, Jhanjeri)"
+            >
+              <Building2
+                size={16}
+                className={
+                  institutionFilter === "external"
+                    ? "text-white"
+                    : "text-emerald-600"
+                }
+              />
+              <span>
+                {institutionFilter === "external"
+                  ? "External Only (Active)"
+                  : "External Only"}
+              </span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                  institutionFilter === "external"
+                    ? "bg-white/25 text-white"
+                    : "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                }`}
+              >
+                {institutionCounts.external}
+              </span>
+            </button>
+
+            {/* Institution Origin Dropdown */}
+            <select
+              value={institutionFilter}
+              onChange={(e) =>
+                handleInstitutionFilterChange(
+                  e.target.value as "all" | "external" | "cgc"
+                )
+              }
+              className="rounded-[18px] border border-black/10 bg-black px-4 py-3 text-sm outline-none text-white cursor-pointer"
+              title="Filter by institution origin"
+            >
+              <option value="all">All Institutions ({institutionCounts.total})</option>
+              <option value="external">🌐 External Only ({institutionCounts.external})</option>
+              <option value="cgc">🏛️ CGC Campuses ({institutionCounts.cgc})</option>
+            </select>
+
             {role === "master" && (
               <select
                 value={archiveFilter}
@@ -2626,18 +2957,38 @@ export default function AdminPage() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-2 text-[10px] uppercase tracking-[0.16em] text-black/40">
-            <div>
-              Showing{" "}
-              <span className="font-semibold text-black/70">
-                {filteredRegistrations.length}
-              </span>{" "}
-              of{" "}
-              <span className="font-semibold text-black/70">
-                {stats.activeTotal}
-              </span>{" "}
-              active registrations
+            <div className="flex flex-wrap items-center gap-2">
+              <span>
+                Showing{" "}
+                <span className="font-semibold text-black/70">
+                  {filteredRegistrations.length}
+                </span>{" "}
+                of{" "}
+                <span className="font-semibold text-black/70">
+                  {stats.activeTotal}
+                </span>{" "}
+                active registrations
+              </span>
+              {institutionFilter !== "all" && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-300 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-900 lowercase tracking-normal">
+                  <Building2 size={12} className="text-emerald-700" />
+                  <span>
+                    {institutionFilter === "external"
+                      ? "external only (excluding all cgc)"
+                      : "cgc campuses only"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleInstitutionFilterChange("all")}
+                    className="ml-0.5 hover:text-black font-bold text-xs"
+                    title="Reset to all institutions"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
               {filteredRegistrations.length !== stats.activeTotal && (
-                <span className="ml-2 font-normal text-amber-700/80 lowercase tracking-normal">
+                <span className="font-normal text-amber-700/80 lowercase tracking-normal">
                   ({stats.activeTotal - filteredRegistrations.length} filtered out)
                 </span>
               )}
@@ -2832,11 +3183,24 @@ export default function AdminPage() {
                           {participant.phone || "No phone"}
                         </p>
 
-                        <p className="mt-1 truncate text-[10px] text-black/35">
-                          {
-                            participant.college
-                          }
-                        </p>
+                        <div className="mt-1 flex items-center gap-1.5 truncate text-[10px] text-black/45">
+                          <span className="truncate" title={participant.college || undefined}>
+                            {participant.college || "No college"}
+                          </span>
+                          {participant.college && (
+                            <span
+                              className={`shrink-0 rounded-full px-1.5 py-0.2 text-[8px] font-bold border ${
+                                isCgcInstitution(participant.college, participant.email)
+                                  ? "bg-purple-50 text-purple-700 border-purple-200"
+                                  : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                              }`}
+                            >
+                              {isCgcInstitution(participant.college, participant.email)
+                                ? "CGC"
+                                : "External"}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {/* EVENTS */}
@@ -3847,6 +4211,16 @@ export default function AdminPage() {
         onClose={() => setIsResendEmailOpen(false)}
         selectedParticipantIds={Array.from(selectedParticipantIds)}
       />
+
+      {adminIdentity?.isPrimary && (
+        <SitePageLocksModal
+          isOpen={isPageLocksOpen}
+          onClose={() => setIsPageLocksOpen(false)}
+          isPrimary={adminIdentity.isPrimary}
+          siteAccess={siteLocks}
+          onUpdate={(updated) => setSiteLocks(updated)}
+        />
+      )}
     </main>
   );
 }

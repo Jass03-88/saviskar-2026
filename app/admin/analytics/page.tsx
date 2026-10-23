@@ -32,6 +32,8 @@ import {
   Shield,
   SlidersHorizontal,
   Lock,
+  Building2,
+  X,
 } from "lucide-react";
 
 /* =========================================================
@@ -76,6 +78,11 @@ type CollegeMetric = {
   state: string | null;
 };
 
+type CollegeOption = {
+  college: string;
+  count: number;
+};
+
 type GenderStats = {
   male: number;
   female: number;
@@ -101,8 +108,16 @@ type RevenueBreakdown = {
 
 type OverviewStats = {
   totalParticipants: number;
+  withAccommodation: number;
+  withoutAccommodation: number;
+  totalHeadcount: number;
+  headcountWithAccommodation: number;
+  headcountWithoutAccommodation: number;
   totalRegistrations: number;
+  registrationsWithAccommodation: number;
+  registrationsWithoutAccommodation: number;
   totalTeams: number;
+  totalSolo: number;
   totalCheckedIn: number;
   checkInRate: number;
   totalColleges: number;
@@ -129,6 +144,8 @@ type AnalyticsPayload = {
   assignedEvents: string[] | null;
   availableCategories: string[];
   selectedCategory: string;
+  availableColleges: CollegeOption[];
+  selectedCollege: string;
   categoryScopeLabel: string;
   accommodationAccess: boolean;
   overview: OverviewStats;
@@ -158,6 +175,9 @@ export default function AdminAnalyticsPage() {
   const [data, setData] = useState<AnalyticsPayload | null>(null);
 
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedCollege, setSelectedCollege] = useState("all");
+  const [collegeSearch, setCollegeSearch] = useState("");
+  const [showCollegeDropdown, setShowCollegeDropdown] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("states");
   const [stateSearch, setStateSearch] = useState("");
   const [eventSearch, setEventSearch] = useState("");
@@ -168,38 +188,55 @@ export default function AdminAnalyticsPage() {
   /* =======================================================
      FETCH DATA
   ======================================================= */
-  const loadAnalytics = useCallback(async (isRefresh = false, categoryOverride?: string) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
-    setError("");
+  const loadAnalytics = useCallback(
+    async (
+      isRefresh = false,
+      categoryOverride?: string,
+      collegeOverride?: string
+    ) => {
+      if (isRefresh) setRefreshing(true);
+      else setLoading(true);
+      setError("");
 
-    try {
-      const catParam = categoryOverride !== undefined ? categoryOverride : selectedCategory;
-      const url = catParam && catParam !== "all"
-        ? `/api/admin/analytics?category=${encodeURIComponent(catParam)}`
-        : "/api/admin/analytics";
+      try {
+        const catParam =
+          categoryOverride !== undefined ? categoryOverride : selectedCategory;
+        const colParam =
+          collegeOverride !== undefined ? collegeOverride : selectedCollege;
 
-      const res = await fetch(url, { cache: "no-store" });
-      if (res.status === 401 || res.status === 403) {
-        router.replace("/admin/login");
-        return;
+        const params = new URLSearchParams();
+        if (catParam && catParam !== "all") params.set("category", catParam);
+        if (colParam && colParam !== "all") params.set("college", colParam);
+
+        const qs = params.toString();
+        const url = qs ? `/api/admin/analytics?${qs}` : "/api/admin/analytics";
+
+        const res = await fetch(url, { cache: "no-store" });
+        if (res.status === 401 || res.status === 403) {
+          router.replace("/admin/login");
+          return;
+        }
+        const json = (await res.json()) as AnalyticsPayload;
+        if (!res.ok || !json.success) {
+          throw new Error((json as any).error || "Failed to load analytics");
+        }
+        setData(json);
+        if (json.selectedCategory) {
+          setSelectedCategory(json.selectedCategory);
+        }
+        if (json.selectedCollege) {
+          setSelectedCollege(json.selectedCollege);
+        }
+      } catch (err: any) {
+        console.error("Failed to load analytics:", err);
+        setError(err.message || "Failed to load analytics");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      const json = (await res.json()) as AnalyticsPayload;
-      if (!res.ok || !json.success) {
-        throw new Error((json as any).error || "Failed to load analytics");
-      }
-      setData(json);
-      if (json.selectedCategory) {
-        setSelectedCategory(json.selectedCategory);
-      }
-    } catch (err: any) {
-      console.error("Failed to load analytics:", err);
-      setError(err.message || "Failed to load analytics");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [router, selectedCategory]);
+    },
+    [router, selectedCategory, selectedCollege]
+  );
 
   useEffect(() => {
     loadAnalytics();
@@ -211,7 +248,14 @@ export default function AdminAnalyticsPage() {
   const role = data?.role ?? "admin";
   const isMaster = data?.isMaster ?? (role === "master");
   const overview = data?.overview;
-  const availableCategories = data?.availableCategories ?? [];
+  const availableCategories = useMemo(
+    () => data?.availableCategories ?? [],
+    [data?.availableCategories]
+  );
+  const availableColleges = useMemo(
+    () => data?.availableColleges ?? [],
+    [data?.availableColleges]
+  );
   const isCategoryScoped =
     !isMaster &&
     (!!data?.assignedCategory || (data?.assignedEvents && data.assignedEvents.length > 0));
@@ -235,25 +279,43 @@ export default function AdminAnalyticsPage() {
   const handleCategorySwitch = (newCat: string) => {
     if (newCat === selectedCategory) return;
     setSelectedCategory(newCat);
-    loadAnalytics(true, newCat);
+    loadAnalytics(true, newCat, selectedCollege);
   };
 
+  const handleCollegeSwitch = (newCollege: string) => {
+    if (newCollege === selectedCollege) return;
+    setSelectedCollege(newCollege);
+    setShowCollegeDropdown(false);
+    setCollegeSearch("");
+    loadAnalytics(true, selectedCategory, newCollege);
+  };
+
+  const filteredCollegeOptions = useMemo(() => {
+    if (!collegeSearch.trim()) return availableColleges;
+    const q = collegeSearch.toLowerCase().trim();
+    return availableColleges.filter((c) =>
+      c.college.toLowerCase().includes(q)
+    );
+  }, [availableColleges, collegeSearch]);
+
   // Filtered State List
+  const stateWise = data?.stateWise;
   const filteredStates = useMemo(() => {
-    if (!data?.stateWise) return [];
-    if (!stateSearch.trim()) return data.stateWise;
+    if (!stateWise) return [];
+    if (!stateSearch.trim()) return stateWise;
     const q = stateSearch.toLowerCase().trim();
-    return data.stateWise.filter(
+    return stateWise.filter(
       (s) =>
         s.state.toLowerCase().includes(q) ||
         s.topColleges.some((c) => c.toLowerCase().includes(q))
     );
-  }, [data?.stateWise, stateSearch]);
+  }, [stateWise, stateSearch]);
 
   // Filtered and Sorted Event List
+  const eventWise = data?.eventWise;
   const filteredEvents = useMemo(() => {
-    if (!data?.eventWise) return [];
-    let list = [...data.eventWise];
+    if (!eventWise) return [];
+    let list = [...eventWise];
 
     if (eventCategoryFilter !== "all") {
       list = list.filter(
@@ -274,15 +336,15 @@ export default function AdminAnalyticsPage() {
     });
 
     return list;
-  }, [data?.eventWise, eventCategoryFilter, eventSearch, eventSortBy]);
+  }, [eventWise, eventCategoryFilter, eventSearch, eventSortBy]);
 
   /* =======================================================
      CSV EXPORTERS
   ======================================================= */
   const exportStatesCsv = useCallback(() => {
-    if (!data?.stateWise) return;
+    if (!stateWise) return;
     const headers = ["State", "Participants", "Event Registrations", "Share (%)", "Top Colleges"];
-    const rows = data.stateWise.map((s) => [
+    const rows = stateWise.map((s) => [
       `"${s.state.replace(/"/g, '""')}"`,
       s.participantCount,
       s.eventRegistrations,
@@ -296,18 +358,22 @@ export default function AdminAnalyticsPage() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
+    const colSlug =
+      selectedCollege === "all"
+        ? "all_colleges"
+        : selectedCollege.replace(/[^a-zA-Z0-9]/g, "_");
     link.setAttribute(
       "download",
-      `saviskar_2026_state_analytics_${selectedCategory}_${new Date().toISOString().slice(0, 10)}.csv`
+      `saviskar_2026_state_analytics_${selectedCategory}_${colSlug}_${new Date().toISOString().slice(0, 10)}.csv`
     );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setShowExportMenu(false);
-  }, [data?.stateWise, selectedCategory]);
+  }, [stateWise, selectedCategory, selectedCollege]);
 
   const exportEventsCsv = useCallback(() => {
-    if (!data?.eventWise) return;
+    if (!eventWise) return;
     const baseHeaders = [
       "Event Name",
       "Category",
@@ -319,7 +385,7 @@ export default function AdminAnalyticsPage() {
     ];
     if (isMaster) baseHeaders.push("Revenue (INR)");
 
-    const rows = data.eventWise.map((e) => {
+    const rows = eventWise.map((e) => {
       const r = [
         `"${e.name.replace(/"/g, '""')}"`,
         `"${e.category.replace(/"/g, '""')}"`,
@@ -341,15 +407,19 @@ export default function AdminAnalyticsPage() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
+    const colSlug =
+      selectedCollege === "all"
+        ? "all_colleges"
+        : selectedCollege.replace(/[^a-zA-Z0-9]/g, "_");
     link.setAttribute(
       "download",
-      `saviskar_2026_event_analytics_${selectedCategory}_${new Date().toISOString().slice(0, 10)}.csv`
+      `saviskar_2026_event_analytics_${selectedCategory}_${colSlug}_${new Date().toISOString().slice(0, 10)}.csv`
     );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setShowExportMenu(false);
-  }, [data?.eventWise, isMaster, selectedCategory]);
+  }, [eventWise, isMaster, selectedCategory, selectedCollege]);
 
   /* =======================================================
      LOADING STATE
@@ -513,10 +583,11 @@ export default function AdminAnalyticsPage() {
         )}
 
         {/* =======================================================
-            CATEGORY SCOPE & FILTER BAR (ADMIN PERMISSIONS)
+            CATEGORY SCOPE & COLLEGE FILTER BAR (ADMIN PERMISSIONS)
         ======================================================= */}
-        <section className="mb-8 rounded-[24px] bg-white border border-black/10 p-4 sm:p-5 shadow-sm">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <section className="mb-8 rounded-[28px] bg-white border border-black/10 p-5 sm:p-6 shadow-sm">
+          {/* Top Row: Category Filter */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-black/5">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-black/[0.04] text-black">
                 <SlidersHorizontal size={18} />
@@ -524,7 +595,7 @@ export default function AdminAnalyticsPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-bold text-black">
-                    Competition Category Filter
+                    Competition Category Scope
                   </h2>
                   {isCategoryScoped && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase bg-amber-50 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200 font-semibold">
@@ -597,90 +668,416 @@ export default function AdminAnalyticsPage() {
               })}
             </div>
           </div>
+
+          {/* Bottom Row: College / Institution Filter */}
+          <div className="pt-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+                <Building2 size={18} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-black">
+                    Filter by College / Institution
+                  </h3>
+                  {selectedCollege !== "all" && (
+                    <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold bg-blue-50 text-blue-800 px-2.5 py-0.5 rounded-full border border-blue-200">
+                      <span>{selectedCollege}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleCollegeSwitch("all")}
+                        className="hover:text-red-600 transition"
+                        title="Clear college filter"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-black/50 mt-0.5">
+                  Filter delegate attendance, accommodation status, and competition entries by college.
+                </p>
+              </div>
+            </div>
+
+            {/* College Combobox & Quick Selector */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Quick Chip: All Colleges */}
+              <button
+                type="button"
+                onClick={() => handleCollegeSwitch("all")}
+                disabled={refreshing}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition border ${
+                  selectedCollege === "all"
+                    ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+                    : "border-black/10 bg-black/[0.02] text-black/65 hover:bg-black/5"
+                }`}
+              >
+                All Colleges ({availableColleges.length})
+              </button>
+
+              {/* Quick Top 3 Colleges */}
+              {availableColleges.slice(0, 3).map((col) => {
+                const isSelected = selectedCollege.toLowerCase() === col.college.toLowerCase();
+                return (
+                  <button
+                    key={col.college}
+                    type="button"
+                    onClick={() => handleCollegeSwitch(col.college)}
+                    disabled={refreshing}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition border flex items-center gap-1.5 max-w-[200px] truncate ${
+                      isSelected
+                        ? "border-blue-600 bg-blue-600 text-white shadow-sm"
+                        : "border-black/10 bg-black/[0.02] text-black/65 hover:bg-black/5"
+                    }`}
+                    title={col.college}
+                  >
+                    <span className="truncate">{col.college}</span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full shrink-0 ${
+                        isSelected
+                          ? "bg-white/20 text-white"
+                          : "bg-black/5 text-black/60"
+                      }`}
+                    >
+                      {col.count}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {/* Searchable Dropdown for all 240+ Colleges */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowCollegeDropdown(!showCollegeDropdown)}
+                  className="flex items-center gap-1.5 rounded-full border border-black/15 bg-white px-3.5 py-1.5 text-xs font-semibold text-black/80 hover:bg-black/[0.03] transition shadow-sm"
+                >
+                  <Search size={13} className="text-black/50" />
+                  <span>
+                    {selectedCollege !== "all" ? "Change College..." : "Select from 240+ Colleges..."}
+                  </span>
+                  <ChevronDown size={12} className="opacity-60" />
+                </button>
+
+                {showCollegeDropdown && (
+                  <div className="absolute right-0 sm:left-0 sm:right-auto mt-2 w-80 sm:w-96 rounded-2xl bg-white border border-black/15 shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    <div className="relative mb-2">
+                      <Search
+                        size={14}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-black/40"
+                      />
+                      <input
+                        type="text"
+                        value={collegeSearch}
+                        onChange={(e) => setCollegeSearch(e.target.value)}
+                        placeholder="Search college by name..."
+                        className="w-full rounded-xl bg-black/[0.03] pl-9 pr-3 py-2 text-xs text-black placeholder:text-black/40 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-black/5"
+                        autoFocus
+                      />
+                      {collegeSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setCollegeSearch("")}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-black/40 hover:text-black"
+                        >
+                          <X size={13} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="max-h-60 overflow-y-auto space-y-1 divide-y divide-black/[0.03]">
+                      <button
+                        type="button"
+                        onClick={() => handleCollegeSwitch("all")}
+                        className={`w-full text-left px-3 py-2 text-xs rounded-xl transition flex items-center justify-between ${
+                          selectedCollege === "all"
+                            ? "bg-blue-50 font-bold text-blue-700"
+                            : "hover:bg-black/5 text-black"
+                        }`}
+                      >
+                        <span>All Colleges (Reset Filter)</span>
+                        <span className="text-[10px] font-mono opacity-50">
+                          {data?.overview.totalParticipants ?? 0} delegates
+                        </span>
+                      </button>
+
+                      {filteredCollegeOptions.length === 0 ? (
+                        <p className="py-4 text-center text-xs text-black/40">
+                          No colleges found matching &quot;{collegeSearch}&quot;
+                        </p>
+                      ) : (
+                        filteredCollegeOptions.map((c) => {
+                          const isSelected =
+                            selectedCollege.toLowerCase() === c.college.toLowerCase();
+                          return (
+                            <button
+                              key={c.college}
+                              type="button"
+                              onClick={() => handleCollegeSwitch(c.college)}
+                              className={`w-full text-left px-3 py-2 text-xs rounded-xl transition flex items-center justify-between gap-2 ${
+                                isSelected
+                                  ? "bg-blue-50 font-bold text-blue-700"
+                                  : "hover:bg-black/5 text-black"
+                              }`}
+                            >
+                              <span className="truncate">{c.college}</span>
+                              <span className="text-[10px] font-mono bg-black/5 px-2 py-0.5 rounded-full shrink-0">
+                                {c.count} {c.count === 1 ? "delegate" : "delegates"}
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </section>
 
         {/* =======================================================
             EXECUTIVE OVERVIEW CARDS
         ======================================================= */}
         <section className="mb-10">
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-
-            {/* 1. Total Delegates */}
-            <div className="rounded-[24px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md">
-              <div className="flex items-center justify-between text-black/40">
-                <span className="text-[10px] font-bold uppercase tracking-wider">
-                  {selectedCategory === "all" ? "Total Delegates" : `${selectedCategory.replace("-", " ")} Delegates`}
-                </span>
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-50 text-violet-700">
-                  <Users size={16} />
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            {/* 1. Total Delegates (Leaders + Team Members) */}
+            <div className="rounded-[26px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between text-black/40">
+                  <span className="text-[10px] font-bold uppercase tracking-wider">
+                    {selectedCategory === "all"
+                      ? selectedCollege === "all"
+                        ? "Total Delegates"
+                        : "Delegates (College)"
+                      : `${selectedCategory.replace("-", " ")} Delegates`}
+                  </span>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-50 text-violet-700">
+                    <Users size={16} />
+                  </div>
                 </div>
+                <p className="mt-3 text-3xl font-bold tracking-tight text-black">
+                  {overview?.totalParticipants.toLocaleString() ?? "0"}
+                </p>
+                <p className="mt-1 text-xs text-black/50">
+                  Headcount: <span className="font-semibold text-black">{overview?.totalHeadcount.toLocaleString() ?? 0}</span> (including all team members)
+                </p>
               </div>
-              <p className="mt-3 text-3xl font-bold tracking-tight text-black">
-                {overview?.totalParticipants.toLocaleString() ?? "0"}
-              </p>
-              <p className="mt-1 text-xs text-black/50">
-                Across {overview?.totalColleges ?? 0} institutions & {overview?.totalStates ?? 0} states
-              </p>
+
+              {/* Acco Breakdown Badges for Delegates */}
+              <div className="mt-4 pt-3 border-t border-black/5 flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800 border border-emerald-200">
+                  <Bed size={12} className="text-emerald-600 shrink-0" />
+                  <span>{overview?.withAccommodation.toLocaleString() ?? 0} With Acco</span>
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 border border-zinc-200">
+                  <span>{overview?.withoutAccommodation.toLocaleString() ?? 0} Without Acco</span>
+                </span>
+              </div>
             </div>
 
-            {/* 2. Total Registrations */}
-            <div className="rounded-[24px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md">
-              <div className="flex items-center justify-between text-black/40">
-                <span className="text-[10px] font-bold uppercase tracking-wider">
-                  {selectedCategory === "all" ? "Event Registrations" : `${selectedCategory.replace("-", " ")} Entries`}
-                </span>
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
-                  <CalendarDays size={16} />
+            {/* 2. Total Registrations & Squads */}
+            <div className="rounded-[26px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between text-black/40">
+                  <span className="text-[10px] font-bold uppercase tracking-wider">
+                    {selectedCategory === "all" ? "Event Registrations" : `${selectedCategory.replace("-", " ")} Entries`}
+                  </span>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                    <CalendarDays size={16} />
+                  </div>
                 </div>
+                <p className="mt-3 text-3xl font-bold tracking-tight text-black">
+                  {overview?.totalRegistrations.toLocaleString() ?? "0"}
+                </p>
+                <p className="mt-1 text-xs text-black/50">
+                  <span className="font-semibold text-black">{overview?.totalTeams.toLocaleString() ?? 0}</span> squads · <span className="font-semibold text-black">{overview?.totalSolo.toLocaleString() ?? 0}</span> solo
+                </p>
               </div>
-              <p className="mt-3 text-3xl font-bold tracking-tight text-black">
-                {overview?.totalRegistrations.toLocaleString() ?? "0"}
-              </p>
-              <p className="mt-1 text-xs text-black/50">
-                {overview?.totalTeams.toLocaleString() ?? 0} registered squads / teams
-              </p>
+
+              {/* Acco Breakdown Badges for Registrations */}
+              <div className="mt-4 pt-3 border-t border-black/5 flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 border border-blue-200">
+                  <Bed size={12} className="text-blue-600 shrink-0" />
+                  <span>{overview?.registrationsWithAccommodation.toLocaleString() ?? 0} With Stay</span>
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 border border-zinc-200">
+                  <span>{overview?.registrationsWithoutAccommodation.toLocaleString() ?? 0} Without Stay</span>
+                </span>
+              </div>
             </div>
 
             {/* 3. Check-In Attendance */}
-            <div className="rounded-[24px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md">
-              <div className="flex items-center justify-between text-black/40">
-                <span className="text-[10px] font-bold uppercase tracking-wider">Turnout & Check-Ins</span>
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-                  <UserCheck size={16} />
+            <div className="rounded-[26px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between text-black/40">
+                  <span className="text-[10px] font-bold uppercase tracking-wider">Turnout & Check-Ins</span>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                    <UserCheck size={16} />
+                  </div>
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <p className="text-3xl font-bold tracking-tight text-emerald-700">
+                    {overview?.totalCheckedIn.toLocaleString() ?? "0"}
+                  </p>
+                  <span className="text-sm font-semibold text-emerald-800/70">
+                    ({overview?.checkInRate ?? 0}%)
+                  </span>
+                </div>
+                <div className="mt-2 w-full bg-emerald-100/60 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-emerald-600 h-full rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, overview?.checkInRate ?? 0)}%` }}
+                  />
                 </div>
               </div>
-              <div className="mt-3 flex items-baseline gap-2">
-                <p className="text-3xl font-bold tracking-tight text-emerald-700">
-                  {overview?.totalCheckedIn.toLocaleString() ?? "0"}
-                </p>
-                <span className="text-sm font-semibold text-emerald-800/70">
-                  ({overview?.checkInRate ?? 0}%)
-                </span>
+
+              <div className="mt-4 pt-3 border-t border-black/5 text-[11px] text-black/50">
+                Verified gate & competition check-ins
               </div>
-              <div className="mt-2 w-full bg-emerald-100/60 rounded-full h-1.5 overflow-hidden">
+            </div>
+
+            {/* 4. Geographic & Institution Footprint */}
+            <div className="rounded-[26px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between text-black/40">
+                  <span className="text-[10px] font-bold uppercase tracking-wider">
+                    {selectedCollege === "all" ? "Institutions & States" : "Filtered College"}
+                  </span>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+                    <MapPin size={16} />
+                  </div>
+                </div>
+
+                {selectedCollege === "all" ? (
+                  <>
+                    <p className="mt-3 text-3xl font-bold tracking-tight text-black">
+                      {overview?.totalColleges.toLocaleString() ?? "0"}
+                    </p>
+                    <p className="mt-1 text-xs text-black/50">
+                      Institutions across <span className="font-semibold text-black">{overview?.totalStates ?? 0}</span> states
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-3 text-lg font-bold tracking-tight text-black line-clamp-2" title={selectedCollege}>
+                      {selectedCollege}
+                    </p>
+                    <p className="mt-1 text-xs text-black/50">
+                      {overview?.totalParticipants} delegates across {overview?.totalStates} states
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-black/5 flex items-center justify-between">
+                {selectedCollege === "all" ? (
+                  <span className="text-[11px] text-black/55 truncate">
+                    Top: <span className="font-semibold text-black">{data?.stateWise[0]?.state ?? "N/A"}</span> ({data?.stateWise[0]?.participantCount ?? 0})
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleCollegeSwitch("all")}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 transition"
+                  >
+                    <span>Clear College Filter</span>
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+
+          {/* =======================================================
+              ACCOMMODATION & STAY LOGISTICS SUMMARY BANNER
+          ======================================================= */}
+          <div className="mt-4 rounded-[26px] bg-gradient-to-r from-emerald-50/60 via-teal-50/40 to-white border border-emerald-100/80 p-5 shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm">
+                  <Bed size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-black">
+                      Accommodation & Hostel Stay Distribution
+                    </h3>
+                    <span className="text-[10px] font-mono uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                      {overview?.totalParticipants ? Math.round(((overview?.withAccommodation ?? 0) / overview.totalParticipants) * 100) : 0}% Stay Ratio
+                    </span>
+                  </div>
+                  <p className="text-xs text-black/55 mt-0.5">
+                    Breakdown of delegates requiring university hostel accommodation vs. non-stay delegates.
+                  </p>
+                </div>
+              </div>
+
+              {/* Visual Stats Row */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="rounded-2xl bg-white border border-emerald-200/60 px-4 py-2 shadow-xs">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">With Accommodation</div>
+                  <div className="text-lg font-bold text-black flex items-baseline gap-1 mt-0.5">
+                    <span>{overview?.withAccommodation.toLocaleString() ?? 0}</span>
+                    <span className="text-xs font-normal text-black/45">delegates</span>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white border border-zinc-200/80 px-4 py-2 shadow-xs">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-600">Without Accommodation</div>
+                  <div className="text-lg font-bold text-black flex items-baseline gap-1 mt-0.5">
+                    <span>{overview?.withoutAccommodation.toLocaleString() ?? 0}</span>
+                    <span className="text-xs font-normal text-black/45">delegates</span>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white border border-blue-200/60 px-4 py-2 shadow-xs">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Headcount Stay Seats</div>
+                  <div className="text-lg font-bold text-black flex items-baseline gap-1 mt-0.5">
+                    <span>{overview?.headcountWithAccommodation.toLocaleString() ?? 0}</span>
+                    <span className="text-xs font-normal text-black/45">participations</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Proportion Bar */}
+            <div className="mt-4">
+              <div className="w-full bg-zinc-200/80 rounded-full h-2.5 overflow-hidden flex">
                 <div
-                  className="bg-emerald-600 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, overview?.checkInRate ?? 0)}%` }}
+                  className="bg-emerald-500 h-full transition-all duration-500"
+                  style={{
+                    width: `${
+                      overview?.totalParticipants
+                        ? Math.min(100, Math.round(((overview?.withAccommodation ?? 0) / overview.totalParticipants) * 100))
+                        : 0
+                    }%`,
+                  }}
+                  title={`With Accommodation: ${overview?.withAccommodation ?? 0}`}
+                />
+                <div
+                  className="bg-zinc-400 h-full transition-all duration-500"
+                  style={{
+                    width: `${
+                      overview?.totalParticipants
+                        ? Math.min(100, Math.round(((overview?.withoutAccommodation ?? 0) / overview.totalParticipants) * 100))
+                        : 0
+                    }%`,
+                  }}
+                  title={`Without Accommodation: ${overview?.withoutAccommodation ?? 0}`}
                 />
               </div>
-            </div>
-
-            {/* 4. State Footprint */}
-            <div className="rounded-[24px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md">
-              <div className="flex items-center justify-between text-black/40">
-                <span className="text-[10px] font-bold uppercase tracking-wider">Geographic Footprint</span>
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
-                  <MapPin size={16} />
-                </div>
+              <div className="flex items-center justify-between text-[10px] font-medium text-black/50 mt-1.5 px-0.5">
+                <span className="text-emerald-700 font-semibold">
+                  ● With Stay: {overview?.withAccommodation ?? 0} ({overview?.totalParticipants ? Math.round(((overview?.withAccommodation ?? 0) / overview.totalParticipants) * 100) : 0}%)
+                </span>
+                <span className="text-zinc-600 font-semibold">
+                  ● Without Stay: {overview?.withoutAccommodation ?? 0} ({overview?.totalParticipants ? Math.round(((overview?.withoutAccommodation ?? 0) / overview.totalParticipants) * 100) : 0}%)
+                </span>
               </div>
-              <p className="mt-3 text-3xl font-bold tracking-tight text-black">
-                {overview?.totalStates.toLocaleString() ?? "0"}
-              </p>
-              <p className="mt-1 text-xs text-black/50">
-                Top State: <span className="font-semibold text-black">{data?.stateWise[0]?.state ?? "N/A"}</span> ({data?.stateWise[0]?.participantCount ?? 0})
-              </p>
             </div>
-
           </div>
 
           {/* =======================================================

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   requireAdmin,
   requireMasterAdmin,
+  isPrimaryMaster,
 } from "@/lib/supabase/server";
 import { parseAdminCategories } from "@/lib/admin/scope";
 import { fetchInBatches } from "@/lib/supabase/batch";
@@ -168,7 +169,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-  const pageSize = Math.min(50000, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
+  const pageSize = Math.min(20000, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
   const eventId = searchParams.get("eventId")?.trim();
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
@@ -225,64 +226,84 @@ export async function GET(request: Request) {
   }
 
   // 1. Fetch paginated participant_events with optional eventId / scope filter in 1000-row chunks
-  const DB_BATCH_SIZE = 1000;
-  const buildPeQuery = (legacy = false) => {
-    let q = supabaseAdmin.from("participant_events").select(
-      legacy
-        ? "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at"
-        : "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, main_checked_in, main_checked_in_at, registration_group_id, is_archived, created_at",
-      { count: "exact" }
-    );
+  // PostgREST enforces a hard server-side limit of 1000 rows per query.
+  // When pageSize > 1000 or the requested range exceeds 1000 rows,
+  // we paginate in 1000-row chunks to retrieve all records up to `to`.
+  const CHUNK_SIZE = 1000;
+  const buildPeQuery = (selectLegacy = false) => {
+    const selectCols = selectLegacy
+      ? "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at"
+      : "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, main_checked_in, main_checked_in_at, registration_group_id, is_archived, created_at";
+
+    let q = supabaseAdmin
+      .from("participant_events")
+      .select(selectCols, { count: "exact" });
+
     if (eventId) {
       q = q.eq("event_id", eventId);
     } else if (allowedEventIds !== null) {
       q = q.in("event_id", allowedEventIds);
     }
+
+    // Deterministic tie-breaking sort order ensures no duplicates or skipped rows across chunk boundaries
     return q.order("created_at", { ascending: false }).order("id", { ascending: false });
   };
 
+  let participantEventsData: ParticipantEvent[] = [];
+  let totalCount: number | null = null;
+  let peError: any = null;
   let schemaWarning: string | undefined;
-  const firstBatchEnd = Math.min(to, from + DB_BATCH_SIZE - 1);
-  let firstRes = await buildPeQuery(false).range(from, firstBatchEnd);
+  let useLegacyQuery = false;
 
-  if (firstRes.error && firstRes.error.code === "42703") {
+  const firstBatchEnd = Math.min(to, from + CHUNK_SIZE - 1);
+  const firstBatch = await buildPeQuery(false).range(from, firstBatchEnd);
+
+  if (firstBatch.error && firstBatch.error.code === "42703") {
     console.warn("Main check-in columns missing. Falling back to legacy query.");
     schemaWarning = "Main check-in migration is not applied.";
-    firstRes = await buildPeQuery(true).range(from, firstBatchEnd);
+    useLegacyQuery = true;
+    const fallbackFirst = await buildPeQuery(true).range(from, firstBatchEnd);
+    participantEventsData = (fallbackFirst.data ?? []) as unknown as ParticipantEvent[];
+    totalCount = fallbackFirst.count;
+    peError = fallbackFirst.error;
+  } else {
+    participantEventsData = (firstBatch.data ?? []) as unknown as ParticipantEvent[];
+    totalCount = firstBatch.count;
+    peError = firstBatch.error;
   }
 
-  if (firstRes.error) {
-    console.error("Admin registrations query failed:", firstRes.error);
+  if (peError) {
+    console.error("Admin registrations query failed on initial batch:", peError);
     return NextResponse.json(
       { error: "Could not load registrations." },
       { status: 500 }
     );
   }
 
-  const totalCount = firstRes.count ?? (firstRes.data?.length || 0);
-  const participantEvents: ParticipantEvent[] = [...((firstRes.data ?? []) as unknown as ParticipantEvent[])];
+  const effectiveTotalCount = typeof totalCount === "number" ? totalCount : participantEventsData.length;
 
-  const effectiveEnd = Math.min(to, totalCount - 1);
-  const isLegacy = Boolean(schemaWarning);
-
-  if (effectiveEnd > firstBatchEnd) {
-    for (let currentOffset = from + DB_BATCH_SIZE; currentOffset <= effectiveEnd; currentOffset += DB_BATCH_SIZE) {
-      const currentBatchEnd = Math.min(effectiveEnd, currentOffset + DB_BATCH_SIZE - 1);
-      const nextRes = await buildPeQuery(isLegacy).range(currentOffset, currentBatchEnd);
-      if (nextRes.error) {
-        console.error("Admin registrations batch chunk failed:", nextRes.error);
+  // If more records are requested and total count exceeds the first batch, fetch subsequent chunks
+  if (effectiveTotalCount > 0) {
+    const effectiveTo = Math.min(to, effectiveTotalCount - 1);
+    for (let currentStart = from + CHUNK_SIZE; currentStart <= effectiveTo; currentStart += CHUNK_SIZE) {
+      const currentEnd = Math.min(effectiveTo, currentStart + CHUNK_SIZE - 1);
+      const nextBatch = await buildPeQuery(useLegacyQuery).range(currentStart, currentEnd);
+      if (nextBatch.error) {
+        console.error("Admin registrations batch query failed at offset:", currentStart, nextBatch.error);
         return NextResponse.json(
           { error: "Could not load complete registrations dataset." },
           { status: 500 }
         );
       }
-      if (nextRes.data && nextRes.data.length > 0) {
-        participantEvents.push(...(nextRes.data as unknown as ParticipantEvent[]));
+      if (nextBatch.data && nextBatch.data.length > 0) {
+        participantEventsData.push(...(nextBatch.data as unknown as ParticipantEvent[]));
       } else {
         break;
       }
     }
   }
+
+  const participantEvents = (participantEventsData ?? []) as ParticipantEvent[];
 
   const participantIds = Array.from(
     new Set(participantEvents.map((pe) => pe.participant_id).filter(Boolean))
@@ -746,36 +767,48 @@ export async function GET(request: Request) {
             registration.participant_id
           ) ?? [];
 
-        return participant
-          ? [
-            {
-              participant: {
-                ...participant,
-                accommodation: acc,
-                accommodations: participantAccs,
-              },
-              registration,
-              event:
-                eventsById.get(
-                  registration.event_id
-                ) ?? null,
-              members:
-                membersByParticipantEventId.get(
-                  registration.id
-                ) ?? [],
-              faculty:
-                registration.registration_group_id
-                  ? facultyByGroupId.get(registration.registration_group_id) ?? null
-                  : null,
-              payment_order:
-                paymentOrdersByRegistration.get(
-                  registration.id
-                ) ?? null,
+        const effectiveParticipant = participant ?? {
+          id: registration.participant_id,
+          participant_id: "N/A",
+          name: "Unknown Participant",
+          college: null,
+          email: "N/A",
+          phone: null,
+          photo_url: null,
+          gender: null,
+          state: null,
+          id_card_storage_path: null,
+          created_at: registration.created_at,
+        };
+
+        return [
+          {
+            participant: {
+              ...effectiveParticipant,
               accommodation: acc,
               accommodations: participantAccs,
             },
-          ]
-          : [];
+            registration,
+            event:
+              eventsById.get(
+                registration.event_id
+              ) ?? null,
+            members:
+              membersByParticipantEventId.get(
+                registration.id
+              ) ?? [],
+            faculty:
+              registration.registration_group_id
+                ? facultyByGroupId.get(registration.registration_group_id) ?? null
+                : null,
+            payment_order:
+              paymentOrdersByRegistration.get(
+                registration.id
+              ) ?? null,
+            accommodation: acc,
+            accommodations: participantAccs,
+          },
+        ];
       }
     );
 
@@ -786,7 +819,7 @@ export async function GET(request: Request) {
       role: auth.role,
       adminEmail: auth.user?.email ?? null,
       adminName: ((auth.user?.user_metadata?.name as string) || (auth.user?.user_metadata?.full_name as string)) ?? null,
-      isPrimary: auth.role === "master",
+      isPrimary: isPrimaryMaster(auth.user),
       accommodation_access: auth.accommodation_access,
       assigned_category: auth.assigned_category,
       assigned_events: auth.assigned_events,

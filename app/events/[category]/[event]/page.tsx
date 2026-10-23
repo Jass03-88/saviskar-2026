@@ -15,7 +15,7 @@ import Image from "next/image";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/ui/Navbar";
 import TerminalPlaceholder from "@/components/ui/TerminalPlaceholder";
-import { SITE_ACCESS } from "@/lib/config/site-access";
+import { getSiteAccess } from "@/lib/config/site-access";
 import { getEventRulebook } from "@/lib/events/rulebooks";
 
 export const revalidate = 300;
@@ -61,8 +61,9 @@ export default async function EventPage({
   }>;
 }) {
   const { category, event } = await params;
+  const siteAccess = await getSiteAccess();
 
-  if (!SITE_ACCESS.EVENT_DETAILS_ENABLED) {
+  if (!siteAccess.EVENT_DETAILS_ENABLED) {
     return (
       <TerminalPlaceholder
         moduleCode="EVENT.DOSSIER"
@@ -206,7 +207,7 @@ const heroImage =
 
             </div>
 
-            {currentEvent.registration_open && SITE_ACCESS.REGISTRATIONS_ENABLED ? (
+            {currentEvent.registration_open && siteAccess.REGISTRATIONS_ENABLED ? (
               <a
                 href="#register"
                 className="flex w-fit items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-medium text-black transition-transform hover:scale-[1.03]"
@@ -214,7 +215,7 @@ const heroImage =
                 Register
                 <ArrowUpRight size={15} />
               </a>
-            ) : !SITE_ACCESS.REGISTRATIONS_ENABLED ? (
+            ) : !siteAccess.REGISTRATIONS_ENABLED ? (
               <span className="flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-5 py-2.5 text-xs sm:text-sm font-medium text-violet-300">
                 <Lock size={13} className="text-violet-400" />
                 Registrations Opening Soon
@@ -395,7 +396,7 @@ const heroImage =
 
           <div className="mt-14 flex flex-col gap-8 border-t border-white/15 pt-8 md:flex-row md:items-center md:justify-between">
 
-            {!SITE_ACCESS.REGISTRATIONS_ENABLED ? (
+            {!siteAccess.REGISTRATIONS_ENABLED ? (
               <>
                 <div className="max-w-md">
                   <p className="text-sm leading-6 text-white/60 md:text-base">
