@@ -474,7 +474,7 @@ describe("/api/payments/create Retry Flow Redesign & Atomic RPC Integration", ()
     expect(failedUpdate).toBeDefined();
   });
 
-  it("D. If gateway confirms transaction is NOT FOUND (abandoned) -> calls atomic RPC and creates new order with fresh txnid", async () => {
+  it("D. If gateway returns NOT FOUND (ambiguous) -> fails safely with 409 PAYMENT_STATUS_AMBIGUOUS without creating duplicate order or marking old order failed", async () => {
     mockGatewayStatus = "not_found";
 
     const req = new NextRequest("https://saviskar-26.vercel.app/api/payments/create", {
@@ -485,11 +485,15 @@ describe("/api/payments/create Retry Flow Redesign & Atomic RPC Integration", ()
     const res = await POST(req);
     const data = await res.json();
 
-    expect(res.status).toBe(200);
-    expect(data.success).toBe(true);
-    expect(data.paymentOrderId).toBe("new_order_uuid_777");
-    expect(data.gatewayOrderId).toBe("SVK-FRESH-TXN-1");
-    expect(data.checkoutConfig).toBeDefined();
+    expect(res.status).toBe(409);
+    expect(data.success).toBe(false);
+    expect(data.code).toBe("PAYMENT_STATUS_AMBIGUOUS");
+    expect(data.error).toContain("Payment status is currently ambiguous on the gateway (Not Found)");
+    expect(createdGatewayOrderCount).toBe(0);
+
+    // Old order must NOT be marked failed
+    const failedUpdate = updatedOrders.find((u) => u.status === "failed");
+    expect(failedUpdate).toBeUndefined();
   });
 
   it("E. If gateway status is UNKNOWN (verification error/timeout) -> fails safely with 503 VERIFICATION_UNAVAILABLE without creating order", async () => {

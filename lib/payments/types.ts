@@ -93,7 +93,7 @@ export type FetchedPaymentDetails = {
    * - "paid" / "captured": payment succeeded and funds captured
    * - "pending" / "in progress": payment initiated and currently awaiting capture
    * - "failed" / "cancelled": payment failed, dropped, or cancelled
-   * - "not_found": transaction never initiated or recorded by gateway
+   * - "not_found": transaction was not found by gateway; does not guarantee that no customer debit occurred
    */
   status: "paid" | "pending" | "failed" | "not_found" | string;
 

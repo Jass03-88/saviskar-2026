@@ -105,10 +105,10 @@ export default function AddAccommodationModal({
     };
   }, [planSlug, selectedDate, extraDays]);
 
-  // Check overlap with existing stays
+  // Check overlap with existing confirmed stays (unpaid pending holds do not block re-booking)
   const conflictMessage = useMemo(() => {
     for (const stay of existingStays) {
-      if (stay.status !== "cancelled" && stay.status !== "failed") {
+      if (stay.status === "paid") {
         if (startDate < stay.endDate && endDate > stay.startDate) {
           return `Accommodation is already booked for these dates (${stay.startDate} to ${stay.endDate}). Please choose different dates or review your existing stay.`;
         }

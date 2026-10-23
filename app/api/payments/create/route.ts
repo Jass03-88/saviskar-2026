@@ -472,15 +472,7 @@ export async function POST(
     }
 
     // ─── Case B: Active Pending Payment in Progress on Gateway ───
-    // If PayU confirms the transaction was merely "initiated" (checkout opened but no payment
-    // method selected or submitted), it has been abandoned — fall through to Case C (atomic retry)
-    // so attendees clicking "Complete Payment" from email or retry are never permanently deadlocked.
-    // If the payment is actually in progress (e.g. awaiting UPI approval or banking OTP), return 409.
-    const isMerelyInitiated =
-      details.unmappedStatus?.toLowerCase() === "initiated" ||
-      (details.mode === "-" && !details.gatewayPaymentId);
-
-    if (details.status === "pending" && !isMerelyInitiated) {
+    if (details.status === "pending") {
       return errorResponse(
         "A payment attempt is currently being processed by the gateway. Please complete it on your payment app or wait a few moments before retrying.",
         409,
@@ -488,13 +480,42 @@ export async function POST(
       );
     }
 
-    // ─── Case C: Failed or Safely Abandoned (Not Found) Attempt ──
+    // ─── Check for Authoritative Terminal Failure ─────────────────
+    const rawLower = (details.rawStatus || "").toLowerCase().trim();
+    const isTerminalFailure =
+      details.status === "failed" &&
+      (
+        rawLower === "failure" ||
+        rawLower === "failed" ||
+        rawLower === "bounced" ||
+        rawLower === "usercancelled" ||
+        rawLower === "dropped" ||
+        !rawLower
+      );
+
+    if (!isTerminalFailure) {
+      // ─── Case D: Ambiguous / Unresolved Gateway Status (Not Found or Unknown) ──
+      // PayU 'Not Found' does not guarantee that no customer debit occurred.
+      // The available schema cannot distinguish a never-dispatched draft from an
+      // in-flight checkout. Fail closed: retain existing payment state and protective
+      // holds, and reject replacement checkout until payment outcome is resolved.
+      console.warn(
+        `Payment attempt ${paymentOrder.gateway_order_id} has ambiguous gateway status "${details.status}" (raw: "${details.rawStatus}"). Failing closed.`
+      );
+      return errorResponse(
+        "Payment status is currently ambiguous on the gateway (Not Found). Please wait a few moments before retrying or contact support if your account was debited.",
+        409,
+        "PAYMENT_STATUS_AMBIGUOUS"
+      );
+    }
+
+    // ─── Case C: Authoritatively Verified Terminal Failure Attempt ──
     // The previous txnid must NEVER be reused for PayU checkout.
     // Atomically transition via database RPC:
     // Locks participant events and old order, checks concurrency, marks old order 'failed',
     // creates new 'pending' order, and copies order items atomically.
     console.log(
-      `Payment attempt ${paymentOrder.gateway_order_id} resolved to status "${details.status}". Initiating atomic retry via RPC.`
+      `Payment attempt ${paymentOrder.gateway_order_id} resolved to terminal failure status "${details.status}". Initiating atomic retry via RPC.`
     );
 
     const newOrderRef = `SVK-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;

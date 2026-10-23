@@ -39,6 +39,7 @@ import AddAccommodationModal from "./AddAccommodationModal";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import { ImageUploader } from "@/components/ui/image-uploader";
 import { calculateStayDates } from "@/lib/accommodation-dates";
+import { submitPayUCheckoutForm } from "@/lib/payments/checkout-form";
 
 export function formatAccommodationDate(
   duration: number,
@@ -1953,34 +1954,7 @@ export default function RegistrationForm({
       }
 
       // 2. Submit PayU Hosted Checkout form
-      const checkoutConfig = createResult.checkoutConfig;
-      const options = checkoutConfig?.options ?? {};
-      const postUrl = checkoutConfig?.postUrl;
-
-      if (!postUrl || !options.hash) {
-        throw new Error(
-          "Payment gateway configuration is missing or invalid."
-        );
-      }
-
-      const checkoutForm = document.createElement("form");
-      checkoutForm.method = "POST";
-      checkoutForm.action = postUrl;
-      checkoutForm.style.display = "none";
-
-      for (const [key, value] of Object.entries(options)) {
-        if (value !== undefined && value !== null) {
-          const input = document.createElement("input");
-          input.type = "hidden";
-          input.name = key;
-          input.value = String(value);
-          checkoutForm.appendChild(input);
-        }
-      }
-
-      // Submit form and keep paymentProcessing active while browser navigates away to PayU
-      document.body.appendChild(checkoutForm);
-      checkoutForm.submit();
+      submitPayUCheckoutForm(createResult.checkoutConfig);
       return;
     } catch (error) {
       console.error("Payment checkout error:", error);

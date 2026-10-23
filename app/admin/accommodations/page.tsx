@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { Fragment, useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Building, 
@@ -13,8 +13,13 @@ import {
   Settings, 
   History,
   Trash2,
-  Calendar
+  Calendar,
+  Eye,
+  ChevronDown,
+  ChevronRight
 } from "lucide-react";
+import { groupAccommodationRecords, paginateGroupedAccommodations, getGroupControlsId, getGroupHeaderId } from "@/lib/admin/accommodation-grouping";
+import { ParticipantDetailDialog } from "@/components/admin/ParticipantDetailDialog";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import AdminPageLoader from "@/components/admin/AdminPageLoader";
 
@@ -1185,6 +1190,22 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
   const [filterRoom, setFilterRoom] = useState("all");
   const [filterDate, setFilterDate] = useState("all");
 
+  // Group expansion & participant detail states
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(new Set());
+  const [selectedParticipantForDetail, setSelectedParticipantForDetail] = useState<AccommodationRecord | null>(null);
+
+  const toggleGroup = useCallback((groupKey: string) => {
+    setCollapsedGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  }, []);
+
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
@@ -1266,6 +1287,59 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       return matchesSearch && matchesStatus && matchesGender && matchesState && matchesCheckIn && matchesHostel && matchesRoom && matchesType && matchesDate;
     });
   }, [data, search, filterStatus, filterGender, filterType, filterState, filterCheckIn, filterHostel, filterRoom, filterDate]);
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(50);
+
+  // Reset to page 1 whenever search or filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, filterStatus, filterGender, filterType, filterState, filterCheckIn, filterHostel, filterRoom, filterDate]);
+
+  // Overall grouping for continuous serial numbers across entire filtered set
+  const fullGroupedData = useMemo(() => {
+    return groupAccommodationRecords(filtered);
+  }, [filtered]);
+
+  // Group-aware pagination of filtered records (never splits verified teams)
+  const paginatedResult = useMemo(() => {
+    if (pageSize === -1) {
+      return {
+        groups: fullGroupedData.groups,
+        standalone: fullGroupedData.standalone,
+        page: 1,
+        pageSize: filtered.length,
+        totalPages: 1,
+        totalRecordsCount: fullGroupedData.totalRecordsCount,
+        totalGroupsCount: fullGroupedData.totalGroupsCount,
+        totalStandaloneCount: fullGroupedData.totalStandaloneCount,
+        displayedRecordsCount: fullGroupedData.totalRecordsCount,
+      };
+    }
+    return paginateGroupedAccommodations(filtered, {
+      page: currentPage,
+      pageSize,
+      boundaryStrategy: "move-to-next",
+    });
+  }, [filtered, currentPage, pageSize, fullGroupedData]);
+
+  // Use paginated result for current page display
+  const groupedData = paginatedResult;
+
+  // Continuous serial numbers 1..N matching overall on-screen list
+  const serialNumberMap = useMemo(() => {
+    const map = new Map<string, number>();
+    let idx = 1;
+    for (const g of fullGroupedData.groups) {
+      for (const r of g.records) {
+        map.set(r.id, idx++);
+      }
+    }
+    for (const r of fullGroupedData.standalone) {
+      map.set(r.id, idx++);
+    }
+    return map;
+  }, [fullGroupedData]);
 
   const toggleSelection = (id: string) => {
     const next = new Set(selectedIds);
@@ -1497,6 +1571,191 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
     document.body.removeChild(link);
   };
 
+  const renderRow = (acc: AccommodationRecord, isGroupMember: boolean) => {
+    const plan = data.plans.find(p => p.id === acc.accommodation_plan_id);
+    const hostel = data.hostels.find(h => h.id === acc.hostel_id);
+    const room = data.rooms.find(r => r.id === acc.room_id);
+    const floor = room ? data.floors.find(f => f.id === room.floor_id) : null;
+
+    const canReallocate = acc.status === "paid" && !!acc.room_id && !acc.checked_out;
+    const serialNo = serialNumberMap.get(acc.id) ?? 1;
+
+    return (
+      <tr
+        key={acc.id}
+        id={`row-${acc.id}`}
+        className={`border-b border-black/5 last:border-0 hover:bg-black/[0.02] transition-colors ${
+          isGroupMember ? "bg-indigo-50/[0.03] border-l-4 border-l-indigo-300/40" : ""
+        }`}
+      >
+        <td className="py-4 pr-2 pl-4">
+          <input
+            type="checkbox"
+            checked={selectedIds.has(acc.id)}
+            onChange={() => toggleSelection(acc.id)}
+            className="rounded border-black/20 cursor-pointer"
+          />
+        </td>
+        <td className="py-4 pr-4 font-mono text-xs text-black/60">{serialNo}</td>
+        <td className="py-4 pr-4 font-mono text-xs text-black/60">{acc.participants?.participant_id}</td>
+        <td className="py-4 px-4 font-medium text-black">
+          {acc.participants?.name}
+          <div className="text-xs text-black/50 font-normal">{data?.role === "master" ? acc.participants?.email : maskEmail(acc.participants?.email || "")}</div>
+        </td>
+        <td className="py-4 px-4 font-medium text-black">
+          {acc.participants?.is_faculty ? (
+            <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-orange-50 text-orange-700 border border-orange-200">
+              Faculty
+            </span>
+          ) : (
+            <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+              Participant
+            </span>
+          )}
+        </td>
+        <td className="py-4 px-4 uppercase text-xs">
+          {acc.participants?.gender || "—"}<br/>
+          <span className="text-black/50">{acc.participants?.state || "—"}</span>
+        </td>
+        <td className="py-4 px-4 text-black">
+          <div className="font-medium text-xs sm:text-sm">{plan?.name || "Unknown"}</div>
+          <div className="text-[11px] font-mono text-black/50 mt-0.5">
+            {renderAccommodationStayBadge(acc)}
+          </div>
+        </td>
+        <td className="py-4 px-4 uppercase text-xs font-semibold text-black">{acc.status}</td>
+        <td className="py-4 px-4">
+          {acc.status !== "paid" ? (
+            <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-red-50 text-red-700 border border-red-200">
+              Payment Pending
+            </span>
+          ) : acc.checked_out ? (
+            <div>
+              <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
+                Checked Out
+              </span>
+              {acc.checked_out_at && (
+                <div className="text-[10px] text-black/40 mt-1 font-mono">
+                  {new Date(acc.checked_out_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                </div>
+              )}
+            </div>
+          ) : acc.checked_in ? (
+            <div>
+              <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Checked In
+              </span>
+              {acc.checked_in_at && (
+                <div className="text-[10px] text-black/40 mt-1 font-mono">
+                  {new Date(acc.checked_in_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                </div>
+              )}
+            </div>
+          ) : acc.room_id ? (
+            <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+              Allocated
+            </span>
+          ) : (
+            <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-200">
+              Awaiting Allocation
+            </span>
+          )}
+        </td>
+        <td className="py-4 px-4 text-right">
+          {hostel?.name || <span className="text-black/30">Unallocated</span>}<br/>
+          {room ? (
+            <span className="text-black/50 text-xs">
+              {floor ? `Fl ${floor.floor_number} • ` : ""}Rm {room.room_number}
+            </span>
+          ) : ""}
+        </td>
+        <td className="py-4 pl-4 text-right whitespace-nowrap">
+          <div className="flex items-center justify-end gap-1.5">
+            {/* View Participant Details Action */}
+            <button
+              type="button"
+              id={`btn-view-${acc.id}`}
+              onClick={() => setSelectedParticipantForDetail(acc)}
+              className="p-1.5 text-black/60 hover:text-black hover:bg-black/5 rounded-full transition focus:outline-none focus:ring-2 focus:ring-black/20"
+              title="View participant details"
+              aria-label="View participant details"
+            >
+              <Eye size={16} />
+            </button>
+
+            {acc.status !== "paid" ? (
+              <span className="text-xs text-black/40 italic">Payment Pending</span>
+            ) : !acc.room_id ? (
+              <button
+                onClick={() => setAllocatingAcc(acc)}
+                className="px-3 py-1.5 bg-black text-white rounded-full text-xs font-medium hover:bg-black/80 transition"
+              >
+                Allocate
+              </button>
+            ) : !acc.checked_in ? (
+              <>
+                <button
+                  onClick={() => handleCheckIn(acc)}
+                  disabled={actionLoadingId === acc.id}
+                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-full text-xs font-medium hover:bg-emerald-700 transition disabled:opacity-50"
+                >
+                  {actionLoadingId === acc.id ? "Processing..." : "Check In"}
+                </button>
+                {canReallocate && (
+                  <button
+                    onClick={() => setAllocatingAcc(acc)}
+                    className="px-3 py-1.5 border border-black/20 text-black rounded-full text-xs font-medium hover:bg-black/5 transition"
+                  >
+                    Reallocate
+                  </button>
+                )}
+              </>
+            ) : !acc.checked_out ? (
+              <>
+                <button
+                  onClick={() => handleCheckOut(acc)}
+                  disabled={actionLoadingId === acc.id}
+                  className="px-3 py-1.5 bg-black text-white rounded-full text-xs font-medium hover:bg-black/80 transition disabled:opacity-50"
+                >
+                  {actionLoadingId === acc.id ? "Processing..." : "Check Out"}
+                </button>
+                {canReallocate && (
+                  <button
+                    onClick={() => setAllocatingAcc(acc)}
+                    className="px-3 py-1.5 border border-black/20 text-black rounded-full text-xs font-medium hover:bg-black/5 transition"
+                  >
+                    Reallocate
+                  </button>
+                )}
+              </>
+            ) : (
+              <span className="text-xs font-medium text-purple-700">Checked Out</span>
+            )}
+            <button
+              onClick={() => setHistoryAcc(acc)}
+              className="ml-0.5 p-1.5 text-black/40 hover:text-black transition"
+              title="History"
+            >
+              <History size={16} />
+            </button>
+            <button
+              onClick={() => handleDeleteAccommodation(acc)}
+              disabled={deletingId === acc.id || actionLoadingId === acc.id}
+              className="p-1.5 text-black/40 hover:text-red-600 transition disabled:opacity-50"
+              title="Delete Accommodation Permanently"
+            >
+              {deletingId === acc.id ? (
+                <RefreshCw size={16} className="animate-spin text-red-500" />
+              ) : (
+                <Trash2 size={16} />
+              )}
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <div>
       <div className="flex flex-wrap gap-4 mb-6">
@@ -1657,178 +1916,186 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
               <th className="pb-3 pl-4 font-semibold text-right">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            {filtered.map((acc, idx) => {
-              const plan = data.plans.find(p => p.id === acc.accommodation_plan_id);
-              const hostel = data.hostels.find(h => h.id === acc.hostel_id);
-              const room = data.rooms.find(r => r.id === acc.room_id);
-              const floor = room ? data.floors.find(f => f.id === room.floor_id) : null;
-              
-              const canReallocate = acc.status === "paid" && !!acc.room_id && !acc.checked_out;
+          {filtered.length === 0 ? (
+            <tbody>
+              <tr>
+                <td colSpan={11} className="py-8 text-center text-black/40">
+                  No registrations found.
+                </td>
+              </tr>
+            </tbody>
+          ) : (
+            <>
+              {/* 1. Render Verified Team Groups */}
+              {groupedData.groups.map((group) => {
+                const isCollapsed = collapsedGroupKeys.has(group.key);
+                const controlsId = getGroupControlsId(group.key);
+                const headerId = getGroupHeaderId(group.key);
 
-              return (
-                <tr key={acc.id} className="border-b border-black/5 last:border-0 hover:bg-black/[0.02]">
-                  <td className="py-4 pr-2 pl-4">
-                    <input 
-                      type="checkbox" 
-                      checked={selectedIds.has(acc.id)}
-                      onChange={() => toggleSelection(acc.id)}
-                      className="rounded border-black/20"
-                    />
-                  </td>
-                  <td className="py-4 pr-4 font-mono text-xs text-black/60">{idx + 1}</td>
-                  <td className="py-4 pr-4 font-mono text-xs text-black/60">{acc.participants?.participant_id}</td>
-                  <td className="py-4 px-4 font-medium text-black">
-                    {acc.participants?.name}
-                    <div className="text-xs text-black/50 font-normal">{data?.role === "master" ? acc.participants?.email : maskEmail(acc.participants?.email || "")}</div>
-                  </td>
-                  <td className="py-4 px-4 font-medium text-black">
-                    {acc.participants?.is_faculty ? (
-                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-orange-50 text-orange-700 border border-orange-200">
-                        Faculty
-                      </span>
-                    ) : (
-                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
-                        Participant
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-4 px-4 uppercase text-xs">
-                    {acc.participants?.gender || "—"}<br/>
-                    <span className="text-black/50">{acc.participants?.state || "—"}</span>
-                  </td>
-                  <td className="py-4 px-4 text-black">
-                    <div className="font-medium text-xs sm:text-sm">{plan?.name || "Unknown"}</div>
-                    <div className="text-[11px] font-mono text-black/50 mt-0.5">
-                      {renderAccommodationStayBadge(acc)}
-                    </div>
-                  </td>
-                  <td className="py-4 px-4 uppercase text-xs font-semibold text-black">{acc.status}</td>
-                  <td className="py-4 px-4">
-                    {acc.status !== "paid" ? (
-                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-red-50 text-red-700 border border-red-200">
-                        Payment Pending
-                      </span>
-                    ) : acc.checked_out ? (
-                      <div>
-                        <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
-                          Checked Out
-                        </span>
-                        {acc.checked_out_at && (
-                          <div className="text-[10px] text-black/40 mt-1 font-mono">
-                            {new Date(acc.checked_out_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
-                          </div>
-                        )}
-                      </div>
-                    ) : acc.checked_in ? (
-                      <div>
-                        <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          Checked In
-                        </span>
-                        {acc.checked_in_at && (
-                          <div className="text-[10px] text-black/40 mt-1 font-mono">
-                            {new Date(acc.checked_in_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
-                          </div>
-                        )}
-                      </div>
-                    ) : acc.room_id ? (
-                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
-                        Allocated
-                      </span>
-                    ) : (
-                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-200">
-                        Awaiting Allocation
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-4 px-4 text-right">
-                    {hostel?.name || <span className="text-black/30">Unallocated</span>}<br/>
-                    {room ? (
-                      <span className="text-black/50 text-xs">
-                        {floor ? `Fl ${floor.floor_number} • ` : ""}Rm {room.room_number}
-                      </span>
-                    ) : ""}
-                  </td>
-                  <td className="py-4 pl-4 text-right whitespace-nowrap">
-                    <div className="flex items-center justify-end gap-2">
-                      {acc.status !== "paid" ? (
-                        <span className="text-xs text-black/40 italic">Payment Pending</span>
-                      ) : !acc.room_id ? (
-                        <button 
-                          onClick={() => setAllocatingAcc(acc)} 
-                          className="px-3 py-1.5 bg-black text-white rounded-full text-xs font-medium hover:bg-black/80 transition"
-                        >
-                          Allocate
-                        </button>
-                      ) : !acc.checked_in ? (
-                        <>
-                          <button 
-                            onClick={() => handleCheckIn(acc)} 
-                            disabled={actionLoadingId === acc.id}
-                            className="px-3 py-1.5 bg-emerald-600 text-white rounded-full text-xs font-medium hover:bg-emerald-700 transition disabled:opacity-50"
-                          >
-                            {actionLoadingId === acc.id ? "Processing..." : "Check In"}
-                          </button>
-                          {canReallocate && (
-                            <button 
-                              onClick={() => setAllocatingAcc(acc)} 
-                              className="px-3 py-1.5 border border-black/20 text-black rounded-full text-xs font-medium hover:bg-black/5 transition"
-                            >
-                              Reallocate
-                            </button>
-                          )}
-                        </>
-                      ) : !acc.checked_out ? (
-                        <>
-                          <button 
-                            onClick={() => handleCheckOut(acc)} 
-                            disabled={actionLoadingId === acc.id}
-                            className="px-3 py-1.5 bg-black text-white rounded-full text-xs font-medium hover:bg-black/80 transition disabled:opacity-50"
-                          >
-                            {actionLoadingId === acc.id ? "Processing..." : "Check Out"}
-                          </button>
-                          {canReallocate && (
-                            <button 
-                              onClick={() => setAllocatingAcc(acc)} 
-                              className="px-3 py-1.5 border border-black/20 text-black rounded-full text-xs font-medium hover:bg-black/5 transition"
-                            >
-                              Reallocate
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-xs font-medium text-purple-700">Checked Out</span>
-                      )}
-                      <button 
-                        onClick={() => setHistoryAcc(acc)} 
-                        className="ml-1 p-1.5 text-black/40 hover:text-black transition" 
-                        title="History"
+                return (
+                  <Fragment key={group.key}>
+                    {/* Group Header Row in distinct tbody */}
+                    <tbody className="border-t-2 border-b border-black/10">
+                      <tr
+                        id={headerId}
+                        className="bg-zinc-50 transition-colors"
                       >
-                        <History size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteAccommodation(acc)}
-                        disabled={deletingId === acc.id || actionLoadingId === acc.id}
-                        className="p-1.5 text-black/40 hover:text-red-600 transition disabled:opacity-50"
-                        title="Delete Accommodation Permanently"
-                      >
-                        {deletingId === acc.id ? (
-                          <RefreshCw size={16} className="animate-spin text-red-500" />
-                        ) : (
-                          <Trash2 size={16} />
-                        )}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {filtered.length === 0 && (
-              <tr><td colSpan={9} className="py-8 text-center text-black/40">No registrations found.</td></tr>
-            )}
-          </tbody>
+                        <td colSpan={11} className="py-2.5 px-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <button
+                                type="button"
+                                id={`toggle-group-${group.key.replace(/[:]/g, "-")}`}
+                                onClick={() => toggleGroup(group.key)}
+                                aria-expanded={!isCollapsed}
+                                aria-controls={controlsId}
+                                className="flex items-center gap-2 text-left font-semibold text-black hover:text-black/70 transition focus:outline-none focus:ring-2 focus:ring-black/20 rounded-lg py-1 px-1.5 cursor-pointer"
+                              >
+                                <span className="p-1 rounded bg-black/5 text-black/70 hover:bg-black/10 transition">
+                                  {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                                </span>
+                                <Users size={16} className="text-indigo-600" />
+                                <span className="font-semibold text-sm text-black">{group.name}</span>
+                              </button>
+
+                              {group.leaderName && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs bg-black/5 text-black/70">
+                                  <span className="text-[10px] uppercase font-semibold text-black/40">Leader:</span>
+                                  <span className="font-medium text-black">{group.leaderName}</span>
+                                  {group.leaderParticipantId && (
+                                    <span className="font-mono text-[11px] text-black/50">({group.leaderParticipantId})</span>
+                                  )}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2.5 text-xs">
+                              <span className="font-medium text-black/70">
+                                {group.totalCount} {group.totalCount === 1 ? "record" : "records"}
+                              </span>
+                              <span className="text-black/20">•</span>
+                              <span className="font-medium text-black/70">
+                                {group.paidCount} paid
+                              </span>
+                              <span className="text-black/20">•</span>
+
+                              {group.paidCount === 0 ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200">
+                                  Payment Pending
+                                </span>
+                              ) : group.awaitingAllocationCount === 0 ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  Allocations Complete
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                                  {group.awaitingAllocationCount} Awaiting Allocation
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+
+                    {/* Group Member Rows Container with unique controlsId */}
+                    <tbody
+                      id={controlsId}
+                      className={isCollapsed ? "hidden" : ""}
+                    >
+                      {group.records.map((acc) => renderRow(acc, true))}
+                    </tbody>
+                  </Fragment>
+                );
+              })}
+
+              {/* 2. Standalone / Individual Accommodations */}
+              {groupedData.standalone.length > 0 && (
+                <tbody id="standalone-rows">
+                  {groupedData.groups.length > 0 && (
+                    <tr className="bg-zinc-100/70 border-t-2 border-b border-black/10">
+                      <td colSpan={11} className="py-2.5 px-4 text-xs font-semibold uppercase tracking-wider text-black/50">
+                        Individual / Ungrouped Accommodation — showing {groupedData.standalone.length} of {paginatedResult.totalStandaloneCount}
+                      </td>
+                    </tr>
+                  )}
+                  {groupedData.standalone.map((acc) => renderRow(acc, false))}
+                </tbody>
+              )}
+            </>
+          )}
         </table>
       </div>
+
+      {/* Group-aware Pagination Footer */}
+      {filtered.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-4 px-2 py-3 border-t border-black/10 text-xs text-black/70">
+          <div className="flex items-center gap-2">
+            <span>
+              Showing page <strong className="font-semibold text-black">{paginatedResult.page}</strong> of{" "}
+              <strong className="font-semibold text-black">{paginatedResult.totalPages}</strong>
+            </span>
+            <span className="text-black/30">•</span>
+            <span>
+              <strong className="font-semibold text-black">{paginatedResult.displayedRecordsCount}</strong> of{" "}
+              <strong className="font-semibold text-black">{paginatedResult.totalRecordsCount}</strong> records
+              {" ("}
+              {paginatedResult.totalGroupsCount} {paginatedResult.totalGroupsCount === 1 ? "group" : "groups"},{" "}
+              {paginatedResult.totalStandaloneCount} individual{")"}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <span className="text-black/50">Page size:</span>
+              <select
+                id="select-page-size"
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(parseInt(e.target.value, 10));
+                  setCurrentPage(1);
+                }}
+                className="bg-white border border-black/20 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-black"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={-1}>All</option>
+              </select>
+            </div>
+
+            {paginatedResult.totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  id="btn-prev-page"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                  className="px-2.5 py-1 rounded border border-black/20 font-medium hover:bg-black/5 disabled:opacity-40 disabled:pointer-events-none transition"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  id="btn-next-page"
+                  onClick={() => setCurrentPage((p) => Math.min(paginatedResult.totalPages, p + 1))}
+                  disabled={currentPage >= paginatedResult.totalPages}
+                  className="px-2.5 py-1 rounded border border-black/20 font-medium hover:bg-black/5 disabled:opacity-40 disabled:pointer-events-none transition"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {selectedParticipantForDetail && (
+        <ParticipantDetailDialog
+          acc={selectedParticipantForDetail}
+          onClose={() => setSelectedParticipantForDetail(null)}
+        />
+      )}
 
       {allocatingAcc && (
         <AllocateModal 

@@ -17,6 +17,7 @@ import { getRegistrationSession } from "@/lib/auth/session";
 import { checkRateLimitAsync, getClientIp } from "@/lib/rate-limit";
 import { calculateStayDates } from "@/lib/accommodation-dates";
 import { formatAccommodationOverlapError } from "@/lib/accommodation-expiration";
+import { getPaymentGateway } from "@/lib/payments";
 
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -357,6 +358,205 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  // 7b. Check existing pending/unpaid holds for the delegates being booked:
+  //    - Paid stays: Cannot be superseded (handled by validation & RPC).
+  //    - Explicitly failed orders: Already safely expirable in register_participant_events RPC under advisory lock.
+  //    - Draft orders (gateway_order_id is null): Safely transition to 'failed' so the RPC can atomically expire the hold.
+  //    - Orders with gateway_order_id: Authoritatively verify with PayU with separated try/catch:
+  //        * Server-to-server gateway lookup errors are distinct from database settlement/failure RPC errors.
+  //        * If gateway status is 'paid': reconcile and reject checkout with HTTP 409 (DELEGATE_ALREADY_PAID).
+  //        * If definitive terminal failure ('failed', 'usercancelled', 'bounced', 'dropped', 'not_found'): atomically mark order 'failed' via process_payment_failure RPC.
+  //        * If active in-flight: REJECT with HTTP 409 (PAYMENT_PENDING) to protect delegate's payment!
+  //        * If unknown/ambiguous: FAIL CLOSED with HTTP 409 (PAYMENT_STATUS_AMBIGUOUS).
+  for (const accItem of rpcAccommodations) {
+    const email = cleanEmail(accItem.email);
+    const memberInfo = verifiedEmailToMember.get(email);
+    let targetParticipantUuid = memberInfo?.participantUuid;
+
+    if (!targetParticipantUuid) {
+      const { data: dbPart } = await supabaseAdmin
+        .from("participants")
+        .select("id")
+        .ilike("email", email)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      targetParticipantUuid = dbPart?.id || null;
+    }
+
+    if (targetParticipantUuid) {
+      const { startDate, endDate } = calculateStayDates(
+        accItem.plan_slug,
+        accItem.selected_date,
+        accItem.extra_days
+      );
+
+      const { data: existingPendingStays } = await supabaseAdmin
+        .from("participant_accommodations")
+        .select(`
+          id,
+          status,
+          payment_order_id,
+          payment_orders (
+            id,
+            status,
+            gateway,
+            gateway_order_id,
+            gateway_payment_id,
+            created_at,
+            updated_at
+          )
+        `)
+        .eq("participant_id", targetParticipantUuid)
+        .in("status", ["pending", "unpaid"])
+        .lt("start_date", endDate)
+        .gt("end_date", startDate);
+
+      if (existingPendingStays && existingPendingStays.length > 0) {
+        for (const pendingStay of existingPendingStays) {
+          const rawPo = (pendingStay as any).payment_orders;
+          const po = Array.isArray(rawPo) ? rawPo[0] : rawPo;
+          if (!po) continue;
+
+          if (po.status === "paid") {
+            return errorResponse(
+              `Accommodation for ${email} already has a confirmed paid booking for these dates.`,
+              409,
+              "DELEGATE_ALREADY_PAID"
+            );
+          }
+
+          if (po.status === "failed") {
+            // Already failed. The register_participant_events RPC will atomically expire this hold under the advisory lock.
+            continue;
+          }
+
+          if (po.status === "pending") {
+            if (!po.gateway_order_id) {
+              // Draft order that was never submitted to the payment gateway.
+              // Transition the draft order to 'failed' so the RPC can atomically expire the hold under the advisory lock.
+              const { error: draftUpdateError } = await supabaseAdmin
+                .from("payment_orders")
+                .update({ status: "failed", updated_at: new Date().toISOString() })
+                .eq("id", po.id)
+                .eq("status", "pending")
+                .is("gateway_order_id", null);
+
+              if (draftUpdateError) {
+                console.error("Failed to transition draft order to failed:", draftUpdateError);
+                return errorResponse(
+                  `Could not update prior checkout session for ${email}. Please try again.`,
+                  500,
+                  "DRAFT_ORDER_UPDATE_FAILED"
+                );
+              }
+            } else {
+              // 1. Authoritative Gateway Status Lookup (Isolated try/catch for gateway errors)
+              let details: any;
+              const gateway = getPaymentGateway(po.gateway ?? undefined);
+              try {
+                details = await gateway.fetchPaymentDetails(po.gateway_order_id);
+              } catch (gatewayErr) {
+                console.error(`Gateway lookup error for order ${po.gateway_order_id}:`, gatewayErr);
+                const orderAgeMs = Date.now() - new Date(po.updated_at || po.created_at || 0).getTime();
+                if (orderAgeMs < 15 * 60 * 1000) {
+                  return errorResponse(
+                    `A recent payment attempt for ${email} cannot be verified with the payment gateway right now. Please wait a few moments before retrying.`,
+                    503,
+                    "GATEWAY_VERIFICATION_UNAVAILABLE"
+                  );
+                }
+                return errorResponse(
+                  `Unable to verify previous payment status for ${email} with the payment gateway. Please try again in a few moments.`,
+                  503,
+                  "GATEWAY_UNAVAILABLE"
+                );
+              }
+
+              // 2. Classify Gateway Status & Execute Settlement/Failure Handling
+              const rawLower = (details.rawStatus || "").toLowerCase().trim();
+              const unmappedLower = (details.unmappedStatus || "").toLowerCase().trim();
+
+              const isTerminalFailure =
+                details.status === "failed" &&
+                (
+                  rawLower === "failure" ||
+                  rawLower === "failed" ||
+                  rawLower === "bounced" ||
+                  rawLower === "usercancelled" ||
+                  rawLower === "dropped"
+                );
+
+              if (details.status === "paid") {
+                // Captured on gateway! Reconcile immediately with separate DB error handling.
+                const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc("process_payment_success", {
+                  p_gateway_order_id: po.gateway_order_id,
+                  p_gateway_payment_id: details.gatewayPaymentId,
+                  p_amount_paise: details.amount,
+                  p_currency: details.currency || "INR",
+                  p_gateway_name: gateway.name,
+                });
+
+                if (rpcError || (rpcData && !rpcData.success)) {
+                  console.error("Database settlement RPC failed during team checkout reconciliation:", rpcError || rpcData?.error);
+                  return errorResponse(
+                    `Payment for ${email} was captured on gateway, but database reconciliation failed. Please contact support.`,
+                    500,
+                    "SETTLEMENT_RPC_FAILED"
+                  );
+                }
+
+                return errorResponse(
+                  `Accommodation for ${email} was already paid on the payment gateway. Please refresh your roster.`,
+                  409,
+                  "DELEGATE_ALREADY_PAID"
+                );
+              } else if (isTerminalFailure) {
+                // Gateway authoritatively confirms terminal failure. Mark failed via RPC.
+                const { data: failRpcData, error: failRpcError } = await supabaseAdmin.rpc("process_payment_failure", {
+                  p_gateway_order_id: po.gateway_order_id,
+                });
+
+                if (failRpcError || (failRpcData && !failRpcData.success)) {
+                  console.error("Database failure RPC failed during team checkout:", failRpcError || failRpcData?.error);
+                  return errorResponse(
+                    `Could not update prior checkout status for ${email} in database. Please try again.`,
+                    500,
+                    "FAILURE_RPC_FAILED"
+                  );
+                }
+                // Order is now successfully marked 'failed' in DB; register_participant_events will atomically expire the hold.
+              } else if (details.status === "pending") {
+                // Active payment method in progress (e.g. awaiting UPI PIN or card OTP).
+                // Fail-safe: Protect the delegate's active payment attempt!
+                return errorResponse(
+                  `A payment attempt for ${email} is currently being processed by the gateway. Please complete it or wait a few moments before retrying.`,
+                  409,
+                  "PAYMENT_PENDING"
+                );
+              } else {
+                // Gateway returned 'not_found', unknown, or ambiguous state.
+                // PayU 'Not Found' does not guarantee that no customer debit occurred.
+                // Fail closed: retain existing payment state and protective accommodation holds,
+                // and reject conflicting replacement checkout until payment outcome is resolved.
+                console.warn("Ambiguous or unresolved gateway status detected during team accommodation checkout:", {
+                  email,
+                  gatewayOrderId: po.gateway_order_id,
+                  details,
+                });
+                return errorResponse(
+                  `Payment status for ${email} is currently ambiguous (${details.status}). Please wait a few moments or contact support.`,
+                  409,
+                  "PAYMENT_STATUS_AMBIGUOUS"
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   // 8. Atomic Registration RPC Execution (Multi-Accommodation)
   const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc(
     "register_participant_events",
@@ -401,15 +601,21 @@ export async function POST(request: NextRequest) {
 
   // 9. Sync stay dates & duration on newly created accommodation records
   for (const accItem of rpcAccommodations) {
-    const { data: accParticipant } = await supabaseAdmin
-      .from("participants")
-      .select("id")
-      .ilike("email", accItem.email)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const email = cleanEmail(accItem.email);
+    let targetParticipantUuid = verifiedEmailToMember.get(email)?.participantUuid;
 
-    if (accParticipant?.id) {
+    if (!targetParticipantUuid) {
+      const { data: accParticipant } = await supabaseAdmin
+        .from("participants")
+        .select("id")
+        .ilike("email", email)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      targetParticipantUuid = accParticipant?.id || null;
+    }
+
+    if (targetParticipantUuid) {
       const { startDate, endDate, durationDays } = calculateStayDates(
         accItem.plan_slug,
         accItem.selected_date,
@@ -425,7 +631,7 @@ export async function POST(request: NextRequest) {
       await supabaseAdmin
         .from("participant_accommodations")
         .update(updatePayload)
-        .eq("participant_id", accParticipant.id)
+        .eq("participant_id", targetParticipantUuid)
         .eq("payment_order_id", returnedPaymentOrderId);
     }
   }

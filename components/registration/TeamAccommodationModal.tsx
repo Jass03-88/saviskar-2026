@@ -76,19 +76,104 @@ export default function TeamAccommodationModal({
     focusRef: closeButtonRef,
   });
 
-  // Map of member email -> selection state
+  // Map of member email -> selection state (defaulting to festival standard: 2_days, 28th-30th Oct)
   const [selections, setSelections] = useState<Record<string, MemberBookingSelection>>(() => {
     const initial: Record<string, MemberBookingSelection> = {};
     for (const m of members) {
       initial[m.email] = {
         selected: false,
-        planSlug: "1_day",
+        planSlug: "2_days",
         selectedDate: "2026-10-28",
         extraDays: "none",
       };
     }
     return initial;
   });
+
+  // Keep selections map synchronized whenever the verified members roster prop updates:
+  // Preserves existing user selections when members roster refreshes asynchronously,
+  // while automatically deselecting any member who becomes confirmed paid in the interim.
+  useEffect(() => {
+    setSelections((prev) => {
+      let changed = false;
+      const updated = { ...prev };
+      for (const m of members) {
+        const isPaid = m.accommodations?.some((a) => a.status === "paid");
+        if (!updated[m.email]) {
+          updated[m.email] = {
+            selected: false,
+            planSlug: "2_days",
+            selectedDate: "2026-10-28",
+            extraDays: "none",
+          };
+          changed = true;
+        } else if (isPaid && updated[m.email].selected) {
+          updated[m.email] = {
+            ...updated[m.email],
+            selected: false,
+          };
+          changed = true;
+        }
+      }
+      return changed ? updated : prev;
+    });
+  }, [members]);
+
+  // Bulk selection handlers
+  const handleSelectAll = () => {
+    setSelections((prev) => {
+      const updated = { ...prev };
+      for (const m of members) {
+        // Only skip if already has a confirmed paid stay
+        const isPaid = m.accommodations?.some((a) => a.status === "paid");
+        if (!isPaid) {
+          updated[m.email] = {
+            ...(updated[m.email] || {
+              planSlug: "2_days",
+              selectedDate: "2026-10-28",
+              extraDays: "none",
+            }),
+            selected: true,
+          };
+        }
+      }
+      return updated;
+    });
+    setErrorMessage("");
+  };
+
+  const handleDeselectAll = () => {
+    setSelections((prev) => {
+      const updated = { ...prev };
+      for (const m of members) {
+        if (updated[m.email]) {
+          updated[m.email] = {
+            ...updated[m.email],
+            selected: false,
+          };
+        }
+      }
+      return updated;
+    });
+    setErrorMessage("");
+  };
+
+  const handleApplyBulkPlan = (bulkPlanSlug: string) => {
+    setSelections((prev) => {
+      const updated = { ...prev };
+      for (const m of members) {
+        if (updated[m.email]?.selected) {
+          updated[m.email] = {
+            ...updated[m.email],
+            planSlug: bulkPlanSlug,
+            extraDays: "none",
+            selectedDate: bulkPlanSlug === "4_days" ? "2026-10-27" : "2026-10-28",
+          };
+        }
+      }
+      return updated;
+    });
+  };
 
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -120,6 +205,7 @@ export default function TeamAccommodationModal({
       durationDays: number;
       price: number;
       conflictMessage: string | null;
+      pendingHoldNotice: string | null;
     }> = [];
 
     for (const m of members) {
@@ -172,12 +258,17 @@ export default function TeamAccommodationModal({
 
       // Check conflict with member's existing stays
       let conflictMessage: string | null = null;
+      let pendingHoldNotice: string | null = null;
       if (m.accommodations && m.accommodations.length > 0) {
         for (const existing of m.accommodations) {
-          if (existing.status !== "cancelled" && existing.status !== "failed") {
-            if (startDate < existing.endDate && endDate > existing.startDate) {
-              conflictMessage = `Conflicts with existing stay (${existing.startDate} to ${existing.endDate})`;
+          if (startDate < existing.endDate && endDate > existing.startDate) {
+            if (existing.status === "paid") {
+              // Confirmed paid stays are hard immutable conflicts
+              conflictMessage = `Already has confirmed paid stay (${existing.startDate} to ${existing.endDate})`;
               break;
+            } else if (existing.status === "pending" || existing.status === "unpaid") {
+              // Uncompleted pending holds are superseded by the new combined order; do NOT block selection!
+              pendingHoldNotice = `Has uncompleted pending stay (₹${existing.amount}) — will be covered by this combined order`;
             }
           }
         }
@@ -191,6 +282,7 @@ export default function TeamAccommodationModal({
         durationDays,
         price,
         conflictMessage,
+        pendingHoldNotice,
       });
     }
 
@@ -337,13 +429,32 @@ export default function TeamAccommodationModal({
 
           {/* Members List */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-white/40">
-                Eligible Verified Members ({members.length})
-              </span>
-              <span className="text-[11px] text-white/40">
-                Select delegates needing campus stay
-              </span>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10 pb-3">
+              <div>
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-white/40">
+                  Eligible Verified Members ({members.length})
+                </span>
+                <p className="text-[11px] text-white/50 mt-0.5">
+                  Select delegates needing campus stay
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[11px] font-mono font-medium text-violet-300 hover:bg-violet-500/20 transition-all cursor-pointer"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeselectAll}
+                  className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-mono text-white/60 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
+                >
+                  Deselect All
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -533,13 +644,21 @@ export default function TeamAccommodationModal({
                           </div>
                         )}
 
-                        {/* Conflict warning */}
+                        {/* Conflict warning (confirmed paid stay) */}
                         {calc?.conflictMessage && (
                           <div className="flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-950/40 p-2 text-xs text-red-200">
                             <AlertCircle size={14} className="shrink-0 text-red-400" />
                             <span>
                               {calc.conflictMessage}. Please choose different dates for this member.
                             </span>
+                          </div>
+                        )}
+
+                        {/* Pending hold notice (uncompleted attempt that will be replaced) */}
+                        {!calc?.conflictMessage && calc?.pendingHoldNotice && (
+                          <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-950/20 p-2 text-xs text-amber-300 font-mono">
+                            <ShieldCheck size={14} className="shrink-0 text-amber-400" />
+                            <span>{calc.pendingHoldNotice}</span>
                           </div>
                         )}
                       </div>

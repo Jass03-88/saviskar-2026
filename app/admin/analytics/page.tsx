@@ -604,7 +604,7 @@ export default function AdminAnalyticsPage() {
         ======================================================= */}
         <section className="mb-10">
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-            
+
             {/* 1. Total Delegates */}
             <div className="rounded-[24px] bg-white border border-black/10 p-5 shadow-sm transition hover:shadow-md">
               <div className="flex items-center justify-between text-black/40">
