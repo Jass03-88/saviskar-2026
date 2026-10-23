@@ -554,14 +554,22 @@ const jsonLdFestival = {
     },
     {
       "@type": "MusicEvent",
-      name: "Star Night (Day 1) — Headline Stadium Concert",
-      description: "Headline concert in the CGC Concert Arena featuring celebrated vocalists, live instrumental bands, and 35,000+ attendee crowd.",
+      name: "Star Night (Day 1) — Live in Concert: Asees Kaur",
+      description: "Headline concert in the CGC Concert Arena featuring Bollywood sensation Asees Kaur, live instrumental bands, and 35,000+ attendee crowd.",
+      performer: {
+        "@type": "Person",
+        name: "Asees Kaur",
+      },
       url: "https://saviskar.co.in/starnight",
     },
     {
       "@type": "MusicEvent",
-      name: "Star Night (Day 2) — Grand Finale Stadium Concert",
-      description: "Grand stadium finale with chart-topping celebrity singers, pyrotechnic displays, and laser lighting.",
+      name: "Star Night (Day 2) — Grand Finale: Ranjit Bawa",
+      description: "Grand stadium finale with Punjabi folk icon Ranjit Bawa, live dhol ensemble, pyrotechnic displays, and laser lighting.",
+      performer: {
+        "@type": "Person",
+        name: "Ranjit Bawa",
+      },
       url: "https://saviskar.co.in/starnight",
     },
   ],

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { motion } from "motion/react";
-import { ArrowRight, Sparkles, Ticket, Lock } from "lucide-react";
+import { ArrowRight, Sparkles, Ticket, CheckCircle2 } from "lucide-react";
 
 function YoutubeIcon({ size = 16, className = "" }: { size?: number; className?: string }) {
   return (
@@ -22,20 +23,24 @@ function YoutubeIcon({ size = 16, className = "" }: { size?: number; className?:
 const headliners2026Teaser = [
   {
     dayBadge: "DAY 01 HEADLINER",
-    artist: "GLOBAL STREAMING SENSATION",
-    genre: "High-Voltage Stadium Anthems & Pop Rock Fusion",
+    artist: "ASEES KAUR",
+    image: "/images/artists/artist-5-2026-day1.webp",
+    imagePosition: "object-top",
+    genre: "Bollywood Playback Powerhouse • Romantic Anthems & Pop Soul",
     tagline:
-      "Over 2 Billion+ global streams. Turning 35,000+ voices into an electric ocean under the stadium sky.",
-    status: "CLASSIFIED • REVEAL IMMINENT",
+      "The award-winning voice behind Bollywood chart-busters 'Raataan Lambiyan', 'Makhna', 'Bolna', and 'Ve Maahi'. Turning 35,000+ voices into an electric ocean under the stadium sky.",
+    status: "CONFIRMED • 28 OCT 2026",
     stage: "CGC MAINSTAGE ARENA",
   },
   {
     dayBadge: "DAY 02 GRAND FINALE",
-    artist: "BOLLYWOOD & SUFI SYMPHONY ICON",
-    genre: "Master Composer Orchestra • Timeless Stadium Classics",
+    artist: "RANJIT BAWA",
+    image: "/images/artists/artist-6-2026-day2.webp",
+    imagePosition: "object-center",
+    genre: "High-Octane Punjabi Folk • Bhangra Legend • Thumping Live Dhol",
     tagline:
-      "A monumental live orchestra, pulsating dhol, and iconic melodies echoing across college corridors.",
-    status: "CLASSIFIED • REVEAL IMMINENT",
+      "The powerhouse pride of Punjab with legendary stadium anthems like 'Yaari Chandigarh Waliye', 'Jatt Di Akal', and 'Sher Marna' commanding the Saviskar 2026 Grand Finale.",
+    status: "CONFIRMED • 29 OCT 2026",
     stage: "CGC MAINSTAGE ARENA",
   },
 ];
@@ -129,28 +134,41 @@ export default function StarNightReveal() {
               <div className="pointer-events-none absolute bottom-2 right-2 h-3.5 w-3.5 border-b-2 border-r-2 border-violet-400" />
 
               <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <span className="border border-violet-400/50 bg-violet-500/25 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.25em] text-violet-200">
-                      [{item.dayBadge}]
-                    </span>
-                    <span className="flex items-center gap-1.5 border border-amber-400/40 bg-amber-500/15 px-3 py-0.5 font-mono text-[10px] uppercase tracking-wider text-amber-300">
-                      <Lock size={11} />
-                      {item.status}
-                    </span>
+                <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
+                  <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-violet-400/40 bg-black/60 sm:h-36 sm:w-36 md:h-40 md:w-40">
+                    <Image
+                      src={item.image}
+                      alt={item.artist}
+                      fill
+                      sizes="(max-width: 768px) 150px, 200px"
+                      className={`object-cover ${item.imagePosition} transition-transform duration-700 group-hover:scale-105`}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                   </div>
 
-                  <h3 className="mt-3.5 text-2xl font-bold tracking-tight text-white sm:text-3xl md:text-4xl">
-                    {item.artist}
-                  </h3>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="border border-violet-400/50 bg-violet-500/25 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.25em] text-violet-200">
+                        [{item.dayBadge}]
+                      </span>
+                      <span className="flex items-center gap-1.5 border border-emerald-400/40 bg-emerald-500/15 px-3 py-0.5 font-mono text-[10px] uppercase tracking-wider text-emerald-300">
+                        <CheckCircle2 size={11} />
+                        {item.status}
+                      </span>
+                    </div>
 
-                  <p className="mt-1.5 text-xs font-medium uppercase tracking-wider text-violet-300/80">
-                    {item.genre}
-                  </p>
+                    <h3 className="mt-3.5 text-2xl font-bold tracking-tight text-white sm:text-3xl md:text-4xl">
+                      {item.artist}
+                    </h3>
 
-                  <p className="mt-3 text-sm leading-relaxed text-white/65">
-                    {item.tagline}
-                  </p>
+                    <p className="mt-1.5 text-xs font-medium uppercase tracking-wider text-violet-300/80">
+                      {item.genre}
+                    </p>
+
+                    <p className="mt-3 text-sm leading-relaxed text-white/65">
+                      {item.tagline}
+                    </p>
+                  </div>
                 </div>
 
                 <span className="self-start rounded-full border border-white/15 bg-white/5 px-5 py-2 font-mono text-xs uppercase tracking-wider text-white/80 backdrop-blur-md md:self-auto shrink-0">
@@ -175,7 +193,7 @@ export default function StarNightReveal() {
 
           <div className="mt-6 flex flex-wrap items-center justify-center gap-4">
             <Link
-              href="/registration"
+              href="/register"
               className="inline-flex items-center gap-3 rounded-full border border-violet-400 bg-gradient-to-r from-violet-600 to-purple-600 px-8 py-3.5 font-mono text-xs font-bold uppercase tracking-wider text-white shadow-[0_0_40px_rgba(168,85,247,0.35)] transition-all hover:scale-105 hover:shadow-[0_0_60px_rgba(168,85,247,0.6)]"
             >
               <Ticket size={15} />

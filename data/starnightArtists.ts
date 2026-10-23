@@ -134,20 +134,22 @@ export const artists: Artist[] = festivalEditions.map((ed) => ({
 export const headliners2026 = [
   {
     day: "DAY 01",
-    status: "CLASSIFIED • REVEAL IMMINENT",
+    artist: "Asees Kaur",
+    status: "OFFICIAL HEADLINER // LIVE IN CONCERT",
     stage: "CGC MAINSTAGE ARENA",
-    theme: "Global Streaming Sensation & Stadium Anthems",
+    theme: "Bollywood Playback Powerhouse • Romantic Anthems & Pop Soul",
     teaser:
-      "Their record-breaking tracks have dominated global charts and headline stadium tours worldwide. Headlining Day 01.",
+      "The award-winning voice behind Bollywood chart-toppers 'Raataan Lambiyan', 'Makhna', 'Bolna', and 'Ve Maahi'. Ready to electrify 35,000+ voices on Day 01.",
     targetFrequency: "102.6 MHz",
   },
   {
     day: "DAY 02",
-    status: "CLASSIFIED • REVEAL IMMINENT",
+    artist: "Ranjit Bawa",
+    status: "GRAND FINALE HEADLINER // LIVE IN CONCERT",
     stage: "CGC MAINSTAGE ARENA",
-    theme: "Mega Bollywood & Fusion Symphony Spectacle",
+    theme: "High-Octane Punjabi Folk • Bhangra Legend • Thumping Dhol",
     teaser:
-      "An iconic live stadium performance primed to create Northern India's biggest collegiate concert night.",
+      "Punjab's powerhouse voice behind 'Yaari Chandigarh Waliye', 'Jatt Di Akal', and 'Sher Marna'. Primed to shake the stadium for the Saviskar 2026 Grand Finale.",
     targetFrequency: "102.6 MHz",
   },
 ];

@@ -149,13 +149,13 @@ export default function DeskEditorialSpread({
               }}
             />
             {/* Framed Group Archive Card */}
-            <div className="relative w-full aspect-[16/10] sm:aspect-[16/10.5] rounded-2xl border border-white/15 bg-zinc-950/90 overflow-hidden shadow-2xl group transition-all duration-500 hover:border-white/30">
+            <div className="relative w-full aspect-[16/10] sm:aspect-[16/10.5] rounded-2xl border border-white/15 bg-zinc-950/90 overflow-hidden shadow-2xl group transition-all duration-500 hover:border-white/30 touch-pan-y">
               <Image
                 src={image!}
                 alt={signeeName}
                 fill
                 unoptimized
-                className="object-cover object-center group-hover:scale-[1.02] transition-transform duration-700"
+                className="object-cover object-center group-hover:scale-[1.02] transition-transform duration-700 pointer-events-none select-none"
                 onError={() => setImageError(true)}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent pointer-events-none" />
@@ -171,20 +171,20 @@ export default function DeskEditorialSpread({
           </div>
         ) : (
           <div
-            className="relative w-full h-[480px] sm:h-[560px] overflow-hidden"
+            className="relative w-full h-[480px] sm:h-[560px] overflow-hidden pointer-events-none select-none touch-pan-y"
             style={{
               WebkitMaskImage: [
-                "linear-gradient(to bottom, black 40%, transparent 100%)",
+                "linear-gradient(to bottom, black 65%, transparent 100%)",
                 align === "left"
-                  ? "linear-gradient(to right, black 75%, transparent 100%)"
-                  : "linear-gradient(to left, black 75%, transparent 100%)",
+                  ? "linear-gradient(to right, black 80%, transparent 100%)"
+                  : "linear-gradient(to left, black 80%, transparent 100%)",
               ].join(", "),
               WebkitMaskComposite: "destination-in",
               maskImage: [
-                "linear-gradient(to bottom, black 40%, transparent 100%)",
+                "linear-gradient(to bottom, black 65%, transparent 100%)",
                 align === "left"
-                  ? "linear-gradient(to right, black 75%, transparent 100%)"
-                  : "linear-gradient(to left, black 75%, transparent 100%)",
+                  ? "linear-gradient(to right, black 80%, transparent 100%)"
+                  : "linear-gradient(to left, black 80%, transparent 100%)",
               ].join(", "),
               maskComposite: "intersect",
             }}
@@ -194,7 +194,7 @@ export default function DeskEditorialSpread({
               alt={signeeName}
               fill
               unoptimized
-              className="object-cover object-top"
+              className="object-cover object-top pointer-events-none select-none"
               onError={() => setImageError(true)}
             />
           </div>

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   requireAdmin,
   requireMasterAdmin,
+  isPrimaryMaster,
 } from "@/lib/supabase/server";
 import { parseAdminCategories } from "@/lib/admin/scope";
 import { fetchInBatches } from "@/lib/supabase/batch";
@@ -168,7 +169,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-  const pageSize = Math.min(2000, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
+  const pageSize = Math.min(20000, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
   const eventId = searchParams.get("eventId")?.trim();
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
@@ -225,53 +226,68 @@ export async function GET(request: Request) {
   }
 
   // 1. Fetch paginated participant_events with optional eventId / scope filter
-  let peQuery = supabaseAdmin
-    .from("participant_events")
-    .select(
-      "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, main_checked_in, main_checked_in_at, registration_group_id, is_archived, created_at",
-      { count: "exact" }
-    );
+  // Note: PostgREST has a server-side limit of 1000 rows per query.
+  // When pageSize > 1000 or the requested range exceeds 1000 rows,
+  // we paginate in 1000-row chunks to retrieve all records up to `to`.
+  const buildPeQuery = (selectLegacy = false) => {
+    const selectCols = selectLegacy
+      ? "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at"
+      : "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, main_checked_in, main_checked_in_at, registration_group_id, is_archived, created_at";
 
-  if (eventId) {
-    peQuery = peQuery.eq("event_id", eventId);
-  } else if (allowedEventIds !== null) {
-    peQuery = peQuery.in("event_id", allowedEventIds);
-  }
-
-  let {
-    data: participantEventsData,
-    count: totalCount,
-    error: peError,
-  } = await peQuery
-    .order("created_at", { ascending: false })
-    .range(from, to);
-
-  let schemaWarning: string | undefined;
-
-  if (peError && peError.code === "42703") {
-    console.warn("Main check-in columns missing. Falling back to legacy query.");
-    schemaWarning = "Main check-in migration is not applied.";
-    
-    peQuery = supabaseAdmin
+    let q = supabaseAdmin
       .from("participant_events")
-      .select(
-        "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at",
-        { count: "exact" }
-      );
-      
+      .select(selectCols, { count: "exact" });
+
     if (eventId) {
-      peQuery = peQuery.eq("event_id", eventId);
+      q = q.eq("event_id", eventId);
     } else if (allowedEventIds !== null) {
-      peQuery = peQuery.in("event_id", allowedEventIds);
+      q = q.in("event_id", allowedEventIds);
     }
 
-    const fallbackResult = await peQuery
-      .order("created_at", { ascending: false })
-      .range(from, to);
+    return q.order("created_at", { ascending: false });
+  };
 
-    participantEventsData = fallbackResult.data;
-    totalCount = fallbackResult.count;
-    peError = fallbackResult.error;
+  const CHUNK_SIZE = 1000;
+  let participantEventsData: ParticipantEvent[] = [];
+  let totalCount: number | null = null;
+  let peError: any = null;
+  let schemaWarning: string | undefined;
+  let useLegacyQuery = false;
+
+  const firstBatchEnd = Math.min(to, from + CHUNK_SIZE - 1);
+  const firstBatch = await buildPeQuery(false).range(from, firstBatchEnd);
+
+  if (firstBatch.error && firstBatch.error.code === "42703") {
+    console.warn("Main check-in columns missing. Falling back to legacy query.");
+    schemaWarning = "Main check-in migration is not applied.";
+    useLegacyQuery = true;
+    const fallbackFirst = await buildPeQuery(true).range(from, firstBatchEnd);
+    participantEventsData = (fallbackFirst.data ?? []) as unknown as ParticipantEvent[];
+    totalCount = fallbackFirst.count;
+    peError = fallbackFirst.error;
+  } else {
+    participantEventsData = (firstBatch.data ?? []) as unknown as ParticipantEvent[];
+    totalCount = firstBatch.count;
+    peError = firstBatch.error;
+  }
+
+  // If more records are requested and totalCount exceeds the first batch, fetch subsequent chunks
+  if (!peError && typeof totalCount === "number" && totalCount > 0) {
+    const effectiveTo = Math.min(to, totalCount - 1);
+    for (let currentStart = from + CHUNK_SIZE; currentStart <= effectiveTo; currentStart += CHUNK_SIZE) {
+      const currentEnd = Math.min(effectiveTo, currentStart + CHUNK_SIZE - 1);
+      const nextBatch = await buildPeQuery(useLegacyQuery).range(currentStart, currentEnd);
+      if (nextBatch.error) {
+        console.error("Admin registrations batch query failed at offset:", currentStart, nextBatch.error);
+        peError = nextBatch.error;
+        break;
+      }
+      if (nextBatch.data && nextBatch.data.length > 0) {
+        participantEventsData.push(...(nextBatch.data as unknown as ParticipantEvent[]));
+      } else {
+        break;
+      }
+    }
   }
 
   if (peError) {
@@ -747,36 +763,48 @@ export async function GET(request: Request) {
             registration.participant_id
           ) ?? [];
 
-        return participant
-          ? [
-            {
-              participant: {
-                ...participant,
-                accommodation: acc,
-                accommodations: participantAccs,
-              },
-              registration,
-              event:
-                eventsById.get(
-                  registration.event_id
-                ) ?? null,
-              members:
-                membersByParticipantEventId.get(
-                  registration.id
-                ) ?? [],
-              faculty:
-                registration.registration_group_id
-                  ? facultyByGroupId.get(registration.registration_group_id) ?? null
-                  : null,
-              payment_order:
-                paymentOrdersByRegistration.get(
-                  registration.id
-                ) ?? null,
+        const effectiveParticipant = participant ?? {
+          id: registration.participant_id,
+          participant_id: "N/A",
+          name: "Unknown Participant",
+          college: null,
+          email: "N/A",
+          phone: null,
+          photo_url: null,
+          gender: null,
+          state: null,
+          id_card_storage_path: null,
+          created_at: registration.created_at,
+        };
+
+        return [
+          {
+            participant: {
+              ...effectiveParticipant,
               accommodation: acc,
               accommodations: participantAccs,
             },
-          ]
-          : [];
+            registration,
+            event:
+              eventsById.get(
+                registration.event_id
+              ) ?? null,
+            members:
+              membersByParticipantEventId.get(
+                registration.id
+              ) ?? [],
+            faculty:
+              registration.registration_group_id
+                ? facultyByGroupId.get(registration.registration_group_id) ?? null
+                : null,
+            payment_order:
+              paymentOrdersByRegistration.get(
+                registration.id
+              ) ?? null,
+            accommodation: acc,
+            accommodations: participantAccs,
+          },
+        ];
       }
     );
 
@@ -787,7 +815,7 @@ export async function GET(request: Request) {
       role: auth.role,
       adminEmail: auth.user?.email ?? null,
       adminName: ((auth.user?.user_metadata?.name as string) || (auth.user?.user_metadata?.full_name as string)) ?? null,
-      isPrimary: auth.role === "master",
+      isPrimary: isPrimaryMaster(auth.user),
       accommodation_access: auth.accommodation_access,
       assigned_category: auth.assigned_category,
       assigned_events: auth.assigned_events,

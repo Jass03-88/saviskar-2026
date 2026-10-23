@@ -2,7 +2,6 @@
 
 import React from "react";
 import Link from "next/link";
-import Image from "next/image";
 import DeskEditorialSpread from "@/components/team/DeskEditorialSpread";
 import Navbar from "@/components/ui/Navbar";
 
@@ -22,7 +21,7 @@ const DIGNITARIES = [
       "His legacy is not built in stone. It is built in every student who steps onto this campus, finds their calling, and carries it forward.",
     ],
     signeeName: "Mr. Rashpal Singh Dhaliwal",
-    signeeRole: "Chancellor // CGC Group of Colleges",
+    signeeRole: "Chancellor // CGC University",
     initials: "RD",
     accent: "amber" as const,
     align: "left" as const,
@@ -80,21 +79,21 @@ const DIGNITARIES = [
     image: "/images/legacy/simran-dhaliwal-v2.webp",
   },
   {
-    id: "evp-shushil-prashar",
+    id: "evp-sushil-prashar",
     titleBadge: "EXECUTIVE GOVERNANCE // EXECUTIVE VICE PRESIDENT",
-    deskTitle: "DR. SHUSHIL PRASHAR",
+    deskTitle: "DR. SUSHIL PRASHAR",
     dropCap: "S",
     paragraphs: [
-      "trategic vision and administrative excellence form the bedrock upon which world-class educational institutions thrive. Dr. Shushil Prashar, Executive Vice President of CGC University, Mohali, steers institutional operations with an extraordinary blend of visionary acumen and pragmatic leadership.",
+      "trategic vision and administrative excellence form the bedrock upon which world-class educational institutions thrive. Dr. Sushil Prashar, Executive Vice President of CGC University, Mohali, steers institutional operations with an extraordinary blend of visionary acumen and pragmatic leadership.",
       "His stewardship across academic infrastructure, campus development, and stakeholder synergy ensures CGC University remains at the cutting edge of higher education in North India. In Saviskar 2026: Aevorian Reverie, Dr. Prashar's commitment to creating an unmatched student experience is evident across every competitive arena, grand stage, and delegate facilitation gateway.",
       "By empowering faculty and student bodies alike to think beyond traditional confines, he champions an institutional environment where innovation is celebrated and collegiate milestones are continually surpassed.",
     ],
-    signeeName: "Dr. Shushil Prashar",
+    signeeName: "Dr. Sushil Prashar",
     signeeRole: "Executive Vice President // CGC University, Mohali",
     initials: "SP",
     accent: "amber" as const,
     align: "left" as const,
-    image: "/images/legacy/shushil-prashar-v2.webp",
+    image: "/images/legacy/sushil-prashar-v2.webp",
   },
   {
     id: "vc-vinay-goyal",
@@ -133,15 +132,6 @@ const DIGNITARIES = [
 ] as const;
 
 // ============================================================
-// TEAM DSA GROUP SPREAD DATA
-// ============================================================
-const DSA_BIO = [
-  "he Department of Student Affairs at CGC University is the living engine of Saviskar 2026. Behind every event announcement, every registration window, every artist liaison, and every logistical triumph is this department — a cohesive, relentless team of faculty and professional staff who transform institutional vision into on-ground reality.",
-  "From coordinating national outreach campaigns across 11 states to managing the operational choreography of a 35,000-strong festival, Team DSA operates with a precision that is rarely visible and always essential. They are the unseen architecture of Aevorian Reverie.",
-  "Saviskar 2026 is a student festival, built by students. But it stands on the institutional foundation that Team DSA pours every year — with expertise, commitment, and an extraordinary belief in what young people can achieve when given the right stage.",
-];
-
-// ============================================================
 // ALUMNI DIGNITARIES DATA (DeskEditorialSpread format)
 // ============================================================
 const ALUMNI_DIGNITARIES = [
@@ -152,14 +142,14 @@ const ALUMNI_DIGNITARIES = [
     paragraphs: [
       "Behind every grand festival is an unseen operational anchor who transforms complex logistics into flawless execution. Mr. Abrar Nazir, Ex-Assistant Manager, Department of Student Affairs, was that foundational force during the formative editions of Saviskar at CGC University, Mohali.",
       "His operational stewardship and calm resolve under the intense pressure of multi-day festival schedules provided a steady rudder for successive student organising bodies. From coordinating late-night stage technical setups and multi-contingent university hospitality to unblocking urgent on-ground roadblocks, his dedication to the student community set the benchmark for collegiate festival management.",
-      "Mr. Nazir's legacy is etched into the very DNA of Saviskar's ground operations. The protocols he established, the student leaders he mentored, and the institutional standards he championed continue to guide and inspire Team DSA as Saviskar 2026 scales to national heights.",
+      "Mr. Nazir's legacy is etched into the very DNA of Saviskar's ground operations. The protocols he established, the student leaders he mentored, and the institutional standards he championed continue to guide and inspire student leaders and organizers as Saviskar 2026 scales to national heights.",
     ],
     signeeName: "Mr. Abrar Nazir",
     signeeRole: "Ex-Assistant Manager // Department of Student Affairs (DSA)",
     initials: "AN",
     accent: "amber" as const,
     align: "left" as const,
-    image: "/images/legacy/Abrar-Nazir.png",
+    image: "/images/legacy/abrar-nazir-v2.webp",
   },
   {
     id: "alumni-sac-2024-2025",
@@ -260,93 +250,6 @@ export default function LegacyView() {
           </div>
         ))}
       </div>
-
-      {/* ══════════════════════════════════════════════════════
-          8. TEAM DSA GROUP FEATURE
-      ══════════════════════════════════════════════════════ */}
-      <section
-        className="relative z-20 mt-8"
-        style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}
-      >
-        {/* Section header */}
-        <div className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto pt-16 pb-10">
-          <div className="font-mono text-[10px] tracking-[0.3em] uppercase text-emerald-400 mb-3">
-            Department of Student Affairs // Institutional Engine
-          </div>
-          <h2 className="font-editorial text-4xl sm:text-5xl md:text-6xl font-bold text-white tracking-tight leading-[1.0]">
-            Team DSA
-          </h2>
-          <p className="mt-3 text-sm sm:text-base text-zinc-400 font-light leading-relaxed max-w-xl">
-            The faculty and professional staff whose expertise, coordination, and institutional authority underpin every moment of Saviskar 2026.
-          </p>
-        </div>
-
-        {/* Full-bleed group photo banner */}
-        <div className="relative w-full overflow-hidden bg-zinc-950" style={{ height: "clamp(300px, 45vw, 580px)" }}>
-          <Image
-            src="/images/legacy/team-dsa-group-v2.webp"
-            alt="Team DSA — Department of Student Affairs"
-            fill
-            unoptimized
-            className="object-cover object-center opacity-40 hover:opacity-70 transition-opacity duration-700"
-          />
-          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-emerald-950/40 via-black/60 to-black/80">
-            {/* Scan texture */}
-            <div
-              className="pointer-events-none absolute inset-0 opacity-[0.02]"
-              style={{
-                backgroundImage:
-                  "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.9) 3px,rgba(255,255,255,0.9) 4px)",
-              }}
-            />
-            <div className="flex flex-col items-center gap-4 select-none relative z-10">
-              <span
-                className="font-editorial font-black text-white leading-none tracking-tighter"
-                style={{ fontSize: "clamp(4rem, 15vw, 12rem)", opacity: 0.08 }}
-                aria-hidden="true"
-              >
-                DSA
-              </span>
-              <div className="liquid-glass inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-[10px] font-mono tracking-[0.25em] text-emerald-300 uppercase shadow-[0_0_15px_rgba(16,185,129,0.2)]">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Department of Student Affairs // Institutional Engine</span>
-              </div>
-            </div>
-          </div>
-          {/* Bottom gradient fade */}
-          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black to-transparent" />
-        </div>
-
-        {/* Description block — full editorial text */}
-        <div className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto py-16">
-          <div className="max-w-4xl">
-            {/* Drop-cap first paragraph */}
-            <div className="text-base sm:text-lg md:text-xl text-zinc-200 leading-relaxed font-light text-justify">
-              <span className="float-left font-editorial font-bold text-[5.5rem] sm:text-[6.5rem] leading-[0.82] pr-3 pt-1 select-none text-emerald-400">
-                T
-              </span>
-              {DSA_BIO[0].slice(1)}
-            </div>
-
-            {/* Remaining paragraphs */}
-            <div className="mt-6 space-y-5 text-sm sm:text-base text-zinc-300/80 leading-[1.85] font-light text-justify">
-              {DSA_BIO.slice(1).map((para, i) => (
-                <p key={i}>{para}</p>
-              ))}
-            </div>
-
-            {/* DSA attribution */}
-            <div className="mt-10 pt-6" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-              <div className="font-editorial text-2xl sm:text-3xl font-semibold text-white leading-tight">
-                Department of Student Affairs
-              </div>
-              <div className="font-mono text-[10px] tracking-widest uppercase mt-2 text-emerald-300/70">
-                Institutional Operations &amp; Student Welfare // CGC University, Mohali
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* ══════════════════════════════════════════════════════
           OUR ALUMNI & MENTORS — EDITORIAL SPREADS

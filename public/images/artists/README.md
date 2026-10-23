@@ -12,8 +12,8 @@ This directory houses the systematic placeholder and promotional imagery for the
 | **02** | `artist-2-ankit-tiwari.webp` | Saviskar 2024 (Day 2) | Ankit Tiwari | Historical Archive |
 | **03** | `artist-3-kushagra-sunanda.webp` | Saviskar 2025 (Day 1) | Kushagra Thakur & Sunanda Sharma | Historical Archive |
 | **04** | `artist-4-salim-sulaiman.webp` | Saviskar 2025 (Day 2) | Salim-Sulaiman Symphony | Historical Archive |
-| **05** | `artist-5-2026-day1.webp` | Saviskar 2026 (Day 1) | Upcoming Headliner Slot | Classified Drop |
-| **06** | `artist-6-2026-day2.webp` | Saviskar 2026 (Day 2) | Upcoming Headliner Slot | Classified Drop |
+| **05** | `artist-5-2026-day1.webp` | Saviskar 2026 (Day 1) | Asees Kaur (Bollywood Playback Powerhouse) | Official Headliner |
+| **06** | `artist-6-2026-day2.webp` | Saviskar 2026 (Day 2) | Ranjit Bawa (Punjabi Folk & Bhangra Legend) | Official Grand Finale |
 
 ---
 

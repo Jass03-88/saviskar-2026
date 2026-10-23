@@ -430,4 +430,40 @@ body {
   color: #FFFFFF !important;
 }
 
+/* ============================================================
+   MOBILE TOUCH SCROLL FIXES
+   1. Images & Visual Media:
+      Never intercept, resist, or hijack page vertical scrolling.
+      Disables browser image drag-and-drop & long-press callouts.
+   2. Fixed Navigation Bar:
+      Ensures the top-center informational pill never absorbs touches,
+      and all navbar action items seamlessly permit vertical pan gestures.
+   ============================================================ */
+img,
+picture,
+video,
+canvas {
+  touch-action: pan-y !important;
+  -webkit-user-drag: none !important;
+  -webkit-touch-callout: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+@media screen and (max-width: 768px) {
+  /* Top-center status pill is informational only; allow touches to scroll through */
+  div[class*="left-1/2"][class*="fixed"],
+  .fixed.top-4.left-1\/2 {
+    pointer-events: none !important;
+    touch-action: pan-y !important;
+  }
+
+  /* Fixed navbar anchors and controls allow vertical page scroll */
+  .fixed.z-50,
+  .fixed.top-4 {
+    touch-action: pan-y;
+  }
+}
+
+
 

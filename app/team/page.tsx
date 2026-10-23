@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import TeamView from "@/components/team/TeamView";
+import TerminalPlaceholder from "@/components/ui/TerminalPlaceholder";
+import { getSiteAccess } from "@/lib/config/site-access";
 
 export const metadata: Metadata = {
   title: "Organising Team & Student Council (SAC) | CGC Saviskar 2026 — CGC University Mohali",
@@ -32,6 +34,21 @@ export const metadata: Metadata = {
   },
 };
 
-export default function TeamPage() {
+export default async function TeamPage() {
+  const siteAccess = await getSiteAccess();
+
+  if (!siteAccess.TEAM_ENABLED) {
+    return (
+      <TerminalPlaceholder
+        moduleCode="COUNCIL.SYS"
+        moduleName="Organising Team & SAC Roster"
+        category="EXECUTIVE PROTOCOL"
+        classification="EXECUTIVE ROSTER // LEVEL 2"
+        estimatedRelease="ROSTER ANNOUNCEMENT"
+        summary="The Student Advisory Council directory, faculty leadership manifests, and executive organizers for Saviskar 2026 at CGC University, Mohali are currently undergoing official administrative curation."
+      />
+    );
+  }
+
   return <TeamView />;
 }

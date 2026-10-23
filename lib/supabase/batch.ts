@@ -56,3 +56,39 @@ export async function fetchInBatches<T = any>(
 
   return { data: allData, error: null };
 }
+
+/**
+ * Fetches all rows from a Supabase query by paginating in chunks of 1000
+ * to overcome the Supabase/PostgREST 1000 max-rows limit.
+ */
+export async function fetchAllRows<T = any>(
+  fetchChunk: (start: number, end: number) => PromiseLike<{ data: T[] | null; error: any; count?: number | null }>,
+  chunkSize = 1000,
+  maxRecords = 50000
+): Promise<{ data: T[]; totalCount: number; error: any }> {
+  let allData: T[] = [];
+  let currentStart = 0;
+  let totalCount = 0;
+
+  while (currentStart < maxRecords) {
+    const currentEnd = currentStart + chunkSize - 1;
+    const res = await fetchChunk(currentStart, currentEnd);
+    if (res.error) {
+      return { data: allData, totalCount, error: res.error };
+    }
+    const chunk = res.data || [];
+    if (totalCount === 0 && typeof res.count === "number") {
+      totalCount = res.count;
+    }
+    allData.push(...chunk);
+    if (chunk.length < chunkSize) {
+      break;
+    }
+    currentStart += chunkSize;
+    if (totalCount > 0 && currentStart >= totalCount) {
+      break;
+    }
+  }
+
+  return { data: allData, totalCount: totalCount || allData.length, error: null };
+}
