@@ -28,6 +28,7 @@ import {
   DiagnosticFinding,
   formatIndianTimestamp,
   PaymentAuditScope,
+  getReconciliationConfirmationSummary,
 } from "@/lib/admin/payment-verification";
 import { useBodyScrollLock } from "@/lib/admin/useBodyScrollLock";
 
@@ -58,6 +59,12 @@ export function PaymentVerificationDialog({
 
   // Reconciliation & Email Retry State
   const [reconciliationTarget, setReconciliationTarget] = useState<OrderVerificationResult | null>(null);
+
+  // Authoritative Confirmation Summary Derived from Reconciliation Target
+  const confirmSummary = useMemo(
+    () => getReconciliationConfirmationSummary(reconciliationTarget),
+    [reconciliationTarget]
+  );
   const [reconciling, setReconciling] = useState(false);
   const [reconciliationResults, setReconciliationResults] = useState<
     Record<
@@ -127,6 +134,7 @@ export function PaymentVerificationDialog({
                   linkedItems: o.linkedItems.map((li) => ({
                     ...li,
                     localStatus: "paid",
+                    settlementContext: "settled_by_current_order",
                   })),
                 };
               }
@@ -485,10 +493,14 @@ export function PaymentVerificationDialog({
       lines.push(`  - Gateway Base Amount (PayU amt / transaction_amount): ${o.gatewayReportedAmount != null ? `₹${o.gatewayReportedAmount.toFixed(2)}` : "Not returned by PayU"}`);
       lines.push(`  - Additional Charge Reported by PayU (additional_charges): ${o.additionalCharges != null && o.additionalCharges > 0 ? `₹${o.additionalCharges.toFixed(2)}` : "Not returned by PayU"}`);
       lines.push(`  - Customer Debit (Calculated/Reported): ${o.customerTransactionAmount != null ? `₹${o.customerTransactionAmount.toFixed(2)}` : "Not returned by PayU"}`);
-      lines.push(`  - Merchant Settlement (net_amount_debit / amount_settled): ${o.settlementAmount != null ? `₹${o.settlementAmount.toFixed(2)}` : "Not returned by PayU"}`);
+      lines.push(`  - Merchant Settlement (amount_settled): ${o.settlementAmount != null ? `₹${o.settlementAmount.toFixed(2)}` : "Not returned by PayU"}`);
       lines.push(`  - Gateway Deductions / Fees (PayU disc): ${o.deductions != null ? `₹${o.deductions.toFixed(2)}` : "₹0.00"}`);
-      if (o.payuAmt != null || o.payuTransactionAmount != null) {
-        lines.push(`  - PayU Raw Fields: amt=${o.payuAmt != null ? o.payuAmt.toFixed(2) : "N/A"}, transaction_amount=${o.payuTransactionAmount != null ? o.payuTransactionAmount.toFixed(2) : "N/A"}`);
+      if (o.payuAmt != null || o.payuTransactionAmount != null || o.netDebit != null) {
+        const rawParts: string[] = [];
+        if (o.payuAmt != null) rawParts.push(`amt=${o.payuAmt.toFixed(2)}`);
+        if (o.payuTransactionAmount != null) rawParts.push(`transaction_amount=${o.payuTransactionAmount.toFixed(2)}`);
+        if (o.netDebit != null) rawParts.push(`net_amount_debit=${o.netDebit.toFixed(2)}`);
+        lines.push(`  - PayU Raw Fields: ${rawParts.join(", ")}`);
       }
       if (o.amountAmbiguityReason) {
         lines.push(`  - ⚠️ Amount Ambiguity: ${o.amountAmbiguityReason}`);
@@ -959,6 +971,16 @@ export function PaymentVerificationDialog({
                                     <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-black/5 text-black/70">
                                       Local: {order.localOrderStatus.toUpperCase()}
                                     </span>
+                                    {order.allocationBreakdown && (
+                                      <span className="font-mono text-[10px] px-2.5 py-0.5 rounded-full bg-black/5 text-black/80 font-medium border border-black/[0.06]">
+                                        {order.allocationBreakdown.summaryText}
+                                      </span>
+                                    )}
+                                    {order.allocationBreakdown?.hasAllocationMismatch && (
+                                      <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+                                        Diff: ₹{Math.abs(order.allocationBreakdown.differenceINR).toLocaleString("en-IN")}
+                                      </span>
+                                    )}
                                   </div>
 
                                   <p className="text-xs text-black/70 italic">
@@ -977,10 +999,16 @@ export function PaymentVerificationDialog({
                                               className={`inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-md border mr-1.5 ${
                                                 df.severity === "error"
                                                   ? "bg-rose-50 text-rose-800 border-rose-200"
+                                                  : df.severity === "info" || df.type === "RETRY_ORDER_NOTICE"
+                                                  ? "bg-blue-50 text-blue-800 border-blue-200"
                                                   : "bg-amber-50 text-amber-800 border-amber-200"
                                               }`}
                                             >
-                                              <AlertCircle className="w-3 h-3 shrink-0" />
+                                              {df.severity === "info" || df.type === "RETRY_ORDER_NOTICE" ? (
+                                                <Info className="w-3 h-3 shrink-0 text-blue-600" />
+                                              ) : (
+                                                <AlertCircle className="w-3 h-3 shrink-0" />
+                                              )}
                                               <span>{df.title}: {df.description}</span>
                                             </div>
                                           ))}
@@ -1173,6 +1201,82 @@ export function PaymentVerificationDialog({
                                     </div>
                                   </div>
 
+                                  {/* LINE-ITEM ALLOCATION BREAKDOWN */}
+                                  {order.allocationBreakdown && (
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-black/50 block">
+                                          Line-Item Allocation Breakdown
+                                        </span>
+                                        <span
+                                          className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md ${
+                                            order.allocationBreakdown.hasAllocationMismatch
+                                              ? "bg-amber-100 text-amber-900 border border-amber-300"
+                                              : "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                                          }`}
+                                        >
+                                          {order.allocationBreakdown.allocationDifferenceText}
+                                        </span>
+                                      </div>
+                                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5 text-[11px] bg-white p-3.5 rounded-xl border border-black/[0.06]">
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Order Amount
+                                          </span>
+                                          <span className="font-mono text-black/90 font-semibold block mt-0.5">
+                                            ₹{order.allocationBreakdown.totalOrderAmount.toLocaleString("en-IN")}
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Line-Item Sum
+                                          </span>
+                                          <span className="font-mono text-black/90 font-semibold block mt-0.5">
+                                            ₹{order.allocationBreakdown.totalLineItemSum.toLocaleString("en-IN")}
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Distinct Items
+                                          </span>
+                                          <span className="font-mono text-black/80 block mt-0.5">
+                                            {order.allocationBreakdown.distinctItemCount}
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Events Subtotal
+                                          </span>
+                                          <span className="font-mono text-black/80 block mt-0.5">
+                                            {order.allocationBreakdown.eventCount} (₹{order.allocationBreakdown.eventSubtotal.toLocaleString("en-IN")})
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Accommodations
+                                          </span>
+                                          <span className="font-mono text-black/80 block mt-0.5">
+                                            {order.allocationBreakdown.accommodationCount} (₹{order.allocationBreakdown.accommodationSubtotal.toLocaleString("en-IN")})
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-black/40 block text-[9px] uppercase font-bold">
+                                            Allocation Diff
+                                          </span>
+                                          <span
+                                            className={`font-mono font-semibold block mt-0.5 ${
+                                              order.allocationBreakdown.hasAllocationMismatch
+                                                ? "text-amber-800"
+                                                : "text-emerald-700"
+                                            }`}
+                                          >
+                                            ₹{order.allocationBreakdown.differenceINR.toLocaleString("en-IN")}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
                                   {/* AMOUNT NORMALIZATION & SETTLEMENT BREAKDOWN */}
                                   <div className="space-y-1.5">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-black/50 block">
@@ -1240,7 +1344,7 @@ export function PaymentVerificationDialog({
                                   </div>
 
                                   {/* AUTHORITATIVE BANK & GATEWAY METADATA */}
-                                  {(order.bankRefNum || order.udf1 || order.deductions != null || order.payuAmt != null) && (
+                                  {(order.bankRefNum || order.udf1 || order.deductions != null || order.payuAmt != null || order.payuTransactionAmount != null || order.netDebit != null) && (
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-[11px] bg-white p-3.5 rounded-xl border border-black/[0.06]">
                                       <div>
                                         <span className="text-black/40 block text-[9px] uppercase font-bold">
@@ -1272,6 +1376,8 @@ export function PaymentVerificationDialog({
                                         </span>
                                         <span className="font-mono text-black/80 block truncate">
                                           amt: {order.payuAmt != null ? `₹${order.payuAmt.toFixed(2)}` : "—"}
+                                          {order.payuTransactionAmount != null ? ` | txn_amt: ₹${order.payuTransactionAmount.toFixed(2)}` : ""}
+                                          {order.netDebit != null ? ` | net_debit: ₹${order.netDebit.toFixed(2)}` : ""}
                                         </span>
                                       </div>
                                     </div>
@@ -1314,23 +1420,46 @@ export function PaymentVerificationDialog({
                                       {order.linkedItems.map((item, liIdx) => (
                                         <div
                                           key={item.id || liIdx}
-                                          className="flex items-center justify-between p-2.5 rounded-lg bg-white border border-black/[0.06] text-xs"
+                                          className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-lg bg-white border border-black/[0.06] text-xs gap-2"
                                         >
-                                          <div className="flex items-center gap-2">
+                                          <div className="flex items-center gap-2 flex-wrap">
                                             {item.itemType === "accommodation" ? (
-                                              <Building2 className="w-3.5 h-3.5 text-purple-600" />
+                                              <Building2 className="w-3.5 h-3.5 text-purple-600 shrink-0" />
                                             ) : (
-                                              <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                                              <CreditCard className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                                             )}
                                             <span className="font-medium text-black">{item.title}</span>
+                                            {item.delegateName && (
+                                              <span className="text-[10px] text-black/60 font-mono">
+                                                • {item.delegateName}
+                                              </span>
+                                            )}
                                             {item.dates && (
                                               <span className="text-[10px] text-black/40">
                                                 ({item.dates})
                                               </span>
                                             )}
+                                            {item.settlementContext === "settled_by_retry" && (
+                                              <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                                                <Info className="w-2.5 h-2.5" />
+                                                Settled by retry: {item.settledByOrderReference || "paid retry"}
+                                              </span>
+                                            )}
+                                            {item.settlementContext === "unresolved_paid" && (
+                                              <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                                                <AlertTriangle className="w-2.5 h-2.5" />
+                                                Unresolved paid item
+                                              </span>
+                                            )}
+                                            {item.hasMissingTarget && (
+                                              <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                                <AlertCircle className="w-2.5 h-2.5" />
+                                                Missing canonical target ID
+                                              </span>
+                                            )}
                                           </div>
 
-                                          <div className="flex items-center gap-3">
+                                          <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
                                             <span className="font-mono font-semibold text-black/80">
                                               ₹{item.expectedAmount.toLocaleString("en-IN")}
                                             </span>
@@ -1421,43 +1550,64 @@ export function PaymentVerificationDialog({
               )}
             </div>
 
-            {/* Order & Linked Items Summary */}
-            <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/[0.06] space-y-2.5 text-xs">
+                        {/* Order & Linked Items Summary */}
+            <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/[0.06] space-y-3 text-xs">
               <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
-                <span className="text-black/50">Merchant Order Reference</span>
-                <span className="font-mono font-bold text-black">{reconciliationTarget.orderReference}</span>
+                <span className="text-black/50">Saviskar Order Reference (UDF1)</span>
+                <span className="font-mono font-bold text-black">{confirmSummary.saviskarOrderRef}</span>
               </div>
               <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
-                <span className="text-black/50">Expected Verified Amount</span>
+                <span className="text-black/50">PayU Merchant Transaction Reference (txnid)</span>
+                <span className="font-mono text-black/80">{confirmSummary.merchantTxnRef}</span>
+              </div>
+              <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
+                <span className="text-black/50">PayU Payment ID (mihpayid)</span>
+                <span className="font-mono text-black/80">{confirmSummary.payuPaymentId}</span>
+              </div>
+              <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
+                <span className="text-black/50">Expected Base Amount</span>
                 <span className="font-mono font-bold text-emerald-800">
-                  ₹{reconciliationTarget.expectedAmount.toLocaleString("en-IN")} INR
+                  ₹{confirmSummary.expectedAmountINR.toFixed(2)} INR
                 </span>
               </div>
-              <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
-                <span className="text-black/50">Gateway Transaction ID</span>
-                <span className="font-mono text-black/80">{reconciliationTarget.gatewayOrderId}</span>
-              </div>
-              <div className="flex justify-between items-center pb-2 border-b border-black/[0.06]">
-                <span className="text-black/50">Affected Status Records</span>
-                <span className="font-semibold text-emerald-700">Order: pending → paid</span>
-              </div>
+
+              {/* Affected Status Records Summary */}
               <div className="space-y-1.5 pt-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-black/40 block">
-                  Linked Items To Settle ({reconciliationTarget.linkedItems.length})
+                <span className="text-[10px] font-bold uppercase tracking-wider text-black/50 block">
+                  Affected Status Records ({confirmSummary.transitions.filter((t) => !t.isUnchanged).length})
                 </span>
-                {reconciliationTarget.linkedItems.map((li, idx) => (
+                {confirmSummary.transitions.map((t, idx) => (
                   <div
                     key={idx}
-                    className="flex justify-between items-center text-[11px] p-2 rounded-lg bg-white border border-black/[0.04]"
+                    className="flex justify-between items-center text-[11px] p-2.5 rounded-lg bg-white border border-black/[0.04]"
                   >
-                    <span className="font-medium text-black truncate max-w-[240px]">{li.title}</span>
-                    <span className="font-mono text-black/60">
-                      ₹{li.expectedAmount} (pending → paid)
+                    <span className="font-medium text-black truncate max-w-[240px]">{t.recordName}</span>
+                    <span
+                      className={`font-mono font-semibold ${
+                        t.requiresReview
+                          ? "text-rose-700 font-bold"
+                          : t.isUnchanged
+                          ? "text-black/40"
+                          : "text-emerald-700"
+                      }`}
+                    >
+                      {t.transitionDisplay}
                     </span>
                   </div>
                 ))}
               </div>
             </div>
+
+            {/* If settlement blocked, show prominent alert */}
+            {!confirmSummary.canSettle && (
+              <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-[11px] text-rose-900 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-bold">Confirmation Blocked:</strong>
+                  <span>{confirmSummary.blockReason}</span>
+                </div>
+              </div>
+            )}
 
             {/* Disclosure */}
             <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
@@ -1479,9 +1629,9 @@ export function PaymentVerificationDialog({
               </button>
               <button
                 type="button"
-                disabled={reconciling}
+                disabled={reconciling || !confirmSummary.canSettle}
                 onClick={() => executeReconciliation(reconciliationTarget)}
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition active:scale-95 disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {reconciling ? (
                   <>

@@ -130,7 +130,7 @@ declare
     v_faculty_public_id text;
     v_faculty_name text;
     v_faculty_college text;
-
+    
     -- Result Table
     v_results jsonb := '[]'::jsonb;
     v_res jsonb;
@@ -732,8 +732,8 @@ begin
                     -- Confirmed paid booking associated with order
                     v_has_active_checkout := true;
 
-                elsif v_po.id is not null
-                      and v_po.gateway_payment_id is not null
+                elsif v_po.id is not null 
+                      and v_po.gateway_payment_id is not null 
                       and trim(v_po.gateway_payment_id) != '' then
                     -- Active transaction in flight on payment gateway
                     v_has_active_checkout := true;
@@ -757,7 +757,7 @@ begin
 
             -- 5b-ii. Reject immediately if ANY active checkout in progress exists (do not expire anything)
             if v_has_active_checkout then
-                raise exception 'Active checkout in progress for these dates (% to %). Please complete it or wait for it to expire.',
+                raise exception 'Active checkout in progress for these dates (% to %). Please complete it or wait for it to expire.', 
                     v_acc_start_date, v_acc_end_date using errcode = 'SVK11';
             end if;
 
@@ -830,7 +830,7 @@ begin
         payment_order_id := v_payment_order_id;
         return next;
     end loop;
-
+    
     -- Accommodation-only fallback return
     if jsonb_array_length(v_results) = 0 and v_payment_order_id is not null then
         participant_id := v_participant_public_id;
@@ -841,7 +841,7 @@ begin
         payment_order_id := v_payment_order_id;
         return next;
     end if;
-
+    
     return;
 end;
 $$;

@@ -7,6 +7,9 @@ import {
   toPaise,
   ReconciliationOutcome,
   formatIndianTimestamp,
+  getReconciliationConfirmationSummary,
+  computeItemAllocationBreakdown,
+  formatINR,
 } from "@/lib/admin/payment-verification";
 import {
   generateEmailPreviews,
@@ -3347,6 +3350,7 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
               bank_ref_num: "131568971245",
               udf1: "SVK-SVK26-2B846A46-20261019180605894-68460D",
               net_amount_debit: "999.00",
+              amount_settled: "999.00",
               disc: "0.00",
               mode: "UPI",
             },
@@ -3898,7 +3902,7 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
       expect(report).toContain("**Gateway Base Amount (PayU amt / transaction_amount)**: ₹999.00 INR");
       expect(report).toContain("**Additional Charge Reported by PayU (additional_charges)**: ₹1.18");
       expect(report).toContain("**Customer Debit (Calculated/Reported)**: ₹1000.18");
-      expect(report).toContain("**Merchant Settlement (net_amount_debit / amount_settled)**: ₹999.00");
+      expect(report).toContain("**Merchant Settlement (amount_settled)**: ₹999.00");
       expect(report).toContain("**Gateway Deductions / Fees (PayU disc)**: ₹0.00");
       expect(report).toContain("**PayU Raw Fields**: amt: 999.00, transaction_amount: 999.00");
 
@@ -3908,4 +3912,2749 @@ describe("Payment Reconciliation Centre & Verification Suite", () => {
       expect(report).not.toContain("sha512");
     });
   });
+
+  // =========================================================================
+  // Part 12: Reconciliation Confirmation Dialog Display & Transition Safety Suite (97–107)
+  // =========================================================================
+  describe("Part 12: Reconciliation Confirmation Dialog Display & Transition Safety", () => {
+    it("97. Requirement 1: Separate Reference Identifiers are accurately labeled without ambiguity", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "order-uuid-1",
+        orderReference: "SVK-SVK26-2B846A46-20261019180605894-68460D",
+        gatewayOrderId: "SVK-1792433168043-c5151e1",
+        gatewayPaymentId: "31387025914",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0001",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 1.18,
+        settlementAmount: 999,
+        customerTransactionAmount: 1000.18,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Payment confirmed on gateway.",
+        linkedItems: [
+          {
+            id: "acc-1",
+            itemType: "accommodation",
+            title: "2 Days Accommodation",
+            expectedAmount: 999,
+            localStatus: "pending",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.saviskarOrderRef).toBe("SVK-SVK26-2B846A46-20261019180605894-68460D");
+      expect(summary.merchantTxnRef).toBe("SVK-1792433168043-c5151e1");
+      expect(summary.payuPaymentId).toBe("31387025914");
+      expect(summary.expectedAmountINR).toBe(999);
+      expect(summary.canSettle).toBe(true);
+    });
+
+    it("98. Requirement 1 & 4: Merchant Transaction Reference (txnid) is NEVER substituted as PayU Payment ID (mihpayid)", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "order-uuid-2",
+        orderReference: "SVK-ORD-REF",
+        gatewayOrderId: "SVK-TXNID-12345", // merchant reference (txnid)
+        gatewayPaymentId: null, // missing mihpayid!
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0002",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Payment confirmed on gateway.",
+        linkedItems: [],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.merchantTxnRef).toBe("SVK-TXNID-12345");
+      // Must NOT substitute gatewayOrderId into payuPaymentId!
+      expect(summary.payuPaymentId).not.toBe("SVK-TXNID-12345");
+      expect(summary.payuPaymentId).toBe("Not returned by PayU");
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("Missing PayU Payment ID (mihpayid)");
+    });
+
+    it("99. Requirement 1 & 8: Missing IDs display Unavailable fallback rather than cross-populating", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "order-uuid-3",
+        orderReference: "",
+        gatewayOrderId: "",
+        gatewayPaymentId: "",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0003",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Payment confirmed on gateway.",
+        linkedItems: [],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.saviskarOrderRef).toBe("Unavailable");
+      expect(summary.merchantTxnRef).toBe("Unavailable");
+      expect(summary.payuPaymentId).toBe("Not returned by PayU");
+    });
+
+    it("100. Requirement 2 & 5 & 6: Known Target Case derives Payment Order FAILED → PAID and 2 Days Accommodation PENDING → PAID", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        orderReference: "SVK-SVK26-2B846A46-20261019180605894-68460D",
+        gatewayOrderId: "SVK-1792433168043-c5151e1",
+        gatewayPaymentId: "31387025914",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Kritika Sangotra",
+        payerEmail: "kritika@example.com",
+        payerPublicId: "SVK-26-0004",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 1.18,
+        settlementAmount: 999,
+        customerTransactionAmount: 1000.18,
+        localOrderStatus: "failed", // Real local order status is FAILED
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment; eligible for administrative settlement.",
+        linkedItems: [
+          {
+            id: "70f77d52-4f5a-4268-a4b3-00b9771ffd33",
+            itemType: "accommodation",
+            title: "2 Days Accommodation",
+            expectedAmount: 999,
+            localStatus: "pending",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions).toHaveLength(2);
+
+      // 1. Payment Order row: FAILED → PAID (NOT hardcoded pending!)
+      expect(summary.transitions[0].recordName).toBe("Payment Order");
+      expect(summary.transitions[0].sourceStatus).toBe("failed");
+      expect(summary.transitions[0].targetStatus).toBe("paid");
+      expect(summary.transitions[0].transitionDisplay).toBe("FAILED → PAID");
+      expect(summary.transitions[0].isUnchanged).toBe(false);
+
+      // 2. Accommodation row: PENDING → PAID
+      expect(summary.transitions[1].recordName).toBe("2 Days Accommodation");
+      expect(summary.transitions[1].sourceStatus).toBe("pending");
+      expect(summary.transitions[1].targetStatus).toBe("paid");
+      expect(summary.transitions[1].transitionDisplay).toBe("PENDING → PAID");
+      expect(summary.transitions[1].isUnchanged).toBe(false);
+
+      expect(summary.canSettle).toBe(true);
+    });
+
+    it("101. Requirement 2 & 5: Payment order with local status pending shows PENDING → PAID", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "order-pending-1",
+        orderReference: "SVK-PENDING-REF",
+        gatewayOrderId: "SVK-TXN-PENDING",
+        gatewayPaymentId: "31387099999",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0005",
+        expectedAmount: 500,
+        currency: "INR",
+        gatewayReportedAmount: 500,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "pending",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment.",
+        linkedItems: [
+          {
+            id: "evt-1",
+            itemType: "event",
+            title: "Roborace Challenge",
+            expectedAmount: 500,
+            localStatus: "pending",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions[0].transitionDisplay).toBe("PENDING → PAID");
+      expect(summary.transitions[1].transitionDisplay).toBe("PENDING → PAID");
+      expect(summary.canSettle).toBe(true);
+    });
+
+    it("102. Requirement 2 & 7: Multiple linked items each display their independent expected transition", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "multi-order-1",
+        orderReference: "SVK-MULTI-REF",
+        gatewayOrderId: "SVK-TXN-MULTI",
+        gatewayPaymentId: "31387088888",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0006",
+        expectedAmount: 1499,
+        currency: "INR",
+        gatewayReportedAmount: 1499,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment.",
+        linkedItems: [
+          {
+            id: "evt-1",
+            itemType: "event",
+            title: "Web Dev Sprint",
+            expectedAmount: 500,
+            localStatus: "pending",
+          },
+          {
+            id: "acc-1",
+            itemType: "accommodation",
+            title: "2 Days Accommodation",
+            expectedAmount: 999,
+            localStatus: "pending",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions).toHaveLength(3);
+      expect(summary.transitions[0].recordName).toBe("Payment Order");
+      expect(summary.transitions[0].transitionDisplay).toBe("FAILED → PAID");
+
+      expect(summary.transitions[1].recordName).toBe("Web Dev Sprint");
+      expect(summary.transitions[1].transitionDisplay).toBe("PENDING → PAID");
+
+      expect(summary.transitions[2].recordName).toBe("2 Days Accommodation");
+      expect(summary.transitions[2].transitionDisplay).toBe("PENDING → PAID");
+    });
+
+    it("103. Requirement 2: Already-paid items do not claim active status changes and block redundant settlement", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "paid-order-1",
+        orderReference: "SVK-ALREADY-PAID",
+        gatewayOrderId: "SVK-TXN-PAID",
+        gatewayPaymentId: "31387077777",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0007",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "paid",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_created",
+        outcome: "MATCHED_PAID",
+        outcomeMessage: "Order is already paid.",
+        linkedItems: [
+          {
+            id: "acc-1",
+            itemType: "accommodation",
+            title: "2 Days Accommodation",
+            expectedAmount: 999,
+            localStatus: "paid",
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions[0].isUnchanged).toBe(true);
+      expect(summary.transitions[0].transitionDisplay).toBe("PAID (Already Settled)");
+      expect(summary.transitions[1].isUnchanged).toBe(true);
+      expect(summary.transitions[1].transitionDisplay).toBe("PAID (Already Settled)");
+
+      // Redundant settlement should be blocked
+      expect(summary.canSettle).toBe(false);
+    });
+
+    it("104. Requirement 2 & 10: Missing accommodation booking or corrupted status displays Outcome requires review and blocks confirmation", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "corrupted-order-1",
+        orderReference: "SVK-CORRUPT-REF",
+        gatewayOrderId: "SVK-TXN-CORRUPT",
+        gatewayPaymentId: "31387066666",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0008",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment.",
+        linkedItems: [
+          {
+            id: "acc-missing-1",
+            itemType: "accommodation",
+            title: "Missing Accommodation Booking",
+            expectedAmount: 999,
+            localStatus: "missing", // Booking record is missing!
+          },
+        ],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.transitions[1].requiresReview).toBe(true);
+      expect(summary.transitions[1].transitionDisplay).toBe("Outcome requires review");
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("require administrative review");
+    });
+
+    it("105. Requirement 3 & 10: Amount ambiguity blocks settlement in the confirmation summary", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "ambig-order-1",
+        orderReference: "SVK-AMBIG-REF",
+        gatewayOrderId: "SVK-TXN-AMBIG",
+        gatewayPaymentId: "31387055555",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0009",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 999,
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 1.18,
+        amountAmbiguityReason: "Contradictory settlement amount fields returned by PayU.",
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        outcomeMessage: "Gateway captured payment.",
+        linkedItems: [],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("Contradictory settlement amount fields");
+    });
+
+    it("106. Requirement 3 & 10: Non-reconcilable outcome (e.g. AMOUNT_MISMATCH) blocks settlement", () => {
+      const summary = getReconciliationConfirmationSummary({
+        orderId: "mismatch-order-1",
+        orderReference: "SVK-MISMATCH-REF",
+        gatewayOrderId: "SVK-TXN-MISMATCH",
+        gatewayPaymentId: "31387044444",
+        gateway: "payu",
+        payerParticipantId: "part-1",
+        payerName: "Test Participant",
+        payerEmail: "test@example.com",
+        payerPublicId: "SVK-26-0010",
+        expectedAmount: 999,
+        currency: "INR",
+        gatewayReportedAmount: 500, // Mismatch!
+        gatewayReportedCurrency: "INR",
+        additionalCharges: 0,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "paid",
+        settlementReceiptStatus: "receipt_missing",
+        outcome: "AMOUNT_MISMATCH",
+        outcomeMessage: "Order amount (₹999) does not match gateway captured amount (₹500).",
+        linkedItems: [],
+        diagnosticFindings: [],
+        orderCreatedAt: null,
+        gatewayTransactionTime: null,
+        verifiedAt: new Date().toISOString(),
+        diagnostics: { verifiedAt: new Date().toISOString() },
+      });
+
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("does not match gateway captured amount");
+    });
+
+    it("107. Requirement 3 & 9: Summary calculation is pure and causes zero RPC calls or side effects", () => {
+      const mockOrder: any = {
+        orderId: "pure-check-1",
+        orderReference: "SVK-PURE-REF",
+        gatewayOrderId: "SVK-TXN-PURE",
+        gatewayPaymentId: "31387033333",
+        expectedAmount: 999,
+        localOrderStatus: "failed",
+        outcome: "GATEWAY_PAID_LOCAL_PENDING",
+        linkedItems: [{ id: "acc-1", itemType: "accommodation", title: "Stay", localStatus: "pending" }],
+      };
+
+      // Calling helper multiple times produces identical pure outputs without mutating order
+      const summary1 = getReconciliationConfirmationSummary(mockOrder);
+      const summary2 = getReconciliationConfirmationSummary(mockOrder);
+
+      expect(summary1).toEqual(summary2);
+      expect(mockOrder.localOrderStatus).toBe("failed"); // No mutation
+    });
+  });
+
+  // =========================================================================
+  // Part 13: PayU Merchant Settlement Amount Mapping & Safeguards Suite (108–115)
+  // =========================================================================
+  describe("Part 13: PayU Merchant Settlement Amount Mapping & Safeguards Suite", () => {
+    // 1. ₹999 base amount, ₹1.18 additional charge, ₹1,000.18 customer debit, and an authoritative settlement amount of ₹999.
+    it("108. Regression 1: ₹999 base amount, ₹1.18 additional charge, ₹1,000.18 customer debit, and an authoritative settlement amount of ₹999", async () => {
+      const txRecord = {
+        amt: "999.00",
+        transaction_amount: "999.00",
+        additional_charges: "1.18",
+        net_amount_debit: "1000.18",
+        amount_settled: "999.00",
+        disc: "0.00",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(99900);
+      expect(normalized.additionalChargesPaise).toBe(118);
+      expect(normalized.customerTransactionAmountPaise).toBe(100018);
+      expect(normalized.settlementAmountPaise).toBe(99900);
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["b2366e0f-e566-4632-8c68-0369baba05cb"],
+        mockGatewayResults: {
+          "SVK-1792433168043-c5151e1": {
+            status: "paid",
+            amountPaise: 99900,
+            additionalChargesPaise: 118,
+            customerTransactionAmountPaise: 100018,
+            settlementAmountPaise: 99900,
+            gatewayPaymentId: "31387025914",
+          },
+        },
+      });
+
+      const order = verifyRes.orders[0];
+      expect(order.expectedAmount).toBe(999);
+      expect(order.gatewayReportedAmount).toBe(999);
+      expect(order.additionalCharges).toBe(1.18);
+      expect(order.customerTransactionAmount).toBe(1000.18);
+      expect(order.settlementAmount).toBe(999);
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **Merchant Settlement (amount_settled)**: ₹999.00");
+    });
+
+    // 2. The same transaction when the response does not contain a settlement amount; display unavailable.
+    it("109. Regression 2: Same transaction without amount_settled displays unavailable and does not misclassify as amount mismatch", async () => {
+      const txRecord = {
+        amt: "999.00",
+        transaction_amount: "999.00",
+        additional_charges: "1.18",
+        net_amount_debit: "1000.18",
+        disc: "0.00",
+        // No amount_settled returned by PayU
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(99900);
+      expect(normalized.additionalChargesPaise).toBe(118);
+      expect(normalized.customerTransactionAmountPaise).toBe(100018);
+      expect(normalized.settlementAmountPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["b2366e0f-e566-4632-8c68-0369baba05cb"],
+        mockGatewayResults: {
+          "SVK-1792433168043-c5151e1": {
+            status: "paid",
+            amountPaise: 99900,
+            additionalChargesPaise: 118,
+            customerTransactionAmountPaise: 100018,
+            // settlementAmountPaise omitted/undefined
+            gatewayPaymentId: "31387025914",
+          },
+        },
+      });
+
+      const order = verifyRes.orders[0];
+      expect(order.settlementAmount).toBeNull();
+      // Crucial: Base amount ₹999 matches expected ₹999, so missing settlement evidence is NOT an amount mismatch!
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **Merchant Settlement (amount_settled)**: Not returned by PayU");
+    });
+
+    // 3. A response whose raw amt is ₹1,000.18 while documented base/charge fields differ; do not mislabel it as settlement.
+    it("110. Regression 3: Response whose raw amt is ₹1,000.18 and txn_amt is ₹999.00 does not mislabel amt as settlement", async () => {
+      const txRecord = {
+        amt: "1000.18",
+        transaction_amount: "999.00",
+        additional_charges: "1.18",
+        net_amount_debit: "1000.18",
+        // No amount_settled
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(99900); // Base is 999.00
+      expect(normalized.customerTransactionAmountPaise).toBe(100018); // Customer debit is 1000.18
+      expect(normalized.payuAmtPaise).toBe(100018);
+      expect(normalized.payuTransactionAmountPaise).toBe(99900);
+      expect(normalized.settlementAmountPaise).toBeUndefined(); // NEVER falls back to amt or net_amount_debit!
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["b2366e0f-e566-4632-8c68-0369baba05cb"],
+        mockGatewayResults: {
+          "SVK-1792433168043-c5151e1": {
+            status: "paid",
+            amountPaise: 99900,
+            additionalChargesPaise: 118,
+            customerTransactionAmountPaise: 100018,
+            payuAmtPaise: 100018,
+            payuTransactionAmountPaise: 99900,
+            gatewayPaymentId: "31387025914",
+          },
+        },
+      });
+
+      const order = verifyRes.orders[0];
+      expect(order.settlementAmount).toBeNull();
+      expect(order.payuAmt).toBe(1000.18);
+      expect(order.payuTransactionAmount).toBe(999);
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **Merchant Settlement (amount_settled)**: Not returned by PayU");
+      expect(report).toContain("- **PayU Raw Fields**: amt: 1000.18, transaction_amount: 999.00");
+    });
+
+    // 4. Separate net_amount_debit and amount_settled fields.
+    it("111. Regression 4: Separate net_amount_debit and amount_settled are mapped independently without conflation", () => {
+      const txRecord = {
+        amt: "999.00",
+        transaction_amount: "999.00",
+        additional_charges: "1.18",
+        net_amount_debit: "1000.18",
+        amount_settled: "999.00",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      // net_amount_debit maps to customerTransactionAmountPaise
+      expect(normalized.customerTransactionAmountPaise).toBe(100018);
+      // amount_settled maps to settlementAmountPaise
+      expect(normalized.settlementAmountPaise).toBe(99900);
+      // Differing between net_amount_debit and amount_settled is valid when additional charges exist
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+    });
+
+    // 5. Genuine base-amount mismatches still block reconciliation.
+    it("112. Regression 5: Genuine base-amount mismatches still block reconciliation", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000, // ₹500 base vs ₹999 expected
+          gatewayPaymentId: "31387025914",
+          gatewayOrderId: "SVK-1792433168043-c5151e1",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(reconRes.error).toContain("Amount mismatch");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 6. Missing or contradictory payment identifiers and currencies remain blocked.
+    it("113. Regression 6: Missing or contradictory payment identifiers and currencies remain blocked", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Contradictory order reference
+      const reconOrderMismatch = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900,
+          gatewayPaymentId: "31387025914",
+          gatewayOrderId: "SVK-DIFFERENT-TXN-ID",
+        },
+      });
+      expect(reconOrderMismatch.success).toBe(false);
+      expect(reconOrderMismatch.error).toContain("Gateway order reference mismatch");
+
+      // Currency mismatch
+      const reconCurrencyMismatch = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900,
+          gatewayPaymentId: "31387025914",
+          currency: "EUR",
+        },
+      });
+      expect(reconCurrencyMismatch.success).toBe(false);
+      expect(reconCurrencyMismatch.error).toContain("Currency mismatch");
+
+      // Missing gateway payment ID
+      const reconMissingPaymentId = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900,
+          gatewayPaymentId: "",
+        },
+      });
+      expect(reconMissingPaymentId.success).toBe(false);
+      expect(reconMissingPaymentId.error).toContain("Missing gateway payment ID (mihpayid)");
+    });
+
+    // 7. Simulation never authorizes reconciliation.
+    it("114. Regression 7: Simulation in development/preview mode never authorizes reconciliation", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const origEnv = process.env.NODE_ENV;
+      try {
+        (process.env as any).NODE_ENV = "development";
+        const reconRes = await reconcilePaymentOrder({
+          supabaseAdmin: supabase,
+          adminId: "master-uuid",
+          adminEmail: "master@saviskar.internal",
+          paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+          // No mockGatewayResult provided
+        });
+
+        expect(reconRes.success).toBe(false);
+        expect(reconRes.error).toContain("Reconciliation is disabled in local preview mode");
+        expect(supabase.rpc).not.toHaveBeenCalled();
+      } finally {
+        (process.env as any).NODE_ENV = origEnv;
+      }
+    });
+
+    // 8. The canonical ₹999 amount passed to settlement remains unchanged.
+    it("115. Regression 8: The canonical ₹999 amount passed to process_payment_success remains strictly unchanged", async () => {
+      const db = createKritikaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Reconciling an order where customer paid ₹1,000.18 with ₹1.18 surcharge
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "b2366e0f-e566-4632-8c68-0369baba05cb",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 99900,
+          additionalChargesPaise: 118,
+          customerTransactionAmountPaise: 100018,
+          gatewayPaymentId: "31387025914",
+          gatewayOrderId: "SVK-1792433168043-c5151e1",
+          currency: "INR",
+        },
+      });
+
+      expect(reconRes.success).toBe(true);
+      expect(supabase.rpc).toHaveBeenCalledWith(
+        "process_payment_success",
+        expect.objectContaining({
+          p_amount_paise: 99900, // MUST BE CANONICAL 99900 (₹999.00), NEVER 100018
+          p_gateway_payment_id: "31387025914",
+          p_gateway_order_id: "SVK-1792433168043-c5151e1",
+          p_currency: "INR",
+          p_gateway_name: "payu",
+        })
+      );
+    });
+  });
+
+  describe("Part 10: Step 3 — Retry-Chain Diagnostics & Explicit Line-Item Breakdown", () => {
+    // 1. Historical failed order whose exact event item is demonstrably settled by a separate paid retry
+    it("116. Cover 1: Historical failed order whose exact event item is settled by a separate paid retry", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-retry-evt", name: "Gautam Hari Om", email: "gautam@test.internal", participant_id: "SVK-GAUTAM" },
+        ],
+        payment_orders: [
+          {
+            id: "order-fail-evt",
+            order_reference: "SVK-2026-PAY-FAIL-EVT",
+            gateway: "payu",
+            gateway_order_id: "TXN-FAIL-EVT",
+            amount: 500,
+            currency: "INR",
+            status: "failed",
+            payer_participant_id: "part-retry-evt",
+            created_at: "2026-10-20T10:00:00Z",
+          },
+          {
+            id: "order-paid-evt",
+            order_reference: "SVK-2026-PAY-PAID-EVT",
+            gateway: "payu",
+            gateway_order_id: "TXN-PAID-EVT",
+            amount: 500,
+            currency: "INR",
+            status: "paid",
+            payer_participant_id: "part-retry-evt",
+            created_at: "2026-10-20T10:30:00Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-1",
+            payment_order_id: "order-fail-evt",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-mun-exact-1",
+            events: { id: "evt-mun", name: "MUN General Assembly", category: "Literary", registration_fee: 500 },
+            participant_events: { id: "pe-mun-exact-1", participant_id: "part-retry-evt", payment_status: "paid" },
+          },
+          {
+            id: "poi-2",
+            payment_order_id: "order-paid-evt",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-mun-exact-1",
+            events: { id: "evt-mun", name: "MUN General Assembly", category: "Literary", registration_fee: 500 },
+            participant_events: { id: "pe-mun-exact-1", participant_id: "part-retry-evt", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-mun-exact-1", participant_id: "part-retry-evt", payment_status: "paid", payment_amount: 500 },
+        ],
+        participant_accommodations: [],
+        payments: [
+          { id: "pay-receipt-1", gateway_order_id: "TXN-PAID-EVT", gateway_payment_id: "MIH-PAID-EVT", amount: 500, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-retry-evt"],
+        mockGatewayResults: {
+          "TXN-FAIL-EVT": { status: "failed", amountPaise: 50000 },
+          "TXN-PAID-EVT": { status: "paid", amountPaise: 50000 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-fail-evt")!;
+      // A: Historical failed attempt remains PAYMENT_FAILED, not CONFLICTING_ITEM_MAPPING
+      expect(failedOrder.outcome).toBe("PAYMENT_FAILED");
+      expect(failedOrder.localOrderStatus).toBe("failed");
+
+      // Informational notice is present
+      const retryNotice = failedOrder.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE");
+      expect(retryNotice).toBeDefined();
+      expect(retryNotice?.severity).toBe("info");
+      expect(retryNotice?.description).toContain("Historical failed checkout — item was settled by a subsequent successful retry");
+      expect(retryNotice?.description).toContain("SVK-2026-PAY-PAID-EVT");
+
+      // No warning about contradictory status
+      const contradictoryWarning = failedOrder.diagnosticFindings.find((f) => f.type === "CONTRADICTORY_LOCAL_STATUS");
+      expect(contradictoryWarning).toBeUndefined();
+
+      // Linked item details show retry settlement
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("settled_by_retry");
+      expect(failedOrder.linkedItems[0].settledByOrderReference).toBe("SVK-2026-PAY-PAID-EVT");
+    });
+
+    // 2. Historical failed accommodation order whose exact booking is linked to a verified successful retry
+    it("117. Cover 2: Historical failed accommodation order whose exact booking is linked to a verified successful retry", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-retry-acc", name: "Rutba Shakeel", email: "rutba@test.internal", participant_id: "SVK-RUTBA" },
+        ],
+        payment_orders: [
+          {
+            id: "order-fail-acc",
+            order_reference: "SVK-2026-PAY-FAIL-ACC",
+            gateway: "payu",
+            gateway_order_id: "TXN-FAIL-ACC",
+            amount: 999,
+            currency: "INR",
+            status: "failed",
+            payer_participant_id: "part-retry-acc",
+            created_at: "2026-10-20T11:00:00Z",
+          },
+          {
+            id: "order-paid-acc",
+            order_reference: "SVK-2026-PAY-PAID-ACC",
+            gateway: "payu",
+            gateway_order_id: "TXN-PAID-ACC",
+            amount: 999,
+            currency: "INR",
+            status: "paid",
+            payer_participant_id: "part-retry-acc",
+            created_at: "2026-10-20T11:45:00Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-acc-fail",
+            payment_order_id: "order-fail-acc",
+            item_type: "accommodation",
+            amount: 999,
+            participant_accommodation_id: "pa-exact-booking-1",
+            participant_accommodations: {
+              id: "pa-exact-booking-1",
+              participant_id: "part-retry-acc",
+              amount: 999,
+              status: "paid",
+              start_date: "2026-03-01",
+              end_date: "2026-03-03",
+              accommodation_plans: { name: "Standard 2-Day Accommodations" },
+            },
+          },
+          {
+            id: "poi-acc-paid",
+            payment_order_id: "order-paid-acc",
+            item_type: "accommodation",
+            amount: 999,
+            participant_accommodation_id: "pa-exact-booking-1",
+            participant_accommodations: {
+              id: "pa-exact-booking-1",
+              participant_id: "part-retry-acc",
+              amount: 999,
+              status: "paid",
+              start_date: "2026-03-01",
+              end_date: "2026-03-03",
+              accommodation_plans: { name: "Standard 2-Day Accommodations" },
+            },
+          },
+        ],
+        participant_events: [],
+        participant_accommodations: [
+          {
+            id: "pa-exact-booking-1",
+            participant_id: "part-retry-acc",
+            payment_order_id: "order-paid-acc",
+            amount: 999,
+            status: "paid",
+            start_date: "2026-03-01",
+            end_date: "2026-03-03",
+            accommodation_plans: { name: "Standard 2-Day Accommodations" },
+          },
+        ],
+        payments: [
+          { id: "pay-receipt-acc", gateway_order_id: "TXN-PAID-ACC", gateway_payment_id: "MIH-PAID-ACC", amount: 999, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-retry-acc"],
+        mockGatewayResults: {
+          "TXN-FAIL-ACC": { status: "failed", amountPaise: 99900 },
+          "TXN-PAID-ACC": { status: "paid", amountPaise: 99900 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-fail-acc")!;
+      expect(failedOrder.outcome).toBe("PAYMENT_FAILED");
+
+      const retryNotice = failedOrder.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE");
+      expect(retryNotice).toBeDefined();
+      expect(retryNotice?.severity).toBe("info");
+      expect(retryNotice?.description).toContain("SVK-2026-PAY-PAID-ACC");
+
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("settled_by_retry");
+    });
+
+    // 3. Paid item with no provable successful canonical order remains an actionable warning (Classification B)
+    it("118. Cover 3: Paid item with no provable successful canonical order remains an actionable warning", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-unres", name: "Unresolved Participant", email: "unres@test.internal", participant_id: "SVK-UNRES" },
+        ],
+        payment_orders: [
+          {
+            id: "order-unres-pend",
+            order_reference: "SVK-2026-PAY-UNRES",
+            gateway: "payu",
+            gateway_order_id: "TXN-UNRES",
+            amount: 500,
+            currency: "INR",
+            status: "pending",
+            payer_participant_id: "part-unres",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-unres",
+            payment_order_id: "order-unres-pend",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-unres",
+            events: { id: "evt-1", name: "Coding Challenge", category: "Technical", registration_fee: 500 },
+            participant_events: { id: "pe-unres", participant_id: "part-unres", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-unres", participant_id: "part-unres", payment_status: "paid", payment_amount: 500 },
+        ],
+        participant_accommodations: [],
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-unres"],
+        mockGatewayResults: {
+          "TXN-UNRES": { status: "pending", amountPaise: 50000 },
+        },
+      });
+
+      const order = res.orders[0];
+      const warning = order.diagnosticFindings.find((f) => f.type === "CONTRADICTORY_LOCAL_STATUS");
+      expect(warning).toBeDefined();
+      expect(warning?.severity).toBe("warning");
+      expect(warning?.description).toContain("Paid item — canonical successful payment order could not be established");
+
+      expect(order.linkedItems[0].settlementContext).toBe("unresolved_paid");
+    });
+
+    // 4. A paid item linked only to unrelated paid orders is not classified as settled by retry
+    it("119. Cover 4: A paid item linked only to unrelated paid orders is not classified as settled by retry", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-unrelated", name: "Gautam Hari Om", email: "gautam@test.internal", participant_id: "SVK-GAUTAM" },
+        ],
+        payment_orders: [
+          {
+            id: "order-fail-mun-sec",
+            order_reference: "SVK-2026-PAY-SEC-FAIL",
+            gateway: "payu",
+            gateway_order_id: "TXN-SEC-FAIL",
+            amount: 500,
+            status: "failed",
+            payer_participant_id: "part-unrelated",
+          },
+          {
+            id: "order-paid-mun-gen",
+            order_reference: "SVK-2026-PAY-GEN-PAID",
+            gateway: "payu",
+            gateway_order_id: "TXN-GEN-PAID",
+            amount: 500,
+            status: "paid",
+            payer_participant_id: "part-unrelated",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-sec",
+            payment_order_id: "order-fail-mun-sec",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-sec-council", // Distinct item!
+            events: { id: "evt-sec", name: "MUN Security Council", registration_fee: 500 },
+            participant_events: { id: "pe-sec-council", participant_id: "part-unrelated", payment_status: "paid" },
+          },
+          {
+            id: "poi-gen",
+            payment_order_id: "order-paid-mun-gen",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-gen-assembly", // Different item!
+            events: { id: "evt-gen", name: "MUN General Assembly", registration_fee: 500 },
+            participant_events: { id: "pe-gen-assembly", participant_id: "part-unrelated", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-sec-council", participant_id: "part-unrelated", payment_status: "paid" },
+          { id: "pe-gen-assembly", participant_id: "part-unrelated", payment_status: "paid" },
+        ],
+        participant_accommodations: [],
+        payments: [
+          { id: "pay-gen", gateway_order_id: "TXN-GEN-PAID", amount: 500, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-unrelated"],
+        mockGatewayResults: {
+          "TXN-SEC-FAIL": { status: "failed", amountPaise: 50000 },
+          "TXN-GEN-PAID": { status: "paid", amountPaise: 50000 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-fail-mun-sec")!;
+      // Must NOT be classified as settled by SVK-2026-PAY-GEN-PAID
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("unresolved_paid");
+      const retryNotice = failedOrder.diagnosticFindings.find(
+        (f) => f.type === "RETRY_ORDER_NOTICE" && f.description.includes("SVK-2026-PAY-GEN-PAID")
+      );
+      expect(retryNotice).toBeUndefined();
+    });
+
+    // 5. Pending or failed items remain unresolved and are not labelled as settled
+    it("120. Cover 5: Pending or failed items remain unresolved and are not labelled as settled", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-pend", name: "Pending User", email: "pend@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-fail-all",
+            order_reference: "SVK-2026-PAY-PEND-ALL",
+            gateway: "payu",
+            gateway_order_id: "TXN-PEND-ALL",
+            amount: 500,
+            status: "failed",
+            payer_participant_id: "part-pend",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-pend",
+            payment_order_id: "order-fail-all",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-pend",
+            events: { id: "evt-1", name: "RoboWars", registration_fee: 500 },
+            participant_events: { id: "pe-pend", participant_id: "part-pend", payment_status: "pending" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-pend", participant_id: "part-pend", payment_status: "pending" },
+        ],
+        participant_accommodations: [],
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-pend"],
+        mockGatewayResults: {
+          "TXN-PEND-ALL": { status: "failed", amountPaise: 50000 },
+        },
+      });
+
+      const order = res.orders[0];
+      expect(order.linkedItems[0].settlementContext).toBe("unsettled");
+      expect(order.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE")).toBeUndefined();
+    });
+
+    // 6. Allocation breakdown distinguishes event count from accommodation count
+    it("121. Cover 6: Allocation breakdown distinguishes event count from accommodation count", () => {
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 8489,
+        items: [
+          { id: "evt-1", itemType: "event", expectedAmount: 3000 },
+          { id: "acc-1", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-2", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-3", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-4", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-5", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-6", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-7", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-8", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-9", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-10", itemType: "accommodation", expectedAmount: 499 },
+          { id: "acc-11", itemType: "accommodation", expectedAmount: 499 },
+        ],
+      });
+
+      expect(breakdown.distinctItemCount).toBe(12);
+      expect(breakdown.eventCount).toBe(1);
+      expect(breakdown.eventSubtotal).toBe(3000);
+      expect(breakdown.accommodationCount).toBe(11);
+      expect(breakdown.accommodationSubtotal).toBe(5489);
+      expect(breakdown.totalLineItemSum).toBe(8489);
+      expect(breakdown.differencePaise).toBe(0);
+      expect(breakdown.summaryText).toBe("1 Event (₹3,000) + 11 Accommodations (₹5,489)");
+      expect(breakdown.allocationDifferenceText).toBe("Allocation difference: ₹0");
+      expect(breakdown.hasAllocationMismatch).toBe(false);
+    });
+
+    // 7. Twelve accommodations total ₹5,988, against a ₹8,988 order, producing an exact ₹3,000 allocation difference
+    it("122. Cover 7: Pari Jha synthetic historical order: 12 accommodations total ₹5,988 with ₹3,000 allocation difference", () => {
+      const items = Array.from({ length: 12 }).map((_, idx) => ({
+        id: `acc-pari-hist-${idx + 1}`,
+        itemType: "accommodation",
+        expectedAmount: 499,
+      }));
+
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 8988,
+        items,
+      });
+
+      expect(breakdown.distinctItemCount).toBe(12);
+      expect(breakdown.eventCount).toBe(0);
+      expect(breakdown.accommodationCount).toBe(12);
+      expect(breakdown.accommodationSubtotal).toBe(5988);
+      expect(breakdown.totalOrderAmount).toBe(8988);
+      expect(breakdown.totalLineItemSum).toBe(5988);
+      expect(breakdown.differencePaise).toBe(300000); // Integer paise!
+      expect(breakdown.differenceINR).toBe(3000);
+      expect(breakdown.hasAllocationMismatch).toBe(true);
+      expect(breakdown.summaryText).toBe("12 Accommodations (₹5,988)");
+      expect(breakdown.allocationDifferenceText).toBe("Allocation difference: ₹3,000 — missing/unmapped item requires investigation");
+    });
+
+    // 8. One ₹3,000 event plus eleven ₹499 accommodations totals ₹8,489, producing zero allocation difference
+    it("123. Cover 8: Pari Jha synthetic later order: 1 event (₹3,000) + 11 accommodations (₹5,489) produces zero difference", () => {
+      const items = [
+        { id: "evt-nukkad", itemType: "event", expectedAmount: 3000 },
+        ...Array.from({ length: 11 }).map((_, idx) => ({
+          id: `acc-pari-later-${idx + 1}`,
+          itemType: "accommodation",
+          expectedAmount: 499,
+        })),
+      ];
+
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 8489,
+        items,
+      });
+
+      expect(breakdown.distinctItemCount).toBe(12);
+      expect(breakdown.eventCount).toBe(1);
+      expect(breakdown.eventSubtotal).toBe(3000);
+      expect(breakdown.accommodationCount).toBe(11);
+      expect(breakdown.accommodationSubtotal).toBe(5489);
+      expect(breakdown.totalOrderAmount).toBe(8489);
+      expect(breakdown.totalLineItemSum).toBe(8489);
+      expect(breakdown.differencePaise).toBe(0);
+      expect(breakdown.differenceINR).toBe(0);
+      expect(breakdown.hasAllocationMismatch).toBe(false);
+      expect(breakdown.summaryText).toBe("1 Event (₹3,000) + 11 Accommodations (₹5,489)");
+      expect(breakdown.allocationDifferenceText).toBe("Allocation difference: ₹0");
+    });
+
+    // 9. Duplicate or malformed mappings cannot silently inflate the displayed line-item sum
+    it("124. Cover 9: Duplicate and malformed items do not silently inflate displayed line-item sum", () => {
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 1000,
+        items: [
+          { id: "evt-1", itemType: "event", expectedAmount: 500, participantEventId: "pe-dup-1" },
+          // Duplicate of evt-1 (same canonical participantEventId)
+          { id: "evt-1-repeat", itemType: "event", expectedAmount: 500, participantEventId: "pe-dup-1" },
+          // Malformed item: invalid amount
+          { id: "bad-item-1", itemType: "event", expectedAmount: NaN },
+          // Malformed item: negative amount
+          { id: "bad-item-2", itemType: "accommodation", expectedAmount: -200 },
+        ],
+      });
+
+      // Exactly 1 valid distinct item counted in sum
+      expect(breakdown.totalLineItemSum).toBe(500);
+      expect(breakdown.eventCount).toBe(1);
+      expect(breakdown.hasInvalidOrUnavailableItems).toBe(true);
+      expect(breakdown.invalidItemsCount).toBe(2);
+      expect(breakdown.differenceINR).toBe(500);
+    });
+
+    // 10. Separate retry attempts remain independent
+    it("125. Cover 10: Separate retry attempts calculate their own line-item allocation independently", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-pari-synth", name: "Pari Jha", email: "pari@test.internal", participant_id: "SVK-PARI" },
+        ],
+        payment_orders: [
+          {
+            id: "order-pari-hist-8988",
+            order_reference: "SVK-2026-PAY-HIST-8988",
+            gateway: "payu",
+            gateway_order_id: "TXN-PARI-HIST",
+            amount: 8988,
+            currency: "INR",
+            status: "failed",
+            payer_participant_id: "part-pari-synth",
+          },
+          {
+            id: "order-pari-later-8489",
+            order_reference: "SVK-2026-PAY-LATER-8489",
+            gateway: "payu",
+            gateway_order_id: "TXN-PARI-LATER",
+            amount: 8489,
+            currency: "INR",
+            status: "paid",
+            payer_participant_id: "part-pari-synth",
+          },
+        ],
+        payment_order_items: [
+          // Order 1 has 12 accommodations (total ₹5,988)
+          ...Array.from({ length: 12 }).map((_, idx) => ({
+            id: `poi-hist-${idx + 1}`,
+            payment_order_id: "order-pari-hist-8988",
+            item_type: "accommodation",
+            amount: 499,
+            participant_accommodation_id: `acc-pari-${idx + 1}`,
+            participant_accommodations: {
+              id: `acc-pari-${idx + 1}`,
+              participant_id: "part-pari-synth",
+              amount: 499,
+              status: "paid",
+              accommodation_plans: { name: "1 Day Accommodation" },
+            },
+          })),
+          // Order 2 has 1 event (₹3,000) and 11 accommodations (₹5,489)
+          {
+            id: "poi-later-evt",
+            payment_order_id: "order-pari-later-8489",
+            item_type: "event",
+            amount: 3000,
+            participant_event_id: "pe-nukkad",
+            events: { id: "evt-nukkad", name: "Nukkad Natak", registration_fee: 3000 },
+            participant_events: { id: "pe-nukkad", participant_id: "part-pari-synth", payment_status: "paid" },
+          },
+          ...Array.from({ length: 11 }).map((_, idx) => ({
+            id: `poi-later-acc-${idx + 1}`,
+            payment_order_id: "order-pari-later-8489",
+            item_type: "accommodation",
+            amount: 499,
+            participant_accommodation_id: `acc-pari-${idx + 1}`,
+            participant_accommodations: {
+              id: `acc-pari-${idx + 1}`,
+              participant_id: "part-pari-synth",
+              amount: 499,
+              status: "paid",
+              accommodation_plans: { name: "1 Day Accommodation" },
+            },
+          })),
+        ],
+        participant_events: [
+          { id: "pe-nukkad", participant_id: "part-pari-synth", payment_status: "paid" },
+        ],
+        participant_accommodations: Array.from({ length: 12 }).map((_, idx) => ({
+          id: `acc-pari-${idx + 1}`,
+          participant_id: "part-pari-synth",
+          payment_order_id: idx < 11 ? "order-pari-later-8489" : "order-pari-hist-8988",
+          amount: 499,
+          status: "paid",
+          accommodation_plans: { name: "1 Day Accommodation" },
+        })),
+        payments: [
+          { id: "pay-pari-receipt", gateway_order_id: "TXN-PARI-LATER", amount: 8489, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-pari-synth"],
+        mockGatewayResults: {
+          "TXN-PARI-HIST": { status: "failed", amountPaise: 898800 },
+          "TXN-PARI-LATER": { status: "paid", amountPaise: 848900 },
+        },
+      });
+
+      const orderHist = res.orders.find((o) => o.orderId === "order-pari-hist-8988")!;
+      const orderLater = res.orders.find((o) => o.orderId === "order-pari-later-8489")!;
+
+      // Order 1 has its own breakdown: 12 Accommodations (₹5,988), diff ₹3,000
+      expect(orderHist.allocationBreakdown?.summaryText).toBe("12 Accommodations (₹5,988)");
+      expect(orderHist.allocationBreakdown?.differenceINR).toBe(3000);
+      expect(orderHist.allocationBreakdown?.hasAllocationMismatch).toBe(true);
+
+      // Order 2 has its own breakdown: 1 Event (₹3,000) + 11 Accommodations (₹5,489), diff ₹0
+      expect(orderLater.allocationBreakdown?.summaryText).toBe("1 Event (₹3,000) + 11 Accommodations (₹5,489)");
+      expect(orderLater.allocationBreakdown?.differenceINR).toBe(0);
+      expect(orderLater.allocationBreakdown?.hasAllocationMismatch).toBe(false);
+    });
+
+    // 11. No diagnostic finding enables reconciliation
+    it("126. Cover 11: Retry-chain diagnostic finding does NOT make a failed historical order eligible for reconciliation", async () => {
+      const historicalFailedOrder: any = {
+        orderId: "order-fail-hist-123",
+        orderReference: "SVK-2026-PAY-FAIL-HIST",
+        gatewayOrderId: "TXN-FAIL-HIST",
+        gatewayPaymentId: "MIH-FAIL-HIST-999",
+        expectedAmount: 8988,
+        localOrderStatus: "failed",
+        authoritativeGatewayStatus: "failed",
+        outcome: "PAYMENT_FAILED",
+        outcomeMessage: "PayU reports payment failure.",
+        linkedItems: [
+          {
+            id: "acc-1",
+            itemType: "accommodation",
+            title: "Accommodation",
+            expectedAmount: 499,
+            localStatus: "paid",
+            settlementContext: "settled_by_retry",
+            settledByOrderReference: "SVK-2026-PAY-LATER-PAID",
+          },
+        ],
+        diagnosticFindings: [
+          {
+            type: "RETRY_ORDER_NOTICE",
+            severity: "info",
+            title: "Settled by Subsequent Retry",
+            description: "Historical failed checkout — item was settled by a subsequent successful retry.",
+          },
+        ],
+      };
+
+      const summary = getReconciliationConfirmationSummary(historicalFailedOrder);
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toBe("PayU reports payment failure.");
+    });
+
+    // 12. Missing or ambiguous canonical order mappings remain visible as warnings
+    it("127. Cover 12: Missing accommodation bookings and allocation mismatches remain visible as warnings", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-warn", name: "Warning User", email: "warn@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-missing-acc",
+            order_reference: "SVK-2026-PAY-MISSING-ACC",
+            gateway: "payu",
+            gateway_order_id: "TXN-MISSING-ACC",
+            amount: 1500,
+            status: "pending",
+            payer_participant_id: "part-warn",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-missing-acc",
+            payment_order_id: "order-missing-acc",
+            item_type: "accommodation",
+            amount: 999,
+            participant_accommodation_id: "non-existent-acc-id", // Missing record!
+          },
+        ],
+        participant_events: [],
+        participant_accommodations: [], // Empty!
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-warn"],
+        mockGatewayResults: {
+          "TXN-MISSING-ACC": { status: "pending", amountPaise: 150000 },
+        },
+      });
+
+      const order = res.orders[0];
+      // Outcome is MISSING_ACCOMMODATION_LINK
+      expect(order.outcome).toBe("MISSING_ACCOMMODATION_LINK");
+
+      // Amount Allocation Mismatch warning is also emitted because 1500 != 999
+      const allocMismatch = order.diagnosticFindings.find((f) => f.type === "AMOUNT_ALLOCATION_MISMATCH");
+      expect(allocMismatch).toBeDefined();
+      expect(allocMismatch?.severity).toBe("warning");
+      expect(allocMismatch?.description).toContain("Allocation difference: ₹501 — missing/unmapped item requires investigation");
+    });
+    // 13. Valid event target ID matches the exact subsequent successful retry
+    it("128. Cover 13: Valid event target ID still matches the exact subsequent successful retry", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-128", name: "Canonical Event User", email: "user128@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-128-fail",
+            order_reference: "SVK-2026-PAY-128-FAIL",
+            gateway: "payu",
+            gateway_order_id: "TXN-128-FAIL",
+            amount: 500,
+            status: "failed",
+            payer_participant_id: "part-128",
+            created_at: "2026-10-20T10:00:00Z",
+          },
+          {
+            id: "order-128-paid",
+            order_reference: "SVK-2026-PAY-128-PAID",
+            gateway: "payu",
+            gateway_order_id: "TXN-128-PAID",
+            amount: 500,
+            status: "paid",
+            payer_participant_id: "part-128",
+            created_at: "2026-10-20T10:30:00Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-join-128-fail",
+            payment_order_id: "order-128-fail",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-canonical-128",
+            events: { id: "evt-128", name: "Hackathon", registration_fee: 500 },
+            participant_events: { id: "pe-canonical-128", participant_id: "part-128", payment_status: "paid" },
+          },
+          {
+            id: "poi-join-128-paid",
+            payment_order_id: "order-128-paid",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-canonical-128",
+            events: { id: "evt-128", name: "Hackathon", registration_fee: 500 },
+            participant_events: { id: "pe-canonical-128", participant_id: "part-128", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "pe-canonical-128", participant_id: "part-128", payment_status: "paid", payment_amount: 500 },
+        ],
+        participant_accommodations: [],
+        payments: [
+          { id: "pay-128", gateway_order_id: "TXN-128-PAID", gateway_payment_id: "MIH-128", amount: 500, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-128"],
+        mockGatewayResults: {
+          "TXN-128-FAIL": { status: "failed", amountPaise: 50000 },
+          "TXN-128-PAID": { status: "paid", amountPaise: 50000 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-128-fail")!;
+      expect(failedOrder.outcome).toBe("PAYMENT_FAILED");
+
+      // Verify canonical event ID and join-row ID are preserved separately
+      expect(failedOrder.linkedItems[0].orderItemId).toBe("poi-join-128-fail");
+      expect(failedOrder.linkedItems[0].participantEventId).toBe("pe-canonical-128");
+      expect(failedOrder.linkedItems[0].hasMissingTarget).toBeFalsy();
+
+      // Retry matching succeeded via exact canonical event ID
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("settled_by_retry");
+      expect(failedOrder.linkedItems[0].settledByOrderReference).toBe("SVK-2026-PAY-128-PAID");
+
+      const retryNotice = failedOrder.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE");
+      expect(retryNotice).toBeDefined();
+      expect(retryNotice?.severity).toBe("info");
+      expect(retryNotice?.description).toContain("SVK-2026-PAY-128-PAID");
+    });
+
+    // 14. Missing participant_event_id with a valid join-row ID is flagged, not treated as a valid event mapping
+    it("129. Cover 14: Missing participant_event_id with a valid join-row ID is flagged as invalid mapping", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-129", name: "Unmapped Join Row User", email: "user129@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-129",
+            order_reference: "SVK-2026-PAY-129",
+            gateway: "payu",
+            gateway_order_id: "TXN-129",
+            amount: 500,
+            status: "pending",
+            payer_participant_id: "part-129",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-join-row-valid-uuid-129",
+            payment_order_id: "order-129",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: null as any, // Missing canonical target ID!
+            events: { id: "evt-129", name: "RoboWars", registration_fee: 500 },
+          },
+        ],
+        participant_events: [],
+        participant_accommodations: [],
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-129"],
+        mockGatewayResults: {
+          "TXN-129": { status: "pending", amountPaise: 50000 },
+        },
+      });
+
+      const order = res.orders[0];
+      // Outcome is flagged as INCOMPLETE_LOCAL_ITEM_MAPPING
+      expect(order.outcome).toBe("INCOMPLETE_LOCAL_ITEM_MAPPING");
+
+      // Verify join-row ID is stored separately as orderItemId, and not used as canonical event ID
+      const item = order.linkedItems[0];
+      expect(item.orderItemId).toBe("poi-join-row-valid-uuid-129");
+      expect(item.participantEventId).toBeUndefined();
+      expect(item.hasMissingTarget).toBe(true);
+      expect(item.localStatus).toBe("missing");
+
+      // Allocation breakdown excludes unmapped item from valid event count and sum
+      expect(order.allocationBreakdown?.eventCount).toBe(0);
+      expect(order.allocationBreakdown?.totalLineItemSum).toBe(0);
+      expect(order.allocationBreakdown?.invalidItemsCount).toBe(1);
+      expect(order.allocationBreakdown?.hasInvalidOrUnavailableItems).toBe(true);
+      expect(order.allocationBreakdown?.differenceINR).toBe(500);
+
+      // Diagnostic warning MISSING_ORDER_LINK is emitted
+      const missingLinkWarning = order.diagnosticFindings.find((f) => f.type === "MISSING_ORDER_LINK");
+      expect(missingLinkWarning).toBeDefined();
+      expect(missingLinkWarning?.severity).toBe("warning");
+      expect(missingLinkWarning?.description).toContain("missing or unmapped canonical participant event ID");
+    });
+
+    // 15. A join-row UUID coincidentally appearing elsewhere cannot establish a retry relationship
+    it("130. Cover 15: Join-row UUID coincidentally appearing elsewhere cannot establish a retry relationship", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-130", name: "Coincidence User", email: "user130@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-130-fail",
+            order_reference: "SVK-2026-PAY-130-FAIL",
+            gateway: "payu",
+            gateway_order_id: "TXN-130-FAIL",
+            amount: 500,
+            status: "failed",
+            payer_participant_id: "part-130",
+            created_at: "2026-10-20T08:00:00Z",
+          },
+          {
+            id: "order-130-paid",
+            order_reference: "SVK-2026-PAY-130-PAID",
+            gateway: "payu",
+            gateway_order_id: "TXN-130-PAID",
+            amount: 500,
+            status: "paid",
+            payer_participant_id: "part-130",
+            created_at: "2026-10-20T09:00:00Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "coincident-uuid-999", // Join row ID
+            payment_order_id: "order-130-fail",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: null as any, // Missing canonical ID!
+            events: { id: "evt-fail", name: "Event A", registration_fee: 500 },
+          },
+          {
+            id: "poi-paid-other",
+            payment_order_id: "order-130-paid",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "coincident-uuid-999", // Coincidentally same string as join-row ID above
+            events: { id: "evt-paid", name: "Event B", registration_fee: 500 },
+            participant_events: { id: "coincident-uuid-999", participant_id: "part-130", payment_status: "paid" },
+          },
+        ],
+        participant_events: [
+          { id: "coincident-uuid-999", participant_id: "part-130", payment_status: "paid", payment_amount: 500 },
+        ],
+        participant_accommodations: [],
+        payments: [
+          { id: "pay-130", gateway_order_id: "TXN-130-PAID", gateway_payment_id: "MIH-130", amount: 500, status: "success" },
+        ],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-130"],
+        mockGatewayResults: {
+          "TXN-130-FAIL": { status: "failed", amountPaise: 50000 },
+          "TXN-130-PAID": { status: "paid", amountPaise: 50000 },
+        },
+      });
+
+      const failedOrder = res.orders.find((o) => o.orderId === "order-130-fail")!;
+      // Must NOT be marked as settled by retry!
+      expect(failedOrder.linkedItems[0].settlementContext).toBe("unsettled");
+      expect(failedOrder.linkedItems[0].settledByOrderReference).toBeUndefined();
+
+      // Must NOT have a RETRY_ORDER_NOTICE
+      const retryNotice = failedOrder.diagnosticFindings.find((f) => f.type === "RETRY_ORDER_NOTICE");
+      expect(retryNotice).toBeUndefined();
+
+      // Must have missing link warning and incomplete mapping outcome
+      expect(failedOrder.outcome).toBe("INCOMPLETE_LOCAL_ITEM_MAPPING");
+      const missingWarning = failedOrder.diagnosticFindings.find((f) => f.type === "MISSING_ORDER_LINK");
+      expect(missingWarning).toBeDefined();
+    });
+
+    // 16. Duplicate valid event mappings are handled without distorting totals
+    it("131. Cover 16: Duplicate valid event mappings are handled without distorting totals", () => {
+      const breakdown = computeItemAllocationBreakdown({
+        orderAmount: 1499,
+        items: [
+          {
+            id: "pe-canonical-dup-1",
+            orderItemId: "poi-join-1",
+            itemType: "event",
+            expectedAmount: 1000,
+            participantEventId: "pe-canonical-dup-1",
+          },
+          {
+            id: "pe-canonical-dup-1-repeat",
+            orderItemId: "poi-join-2",
+            itemType: "event",
+            expectedAmount: 1000,
+            participantEventId: "pe-canonical-dup-1",
+          },
+          {
+            id: "pa-canonical-1",
+            orderItemId: "poi-join-3",
+            itemType: "accommodation",
+            expectedAmount: 499,
+            participantAccommodationId: "pa-canonical-1",
+          },
+        ],
+      });
+
+      // Valid distinct item count is 2 (1 event + 1 accommodation)
+      expect(breakdown.distinctItemCount).toBe(2);
+      expect(breakdown.eventCount).toBe(1);
+      expect(breakdown.eventSubtotal).toBe(1000);
+      expect(breakdown.accommodationCount).toBe(1);
+      expect(breakdown.accommodationSubtotal).toBe(499);
+
+      // Total sum is 1499 (1000 + 499), NOT inflated to 2499
+      expect(breakdown.totalLineItemSum).toBe(1499);
+      expect(breakdown.totalLineItemSumPaise).toBe(149900);
+      expect(breakdown.differenceINR).toBe(0);
+      expect(breakdown.hasAllocationMismatch).toBe(false);
+    });
+
+    // 17. Invalid event mappings remain visible as warnings and cannot enable settlement
+    it("132. Cover 17: Invalid event mappings remain visible as warnings and cannot enable settlement", async () => {
+      const db: MockDb = {
+        participants: [
+          { id: "part-132", name: "Invalid Event User", email: "user132@test.internal" },
+        ],
+        payment_orders: [
+          {
+            id: "order-132",
+            order_reference: "SVK-2026-PAY-132",
+            gateway: "payu",
+            gateway_order_id: "TXN-132",
+            gateway_payment_id: "MIH-132-SUCCESS",
+            amount: 1000,
+            status: "pending",
+            payer_participant_id: "part-132",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-join-invalid-132",
+            payment_order_id: "order-132",
+            item_type: "event",
+            amount: 1000,
+            participant_event_id: "" as any, // Invalid/empty canonical target ID!
+            events: { id: "evt-132", name: "Solo Dance", registration_fee: 1000 },
+          },
+        ],
+        participant_events: [],
+        participant_accommodations: [],
+        payments: [],
+        admin_audit_logs: [],
+      };
+
+      const supabase = createMockSupabase(db);
+      const res = await verifyParticipantPayments({
+        supabaseAdmin: supabase as any,
+        participantIds: ["part-132"],
+        mockGatewayResults: {
+          "TXN-132": {
+            status: "paid",
+            amountPaise: 100000,
+            gatewayPaymentId: "MIH-132-SUCCESS",
+          },
+        },
+      });
+
+      const order = res.orders[0];
+      // Outcome is flagged as INCOMPLETE_LOCAL_ITEM_MAPPING despite gateway paid status
+      expect(order.outcome).toBe("INCOMPLETE_LOCAL_ITEM_MAPPING");
+
+      // Warning remains visible in diagnostic findings
+      const warning = order.diagnosticFindings.find((f) => f.type === "MISSING_ORDER_LINK");
+      expect(warning).toBeDefined();
+      expect(warning?.severity).toBe("warning");
+
+      // Reconciliation confirmation summary blocks settlement
+      const summary = getReconciliationConfirmationSummary(order);
+      expect(summary.canSettle).toBe(false);
+      expect(summary.blockReason).toContain("missing or unmapped");
+    });
+
+  });
+
+  // =========================================================================
+  // Part 14: Step 4 — Status-Aware PayU Normalization & Zero-Debit Parsing (Tests 133–150)
+  // =========================================================================
+  describe("Part 14: Step 4 — Status-Aware PayU Normalization & Zero-Debit Parsing (Tests 133–150)", () => {
+    function createNainaAuthoritativeDb() {
+      return {
+        participants: [
+          {
+            id: "naina-uuid-2f18f504",
+            name: "Naina Rathour",
+            email: "nainarana1912@gmail.com",
+            phone: "9876543210",
+            participant_id: "SVK26-2F18F504",
+          },
+        ],
+        events: [
+          {
+            id: "evt-ga-uuid",
+            name: "MUN — General Assembly",
+            category: "MUN",
+            registration_fee: 500,
+            payment_type: "paid",
+          },
+          {
+            id: "evt-sc-uuid",
+            name: "MUN — United Nations Security Council",
+            category: "MUN",
+            registration_fee: 500,
+            payment_type: "paid",
+          },
+        ],
+        participant_events: [
+          {
+            id: "pe-ga-uuid",
+            participant_id: "naina-uuid-2f18f504",
+            event_id: "evt-ga-uuid",
+            payment_status: "paid",
+            payment_amount: 500,
+            payment_id: "order-ga-uuid",
+          },
+          {
+            id: "pe-sc-uuid",
+            participant_id: "naina-uuid-2f18f504",
+            event_id: "evt-sc-uuid",
+            payment_status: "pending",
+            payment_amount: 500,
+            payment_id: null,
+          },
+        ],
+        participant_accommodations: [],
+        payment_orders: [
+          // Order 1: General Assembly (already paid, receipt record missing in payments table as documented)
+          {
+            id: "order-ga-uuid",
+            order_reference: "SVK-SVK26-2F18F504-20261015095641365-9D0FF8",
+            payer_participant_id: "naina-uuid-2f18f504",
+            gateway: "payu",
+            gateway_order_id: "SVK-1792055699266-49b0ga",
+            gateway_payment_id: "403993715525547",
+            amount: 500,
+            currency: "INR",
+            status: "paid",
+            created_at: "2026-10-15T09:56:41.365Z",
+            updated_at: "2026-10-15T10:00:00.000Z",
+          },
+          // Order 2: Security Council (pending order, expected ₹500)
+          {
+            id: "order-sc-uuid",
+            order_reference: "SVK-SVK26-2F18F504-20261015091457471-BBF2F1",
+            payer_participant_id: "naina-uuid-2f18f504",
+            gateway: "payu",
+            gateway_order_id: "SVK-1792055699266-49b0e3b",
+            gateway_payment_id: null,
+            amount: 500,
+            currency: "INR",
+            status: "pending",
+            created_at: "2026-10-15T09:14:57.471Z",
+            updated_at: "2026-10-15T09:14:57.471Z",
+          },
+        ],
+        payment_order_items: [
+          {
+            id: "poi-ga-uuid",
+            payment_order_id: "order-ga-uuid",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-ga-uuid",
+            participant_accommodation_id: null,
+          },
+          {
+            id: "poi-sc-uuid",
+            payment_order_id: "order-sc-uuid",
+            item_type: "event",
+            amount: 500,
+            participant_event_id: "pe-sc-uuid",
+            participant_accommodation_id: null,
+          },
+        ],
+        payments: [], // Missing receipt record for General Assembly order
+        admin_audit_logs: [],
+      };
+    }
+
+    // 1. net_amount_debit missing: show unavailable, not ₹0.00, and do not create a false numerical mismatch.
+    it("133. Regression 1: net_amount_debit missing shows unavailable, not ₹0.00, and does not create false mismatch", async () => {
+      const txRecord = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        // net_amount_debit is absent / undefined
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBeUndefined();
+      expect(normalized.netDebitPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            gatewayPaymentId: "403993715525548",
+            // No customerTransactionAmountPaise, no netDebitPaise
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.expectedAmount).toBe(500);
+      expect(order.gatewayReportedAmount).toBe(500);
+      expect(order.customerTransactionAmount).toBeNull();
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING"); // Clean match, NOT AMOUNT_MISMATCH!
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **Customer Debit (Calculated/Reported)**: Not returned by PayU");
+      expect(report).not.toContain("customer debit (₹0.00)");
+      expect(report).not.toContain("₹0.00 differs from customer debit");
+    });
+
+    // 2. net_amount_debit: null treated according to supported contract without coercing to zero
+    it("134. Regression 2: net_amount_debit: null is treated according to supported response contract without coercing to zero", async () => {
+      const txRecord = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: null,
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBeUndefined();
+      expect(normalized.netDebitPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.customerTransactionAmount).toBeNull();
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **Customer Debit (Calculated/Reported)**: Not returned by PayU");
+    });
+
+    // 3. net_amount_debit: "" preserves absent/invalid state safely
+    it("135. Regression 3: net_amount_debit: '' or whitespace preserves absent/invalid state safely", async () => {
+      const txRecordEmpty = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "",
+      };
+      const normEmpty = normalizePayUAmountFields(txRecordEmpty);
+      expect(normEmpty.customerTransactionAmountPaise).toBeUndefined();
+      expect(normEmpty.netDebitPaise).toBeUndefined();
+      expect(normEmpty.amountAmbiguityReason).toBeUndefined();
+
+      const txRecordSpaces = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "   ",
+      };
+      const normSpaces = normalizePayUAmountFields(txRecordSpaces);
+      expect(normSpaces.customerTransactionAmountPaise).toBeUndefined();
+      expect(normSpaces.netDebitPaise).toBeUndefined();
+      expect(normSpaces.amountAmbiguityReason).toBeUndefined();
+    });
+
+    // 4. Explicit numeric zero: validate according to actual contract and fail closed if payment evidence remains contradictory
+    it("136. Regression 4: Explicit numeric zero validates according to contract and fails closed when contradictory", async () => {
+      const txRecordZero = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "0.00",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecordZero);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      expect(normalized.amountAmbiguityReason).toBeDefined();
+      expect(normalized.amountAmbiguityReason).toContain(
+        "PayU customer debit discrepancy: 'net_amount_debit' is ₹0.00 for a ₹500.00 order. Zero debit cannot prove payment capture."
+      );
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason: normalized.amountAmbiguityReason,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("AMOUNT_MISMATCH");
+      expect(order.outcomeMessage).toContain("Zero debit cannot prove payment capture");
+
+      // Attempting reconciliation with contradictory zero debit MUST fail closed
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          amountAmbiguityReason: normalized.amountAmbiguityReason,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(reconRes.error).toContain("Amount field ambiguity");
+      expect(reconRes.error).toContain("Zero debit cannot prove payment capture");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 5. Valid ₹500 base amount with no customer-debit or settlement fields returned reconciles cleanly
+    it("137. Regression 5: Valid ₹500 base amount with no customer-debit or settlement fields returned allows reconciliation", async () => {
+      const txRecord = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecord);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBeUndefined();
+      expect(normalized.settlementAmountPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+          currency: "INR",
+        },
+      });
+
+      expect(reconRes.success).toBe(true);
+      expect(reconRes.settled).toBe(true);
+      expect(supabase.rpc).toHaveBeenCalledWith(
+        "process_payment_success",
+        expect.objectContaining({
+          p_amount_paise: 50000,
+          p_gateway_payment_id: "403993715525548",
+          p_gateway_order_id: "SVK-1792055699266-49b0e3b",
+        })
+      );
+    });
+
+    // 6. Genuine customer-debit or base-amount discrepancies remain visible and block unsafe reconciliation
+    it("138. Regression 6: Genuine customer-debit or base-amount discrepancies remain visible and block unsafe reconciliation", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Case A: Base amount mismatch (₹450 reported vs ₹500 expected)
+      const reconBaseMismatch = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 45000,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+      expect(reconBaseMismatch.success).toBe(false);
+      expect(reconBaseMismatch.error).toContain("Amount mismatch");
+
+      // Case B: Customer debit mismatch (₹450 debited vs ₹500 base)
+      const txDebitMismatch = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "450.00",
+      };
+      const normDebitMismatch = normalizePayUAmountFields(txDebitMismatch);
+      expect(normDebitMismatch.amountAmbiguityReason).toBeDefined();
+      expect(normDebitMismatch.amountAmbiguityReason).toContain(
+        "PayU customer debit discrepancy: 'net_amount_debit' (₹450.00) differs from base order amount (₹500.00)."
+      );
+
+      const reconDebitMismatch = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 45000,
+          netDebitPaise: 45000,
+          amountAmbiguityReason: normDebitMismatch.amountAmbiguityReason,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+      expect(reconDebitMismatch.success).toBe(false);
+      expect(reconDebitMismatch.error).toContain("Amount field ambiguity");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 7. Wrong merchant reference, payment ID or currency still blocks settlement
+    it("139. Regression 7: Wrong merchant reference, payment ID or currency strictly blocks settlement", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Wrong merchant reference (txnid)
+      const reconWrongTxnId = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-WRONG-TXNID",
+        },
+      });
+      expect(reconWrongTxnId.success).toBe(false);
+      expect(reconWrongTxnId.error).toContain("Gateway order reference mismatch");
+
+      // Missing gateway payment ID (mihpayid)
+      const reconMissingId = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          gatewayPaymentId: "",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+      expect(reconMissingId.success).toBe(false);
+      expect(reconMissingId.error).toContain("Missing gateway payment ID (mihpayid)");
+
+      // Wrong currency
+      const reconWrongCurrency = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+          currency: "USD",
+        },
+      });
+      expect(reconWrongCurrency.success).toBe(false);
+      expect(reconWrongCurrency.error).toContain("Currency mismatch");
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 8. Simulation never authorizes reconciliation
+    it("140. Regression 8: Local simulation preview mode never authorizes reconciliation", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const origEnv = process.env.NODE_ENV;
+      try {
+        (process.env as any).NODE_ENV = "development";
+        const reconRes = await reconcilePaymentOrder({
+          supabaseAdmin: supabase,
+          adminId: "master-uuid",
+          adminEmail: "master@saviskar.internal",
+          paymentOrderId: "order-sc-uuid",
+        });
+
+        expect(reconRes.success).toBe(false);
+        expect(reconRes.settled).toBe(false);
+        expect(reconRes.error).toContain("Reconciliation is disabled in local preview mode");
+        expect(supabase.rpc).not.toHaveBeenCalled();
+      } finally {
+        (process.env as any).NODE_ENV = origEnv;
+      }
+    });
+
+    // 9. The already-paid General Assembly order is never modified by the Security Council verification workflow
+    it("141. Regression 9: The already-paid General Assembly order is never modified by the Security Council verification workflow", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Verify all orders for Naina
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        participantIds: ["naina-uuid-2f18f504"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason:
+              "PayU customer debit discrepancy: 'net_amount_debit' is ₹0.00 for a ₹500.00 order. Zero debit cannot prove payment capture.",
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      expect(verifyRes.orders).toHaveLength(2);
+
+      const gaOrder = verifyRes.orders.find((o) => o.orderId === "order-ga-uuid")!;
+      const scOrder = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+
+      // 1. General Assembly order preserves its paid status and missing receipt record
+      expect(gaOrder.localOrderStatus).toBe("paid");
+      expect(gaOrder.settlementReceiptStatus).toBe("receipt_missing");
+
+      // 2. Security Council order is flagged as AMOUNT_MISMATCH due to contradictory zero debit
+      expect(scOrder.localOrderStatus).toBe("pending");
+      expect(scOrder.outcome).toBe("AMOUNT_MISMATCH");
+
+      // 3. Database records remain completely untouched
+      const dbGaOrder = db.payment_orders.find((o) => o.id === "order-ga-uuid")!;
+      expect(dbGaOrder.status).toBe("paid");
+      expect(dbGaOrder.amount).toBe(500);
+
+      const dbGaItem = db.participant_events.find((pe) => pe.id === "pe-ga-uuid")!;
+      expect(dbGaItem.payment_status).toBe("paid");
+
+      // 4. Ensure payments table had zero receipts inserted for GA order (no unauthorized mutation)
+      expect(db.payments).toHaveLength(0);
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 10. Scenario 1: Gateway failure with explicit net_amount_debit: "0.00" classifies as PAYMENT_FAILED without false amount discrepancy
+    it("142. Scenario 1: Gateway failure with explicit net_amount_debit: '0.00' classifies as PAYMENT_FAILED without false amount discrepancy", async () => {
+      const txRecordFailure = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "0.00",
+        status: "failure",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecordFailure);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      // Case A: No amount ambiguity reason solely because zero differs from expected charge
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "failed",
+            rawStatus: "failure",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_FAILED");
+      expect(order.outcomeMessage).toContain("PayU reports payment failure (Status: failure)");
+      expect(order.amountAmbiguityReason).toBeNull();
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).not.toContain("Amount Ambiguity");
+      expect(report).toContain("PayU reports payment failure (Status: failure)");
+
+      // Attempting reconciliation must be strictly blocked at Gate 6a
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "failed",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(reconRes.error).toContain('Gateway status is "failed"');
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 11. Scenario 2: Gateway pending with explicit zero debit classifies as PAYMENT_PENDING without false amount warning
+    it("143. Scenario 2: Gateway pending with explicit zero debit classifies as PAYMENT_PENDING without false amount warning", async () => {
+      const txRecordPending = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "0.00",
+        status: "pending",
+      };
+
+      const normalized = normalizePayUAmountFields(txRecordPending);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      // Case B: No false amount discrepancy on pending
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "pending",
+            rawStatus: "pending",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_PENDING");
+      expect(order.outcomeMessage).toContain("Payment is awaiting completion or confirmation by PayU");
+      expect(order.amountAmbiguityReason).toBeNull();
+
+      // Reconciliation must be strictly blocked at Gate 6a
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "pending",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(reconRes.error).toContain('Gateway status is "pending"');
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 12. Scenario 7: Malformed or invalid debit values are safely preserved as absent without error or zero coercion
+    it("144. Scenario 7: Malformed or invalid debit values are safely preserved as absent without error or zero coercion", async () => {
+      const txMalformed = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        net_amount_debit: "invalid_amount_string",
+      };
+
+      const normalized = normalizePayUAmountFields(txMalformed);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBeUndefined();
+      expect(normalized.netDebitPaise).toBeUndefined();
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      expect(parsePaise("invalid_string")).toBeUndefined();
+      expect(parsePaise(NaN)).toBeUndefined();
+      expect(parsePaise({})).toBeUndefined();
+      expect(parsePaise("")).toBeUndefined();
+      expect(parsePaise("   ")).toBeUndefined();
+    });
+
+    // 13. Scenario 8: Valid successful ₹500 payment with separately reported additional charge reconciles base amount cleanly
+    it("145. Scenario 8: Valid successful ₹500 payment with separately reported additional charge reconciles base amount cleanly", async () => {
+      const txSurcharge = {
+        amt: "500.00",
+        transaction_amount: "500.00",
+        additional_charges: "15.00",
+        net_amount_debit: "515.00",
+        status: "success",
+      };
+
+      const normalized = normalizePayUAmountFields(txSurcharge);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.additionalChargesPaise).toBe(1500);
+      expect(normalized.customerTransactionAmountPaise).toBe(51500);
+      expect(normalized.netDebitPaise).toBe(51500);
+      expect(normalized.amountAmbiguityReason).toBeUndefined();
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "paid",
+            amountPaise: 50000,
+            additionalChargesPaise: 1500,
+            customerTransactionAmountPaise: 51500,
+            netDebitPaise: 51500,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("GATEWAY_PAID_LOCAL_PENDING");
+      expect(order.expectedAmount).toBe(500);
+      expect(order.additionalCharges).toBe(15);
+      expect(order.customerTransactionAmount).toBe(515);
+
+      // Reconciles canonical base amount ₹500 cleanly
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "paid",
+          amountPaise: 50000,
+          additionalChargesPaise: 1500,
+          customerTransactionAmountPaise: 51500,
+          netDebitPaise: 51500,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(true);
+      expect(reconRes.settled).toBe(true);
+      expect(supabase.rpc).toHaveBeenCalledWith(
+        "process_payment_success",
+        expect.objectContaining({
+          p_amount_paise: 50000, // Exact canonical ₹500 base amount passed to database RPC!
+          p_gateway_payment_id: "403993715525548",
+        })
+      );
+    });
+
+    // 14. Scenario 12: Multiple independent checkout attempts where one linked item is already paid preserves independence
+    it("146. Scenario 12: Multiple independent checkout attempts where one linked item is already paid preserves item status and blocks retry settlement", async () => {
+      const db = createNainaAuthoritativeDb();
+      // Suppose Security Council event pe-sc-uuid was also linked to a previous settled order
+      db.participant_events.find((pe) => pe.id === "pe-sc-uuid")!.payment_status = "paid";
+      db.payment_orders.push({
+        id: "order-sc-prior-paid",
+        order_reference: "SVK-SVK26-2F18F504-20261015080000000-PRIOR1",
+        payer_participant_id: "naina-uuid-2f18f504",
+        amount: 500,
+        currency: "INR",
+        status: "paid",
+        gateway: "payu",
+        gateway_order_id: "SVK-1792050000000-prior",
+        gateway_payment_id: "403993700000000",
+        created_at: "2026-10-15T08:00:00.000Z",
+        updated_at: "2026-10-15T08:00:00.000Z",
+      });
+      db.payment_order_items.push({
+        id: "poi-sc-prior",
+        payment_order_id: "order-sc-prior-paid",
+        item_type: "event",
+        amount: 500,
+        participant_event_id: "pe-sc-uuid",
+        participant_accommodation_id: null,
+      });
+
+      const supabase = createMockSupabase(db);
+
+      // Verify orders for participant to discover retry-chain and cross-order item linkage
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        participantIds: ["naina-uuid-2f18f504"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "failed",
+            amountPaise: 50000,
+            netDebitPaise: 0,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const scOrder = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      // Order preserves authoritative gateway failure and does not infer success from linked item
+      expect(scOrder.outcome).toBe("PAYMENT_FAILED");
+      expect(scOrder.outcomeMessage).toContain("PayU reports payment failure");
+
+      // Preserves separate order notice / contradictory local status findings
+      expect(scOrder.diagnosticFindings.some((df) => df.type === "SEPARATE_ORDER_NOTICE")).toBe(true);
+
+      // Attempting to settle this retry attempt is strictly blocked
+      const reconRes = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "failed",
+          amountPaise: 50000,
+          netDebitPaise: 0,
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconRes.success).toBe(false);
+      expect(reconRes.settled).toBe(false);
+      expect(supabase.rpc).not.toHaveBeenCalled();
+
+      // Item status remains paid in database
+      const itemInDb = db.participant_events.find((pe) => pe.id === "pe-sc-uuid")!;
+      expect(itemInDb.payment_status).toBe("paid");
+    });
+
+    // 15. Scenarios 13 & 14: Failed or pending gateway status can never be reconciled merely because amount warning is absent
+    it("147. Scenarios 13 & 14: Failed or pending gateway status can never be reconciled merely because amount warning is absent", async () => {
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      // Attempt reconciliation with failed status and clean amounts
+      const reconFailed = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "failed",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          amountAmbiguityReason: undefined, // Suppressed/clean warning!
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconFailed.success).toBe(false);
+      expect(reconFailed.settled).toBe(false);
+      expect(reconFailed.error).toContain('Gateway status is "failed". Only confirmed "paid" transactions can be reconciled.');
+      expect(supabase.rpc).not.toHaveBeenCalled();
+
+      // Attempt reconciliation with pending status and clean amounts
+      const reconPending = await reconcilePaymentOrder({
+        supabaseAdmin: supabase,
+        adminId: "master-uuid",
+        adminEmail: "master@saviskar.internal",
+        paymentOrderId: "order-sc-uuid",
+        mockGatewayResult: {
+          status: "pending",
+          amountPaise: 50000,
+          customerTransactionAmountPaise: 0,
+          netDebitPaise: 0,
+          amountAmbiguityReason: undefined, // Suppressed/clean warning!
+          gatewayPaymentId: "403993715525548",
+          gatewayOrderId: "SVK-1792055699266-49b0e3b",
+        },
+      });
+
+      expect(reconPending.success).toBe(false);
+      expect(reconPending.settled).toBe(false);
+      expect(reconPending.error).toContain('Gateway status is "pending". Only confirmed "paid" transactions can be reconciled.');
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    });
+
+    // 16. Failed status plus explicit zero debit and a separate genuine discrepancy: separate discrepancy remains visible
+    it("148. Failed status plus explicit zero debit and a separate genuine discrepancy preserves the separate discrepancy", async () => {
+      const txDiscordantFailed = {
+        amt: "500.00",
+        transaction_amount: "400.00", // Discordant!
+        additional_charges: "0.00",
+        net_amount_debit: "0.00",
+        status: "failure",
+      };
+
+      const normalized = normalizePayUAmountFields(txDiscordantFailed);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      // Independent discrepancy is preserved!
+      expect(normalized.amountAmbiguityReason).toBeDefined();
+      expect(normalized.amountAmbiguityReason).toContain("PayU amount fields mismatch: 'amt' (₹500) and 'transaction_amount' (₹400) differ");
+      // Spurious zero debit warning is NOT added!
+      expect(normalized.amountAmbiguityReason).not.toContain("net_amount_debit' is ₹0.00");
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "failed",
+            rawStatus: "failure",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason: normalized.amountAmbiguityReason,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_FAILED");
+      expect(order.amountAmbiguityReason).toBeDefined();
+      expect(order.amountAmbiguityReason).toContain("PayU amount fields mismatch");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **⚠️ Amount Ambiguity**: PayU amount fields mismatch");
+      expect(report).not.toContain("Zero debit cannot prove payment capture");
+    });
+
+    // 17. Pending status plus explicit zero debit and a separate genuine discrepancy: separate discrepancy remains visible
+    it("149. Pending status plus explicit zero debit and a separate genuine discrepancy preserves the separate discrepancy", async () => {
+      const txDiscordantPending = {
+        amt: "500.00",
+        transaction_amount: "400.00", // Discordant!
+        additional_charges: "0.00",
+        net_amount_debit: "0.00",
+        status: "pending",
+      };
+
+      const normalized = normalizePayUAmountFields(txDiscordantPending);
+      expect(normalized.baseAmountPaise).toBe(50000);
+      expect(normalized.customerTransactionAmountPaise).toBe(0);
+      expect(normalized.netDebitPaise).toBe(0);
+      // Independent discrepancy is preserved!
+      expect(normalized.amountAmbiguityReason).toBeDefined();
+      expect(normalized.amountAmbiguityReason).toContain("PayU amount fields mismatch: 'amt' (₹500) and 'transaction_amount' (₹400) differ");
+      expect(normalized.amountAmbiguityReason).not.toContain("net_amount_debit' is ₹0.00");
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "pending",
+            rawStatus: "pending",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason: normalized.amountAmbiguityReason,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_PENDING");
+      expect(order.amountAmbiguityReason).toBeDefined();
+      expect(order.amountAmbiguityReason).toContain("PayU amount fields mismatch");
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **⚠️ Amount Ambiguity**: PayU amount fields mismatch");
+    });
+
+    // 18. Legacy/mock combined string containing both genuine mismatch and zero-debit warning cleans only zero debit
+    it("150. Legacy/mock combined string containing both genuine mismatch and zero-debit warning strips only zero-debit finding", async () => {
+      const combinedReason =
+        "PayU amount fields mismatch: 'amt' (₹500.00) and 'transaction_amount' (₹400.00) differ and cannot be reconciled with additional_charges (₹0.00). PayU customer debit discrepancy: 'net_amount_debit' is ₹0.00 for a ₹500.00 order. Zero debit cannot prove payment capture.";
+
+      const db = createNainaAuthoritativeDb();
+      const supabase = createMockSupabase(db);
+
+      const verifyRes = await verifyPaymentOrders({
+        supabaseAdmin: supabase as any,
+        orderIds: ["order-sc-uuid"],
+        mockGatewayResults: {
+          "SVK-1792055699266-49b0e3b": {
+            status: "failed",
+            amountPaise: 50000,
+            customerTransactionAmountPaise: 0,
+            netDebitPaise: 0,
+            amountAmbiguityReason: combinedReason,
+            gatewayPaymentId: "403993715525548",
+          },
+        },
+      });
+
+      const order = verifyRes.orders.find((o) => o.orderId === "order-sc-uuid")!;
+      expect(order.outcome).toBe("PAYMENT_FAILED");
+      // Zero debit part is stripped, but genuine mismatch remains!
+      expect(order.amountAmbiguityReason).toBe(
+        "PayU amount fields mismatch: 'amt' (₹500.00) and 'transaction_amount' (₹400.00) differ and cannot be reconciled with additional_charges (₹0.00)."
+      );
+
+      const report = generateSanitizedDiagnosticReport(verifyRes);
+      expect(report).toContain("- **⚠️ Amount Ambiguity**: PayU amount fields mismatch");
+      expect(report).not.toContain("Zero debit cannot prove payment capture");
+    });
+  });
+
 });

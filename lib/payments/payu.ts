@@ -23,6 +23,7 @@ import { getSiteBaseUrl } from "./resume-token";
  */
 export function parsePaise(val: unknown): number | undefined {
   if (val === null || val === undefined || val === "") return undefined;
+  if (typeof val === "string" && val.trim() === "") return undefined;
   const num = typeof val === "number" ? val : parseFloat(String(val).trim());
   if (isNaN(num)) return undefined;
   return Math.round(num * 100);
@@ -37,6 +38,7 @@ export type NormalizedPayUAmounts = {
   deductionsPaise: number;
   payuAmtPaise?: number;
   payuTransactionAmountPaise?: number;
+  netDebitPaise?: number;
   amountAmbiguityReason?: string;
 };
 
@@ -47,8 +49,8 @@ export type NormalizedPayUAmounts = {
  * - `amt`: Merchant-requested base transaction amount (e.g. "999.00").
  * - `transaction_amount`: Base or gross captured transaction amount (e.g. "999.00" or "1000.18").
  * - `additional_charges`: Explicit customer-side payment gateway surcharge / convenience fee (e.g. "1.18").
- * - `net_amount_debit`: Net amount credited to merchant account or debited (e.g. "999.00").
- * - `amount_settled`: Explicit settlement amount credited to merchant (e.g. "999.00").
+ * - `net_amount_debit`: Customer debit amount debited from customer account/card (e.g. "1000.18").
+ * - `amount_settled`: Authoritative settlement amount credited to merchant bank account (e.g. "999.00"). Only present when returned by settlement APIs.
  * - `disc`: Merchant-side discount or deduction (e.g. "0.00").
  *
  * Never subtracts explicit charges from transaction_amount when transaction_amount is already the base amount!
@@ -57,7 +59,8 @@ export type NormalizedPayUAmounts = {
  */
 export function normalizePayUAmountFields(
   txRecord: Record<string, unknown>,
-  fallbackAmount?: string
+  fallbackAmount?: string,
+  explicitStatus?: string
 ): NormalizedPayUAmounts {
   const payuAmtPaise = parsePaise(txRecord.amt);
   const payuTxnAmtPaise = parsePaise(txRecord.transaction_amount);
@@ -74,10 +77,9 @@ export function normalizePayUAmountFields(
     if (payuAmtPaise === payuTxnAmtPaise) {
       // Standard PayU legacy response: amt and transaction_amount both report the base amount.
       baseAmountPaise = payuAmtPaise;
-      customerTransactionAmountPaise =
-        additionalChargesPaise > 0
-          ? baseAmountPaise + additionalChargesPaise
-          : baseAmountPaise;
+      if (additionalChargesPaise > 0) {
+        customerTransactionAmountPaise = baseAmountPaise + additionalChargesPaise;
+      }
     } else if (
       additionalChargesPaise > 0 &&
       payuTxnAmtPaise - additionalChargesPaise === payuAmtPaise
@@ -99,16 +101,14 @@ export function normalizePayUAmountFields(
     }
   } else if (payuAmtPaise != null) {
     baseAmountPaise = payuAmtPaise;
-    customerTransactionAmountPaise =
-      additionalChargesPaise > 0
-        ? baseAmountPaise + additionalChargesPaise
-        : baseAmountPaise;
+    if (additionalChargesPaise > 0) {
+      customerTransactionAmountPaise = baseAmountPaise + additionalChargesPaise;
+    }
   } else if (payuTxnAmtPaise != null) {
     baseAmountPaise = payuTxnAmtPaise;
-    customerTransactionAmountPaise =
-      additionalChargesPaise > 0
-        ? baseAmountPaise + additionalChargesPaise
-        : baseAmountPaise;
+    if (additionalChargesPaise > 0) {
+      customerTransactionAmountPaise = baseAmountPaise + additionalChargesPaise;
+    }
   } else {
     baseAmountPaise = parsePaise(fallbackAmount) ?? 0;
     if (baseAmountPaise === 0) {
@@ -116,20 +116,97 @@ export function normalizePayUAmountFields(
     }
   }
 
-  // Settlement amount resolution & mismatch check
+  // Status-aware classification
+  const rawStatus = (
+    explicitStatus ||
+    (typeof txRecord.status === "string" ? txRecord.status : "") ||
+    (typeof txRecord.unmappedstatus === "string" ? txRecord.unmappedstatus : "")
+  ).toLowerCase().trim();
+
+  const isExplicitFailure =
+    rawStatus === "failure" ||
+    rawStatus === "failed" ||
+    rawStatus === "bounced" ||
+    rawStatus === "usercancelled" ||
+    rawStatus === "dropped";
+
+  const isExplicitPending =
+    rawStatus === "pending" ||
+    rawStatus === "in progress";
+
+  // Corroborate customer debit using net_amount_debit
+  // In PayU's API contract, net_amount_debit represents the customer debit amount (either gross debit or net of surcharge).
+  if (netDebitPaise != null) {
+    if (netDebitPaise === 0) {
+      customerTransactionAmountPaise = 0;
+      if (isExplicitFailure) {
+        // Case A: PayU explicitly reports failure, and net_amount_debit is zero.
+        // Customer was not debited because the transaction failed.
+        // Do NOT generate an amount-discrepancy warning solely because zero differs from the expected charge.
+      } else if (isExplicitPending) {
+        // Case B: PayU reports pending, and net_amount_debit is zero.
+        // Payment is still awaiting completion or confirmation by PayU.
+        // Do NOT treat zero debit as an amount discrepancy.
+      } else {
+        // Case C: PayU reports success (or status is unspecified/assumed captured), but net_amount_debit is zero for a positive expected charge.
+        // Zero customer debit directly contradicts payment capture!
+        if (baseAmountPaise > 0) {
+          const zeroDebitDiff = `PayU customer debit discrepancy: 'net_amount_debit' is ₹0.00 for a ₹${(baseAmountPaise / 100).toFixed(2)} order. Zero debit cannot prove payment capture.`;
+          amountAmbiguityReason = amountAmbiguityReason
+            ? `${amountAmbiguityReason} ${zeroDebitDiff}`
+            : zeroDebitDiff;
+        }
+      }
+    } else {
+      // Positive customer debit
+      if (customerTransactionAmountPaise == null) {
+        customerTransactionAmountPaise =
+          additionalChargesPaise > 0 && netDebitPaise === baseAmountPaise
+            ? baseAmountPaise + additionalChargesPaise
+            : netDebitPaise;
+        if (
+          additionalChargesPaise === 0 &&
+          netDebitPaise !== baseAmountPaise
+        ) {
+          const debitDiff = `PayU customer debit discrepancy: 'net_amount_debit' (₹${(netDebitPaise / 100).toFixed(2)}) differs from base order amount (₹${(baseAmountPaise / 100).toFixed(2)}).`;
+          amountAmbiguityReason = amountAmbiguityReason
+            ? `${amountAmbiguityReason} ${debitDiff}`
+            : debitDiff;
+        }
+      } else if (
+        netDebitPaise !== customerTransactionAmountPaise &&
+        netDebitPaise !== baseAmountPaise
+      ) {
+        const debitDiff = `PayU customer debit discrepancy: 'net_amount_debit' (₹${(netDebitPaise / 100).toFixed(2)}) differs from customer debit (₹${(customerTransactionAmountPaise / 100).toFixed(2)}).`;
+        amountAmbiguityReason = amountAmbiguityReason
+          ? `${amountAmbiguityReason} ${debitDiff}`
+          : debitDiff;
+      }
+    }
+  }
+
+  // Settlement amount resolution & validation
+  // Merchant settlement ONLY comes from an authoritative settlement field (amount_settled).
+  // Under NO circumstances fall back to net_amount_debit (customer debit), amt, or transaction_amount.
   let settlementAmountPaise: number | undefined;
-  if (netDebitPaise != null && amountSettledPaise != null) {
-    if (netDebitPaise !== amountSettledPaise) {
-      const settleDiff = `PayU settlement discrepancy: 'net_amount_debit' (₹${netDebitPaise / 100}) differs from 'amount_settled' (₹${amountSettledPaise / 100}).`;
+  if (amountSettledPaise != null) {
+    settlementAmountPaise = amountSettledPaise;
+    if (
+      customerTransactionAmountPaise != null &&
+      amountSettledPaise > customerTransactionAmountPaise
+    ) {
+      const settleDiff = `PayU settlement discrepancy: 'amount_settled' (₹${(amountSettledPaise / 100).toFixed(2)}) exceeds customer debit (₹${(customerTransactionAmountPaise / 100).toFixed(2)}).`;
       amountAmbiguityReason = amountAmbiguityReason
         ? `${amountAmbiguityReason} ${settleDiff}`
         : settleDiff;
     }
-    settlementAmountPaise = amountSettledPaise;
-  } else if (amountSettledPaise != null) {
-    settlementAmountPaise = amountSettledPaise;
-  } else if (netDebitPaise != null) {
-    settlementAmountPaise = netDebitPaise;
+    const expectedMerchantNet = baseAmountPaise - deductionsPaise;
+    if (expectedMerchantNet > 0 && amountSettledPaise !== expectedMerchantNet) {
+      const settleNetDiff = `PayU settlement discrepancy: 'amount_settled' (₹${(amountSettledPaise / 100).toFixed(2)}) differs from expected merchant net settlement (₹${(expectedMerchantNet / 100).toFixed(2)}).`;
+      amountAmbiguityReason = amountAmbiguityReason
+        ? `${amountAmbiguityReason} ${settleNetDiff}`
+        : settleNetDiff;
+    }
   }
 
   return {
@@ -141,6 +218,7 @@ export function normalizePayUAmountFields(
     deductionsPaise,
     payuAmtPaise,
     payuTransactionAmountPaise: payuTxnAmtPaise,
+    netDebitPaise,
     amountAmbiguityReason,
   };
 }
@@ -469,7 +547,7 @@ export class PayUGateway implements PaymentGateway {
     }
 
     const txRecord = transaction as Record<string, unknown>;
-    const amounts = normalizePayUAmountFields(txRecord, transaction.amount);
+    const amounts = normalizePayUAmountFields(txRecord, transaction.amount, parsedStatus);
 
     const bankRefNum = typeof txRecord.bank_ref_num === "string" && txRecord.bank_ref_num.trim()
       ? txRecord.bank_ref_num.trim()
@@ -500,6 +578,7 @@ export class PayUGateway implements PaymentGateway {
       customerTransactionAmount: amounts.customerTransactionAmountPaise,
       payuAmtPaise: amounts.payuAmtPaise,
       payuTransactionAmountPaise: amounts.payuTransactionAmountPaise,
+      netDebitPaise: amounts.netDebitPaise,
       amountAmbiguityReason: amounts.amountAmbiguityReason,
     };
   }
@@ -603,7 +682,7 @@ export class PayUGateway implements PaymentGateway {
         else if (rawStatus === "not found") parsedStatus = "not_found";
 
         const txRecord = transaction as Record<string, unknown>;
-        const amounts = normalizePayUAmountFields(txRecord, transaction.amount);
+        const amounts = normalizePayUAmountFields(txRecord, transaction.amount, parsedStatus);
 
         results[txnid] = {
           gatewayPaymentId: transaction.mihpayid?.toString() || "",
@@ -630,6 +709,7 @@ export class PayUGateway implements PaymentGateway {
           customerTransactionAmount: amounts.customerTransactionAmountPaise,
           payuAmtPaise: amounts.payuAmtPaise,
           payuTransactionAmountPaise: amounts.payuTransactionAmountPaise,
+          netDebitPaise: amounts.netDebitPaise,
           amountAmbiguityReason: amounts.amountAmbiguityReason,
         };
       }

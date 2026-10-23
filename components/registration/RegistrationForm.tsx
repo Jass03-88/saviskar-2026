@@ -4387,7 +4387,7 @@ export default function RegistrationForm({
                                                   name={`memberAccommodationDate-${event.id}-${index}`}
                                                   value="2026-10-27"
                                                   checked={member.accommodationDate === "2026-10-27"}
-                                                  onChange={() => updateTeamMember(event.id, index, "accommodationDate", "2026-10-27")}
+                                                  onChange={() => updateTeamMemberMultiple(event.id, index, { accommodationDate: "2026-10-27", extraDays: "none" })}
                                                   className="sr-only"
                                                 />
                                                 <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${member.accommodationDate === "2026-10-27" ? "border-violet-400 bg-violet-500" : "border-white/30"}`}>
@@ -4404,7 +4404,7 @@ export default function RegistrationForm({
                                                   name={`memberAccommodationDate-${event.id}-${index}`}
                                                   value="2026-10-28"
                                                   checked={(member.accommodationDate || "2026-10-28") === "2026-10-28"}
-                                                  onChange={() => updateTeamMember(event.id, index, "accommodationDate", "2026-10-28")}
+                                                  onChange={() => updateTeamMemberMultiple(event.id, index, { accommodationDate: "2026-10-28", extraDays: "none" })}
                                                   className="sr-only"
                                                 />
                                                 <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${(member.accommodationDate || "2026-10-28") === "2026-10-28" ? "border-violet-400 bg-violet-500" : "border-white/30"}`}>
@@ -4421,7 +4421,7 @@ export default function RegistrationForm({
                                                   name={`memberAccommodationDate-${event.id}-${index}`}
                                                   value="2026-10-29"
                                                   checked={member.accommodationDate === "2026-10-29"}
-                                                  onChange={() => updateTeamMember(event.id, index, "accommodationDate", "2026-10-29")}
+                                                  onChange={() => updateTeamMemberMultiple(event.id, index, { accommodationDate: "2026-10-29", extraDays: "none" })}
                                                   className="sr-only"
                                                 />
                                                 <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${member.accommodationDate === "2026-10-29" ? "border-violet-400 bg-violet-500" : "border-white/30"}`}>
@@ -4438,7 +4438,7 @@ export default function RegistrationForm({
                                                   name={`memberAccommodationDate-${event.id}-${index}`}
                                                   value="2026-10-30"
                                                   checked={member.accommodationDate === "2026-10-30"}
-                                                  onChange={() => updateTeamMember(event.id, index, "accommodationDate", "2026-10-30")}
+                                                  onChange={() => updateTeamMemberMultiple(event.id, index, { accommodationDate: "2026-10-30", extraDays: "none" })}
                                                   className="sr-only"
                                                 />
                                                 <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${member.accommodationDate === "2026-10-30" ? "border-violet-400 bg-violet-500" : "border-white/30"}`}>

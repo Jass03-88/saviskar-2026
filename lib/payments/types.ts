@@ -142,6 +142,9 @@ export type FetchedPaymentDetails = {
   /** Raw transaction_amount field from PayU in paise */
   payuTransactionAmountPaise?: number;
 
+  /** Raw net_amount_debit field from PayU in paise if returned */
+  netDebitPaise?: number;
+
   /** Unresolved amount-field discrepancy or ambiguity reason string */
   amountAmbiguityReason?: string;
 };
