@@ -1,6 +1,6 @@
 -- ============================================================
 -- SAVISKAR 2026 — REGISTRATION RPC RESILIENCE & MEMBER COLLEGE FIX
--- Migration: 20261021000000_fix_registration_member_college_and_rpc_resilience.sql
+-- Migration: 20261021010000_fix_registration_member_college_and_rpc_resilience.sql
 -- Status: DRAFT / LOCAL ONLY — DO NOT APPLY TO PRODUCTION WITHOUT EXPLICIT APPROVAL
 -- ============================================================
 -- 1. Updates register_participant_events RPC:
