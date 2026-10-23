@@ -575,6 +575,35 @@ describe("SAVISKAR 2026 — Critical Registration Investigation & Regression Sui
       expect(res.status).toBe(500);
       expect(json.code).toBe("INTERNAL_ERROR");
     });
+
+    it("F. Maps RPC SVK05 cancelled registration error to actionable 400 error advising user to contact support", async () => {
+      mockRpcReturn = {
+        data: null,
+        error: {
+          code: "SVK05",
+          message: "Registration for Solo Hack was previously cancelled. Please contact support.",
+        },
+      };
+
+      const payload = {
+        name: "Lead",
+        email: authenticatedEmail,
+        phone: "9876543210",
+        college: "College",
+        events: [{ eventId: "33333333-3333-4333-a333-333333333333", team: null, members: [] }],
+      };
+
+      const req = createJsonPostRequest("/api/register", payload);
+      const res = await postRegister(req);
+      const json = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(json.success).toBe(false);
+      expect(json.code).toBe("EVENT_ERROR");
+      expect(json.error).toBe(
+        "Registration for Solo Hack was previously cancelled. Please contact support."
+      );
+    });
   });
 
   // =========================================================================
