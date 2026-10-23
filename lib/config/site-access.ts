@@ -148,6 +148,13 @@ export async function getSiteAccess(): Promise<SiteAccessConfig> {
     return cachedAccess.data;
   }
 
+  // In automated test environments without a live DB, return fallback defaults immediately
+  if (process.env.NODE_ENV === "test" && process.env.TEST_LIVE_DB !== "true") {
+    const fallback = { ...DEFAULT_SITE_ACCESS };
+    cachedAccess = { data: fallback, expiresAt: now + CACHE_TTL_MS };
+    return fallback;
+  }
+
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
@@ -158,13 +165,20 @@ export async function getSiteAccess(): Promise<SiteAccessConfig> {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data } = await client
+      const queryPromise = client
         .from("admin_audit_logs")
         .select("details")
         .eq("action_type", "SITE_PAGE_LOCKS_UPDATE")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+        setTimeout(() => resolve({ data: null }), 1500)
+      );
+
+      const result = await Promise.race([queryPromise, timeoutPromise]);
+      const data = result?.data;
 
       if (data?.details?.locks && typeof data.details.locks === "object") {
         const merged: SiteAccessConfig = {
