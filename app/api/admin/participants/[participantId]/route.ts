@@ -315,7 +315,18 @@ export async function GET(
         `)
         .in("registration_group_id", groupIds);
       if (facultyData) {
-        facultyIncharges = facultyData;
+        // Deduplicate faculty members who serve across multiple registration groups
+        const seenFaculty = new Set<string>();
+        for (const f of facultyData) {
+          const p = Array.isArray(f.participants) ? f.participants[0] : f.participants;
+          const key = (f.participant_id || p?.id || p?.email || f.id || "").toLowerCase();
+          if (key && !seenFaculty.has(key)) {
+            seenFaculty.add(key);
+            facultyIncharges.push(f);
+          } else if (!key) {
+            facultyIncharges.push(f);
+          }
+        }
       }
     }
 

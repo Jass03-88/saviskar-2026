@@ -93,6 +93,19 @@ vi.mock("@supabase/supabase-js", () => ({
           error: null,
         });
       }
+      if (name === "process_payment_success") {
+        if (mockPaymentOrder) {
+          mockPaymentOrder.status = "paid";
+        }
+        insertedPayments.push({
+          id: "pay_1",
+          status: "paid",
+          gateway_order_id: params.p_gateway_order_id,
+          gateway_payment_id: params.p_gateway_payment_id,
+          amount: params.p_amount_paise,
+        });
+        return Promise.resolve({ data: { success: true, action: "settled" }, error: null });
+      }
       return Promise.resolve({ data: null, error: null });
     },
     from: (table: string) => {

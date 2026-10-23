@@ -168,7 +168,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-  const pageSize = Math.min(2000, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
+  const pageSize = Math.min(50000, Math.max(1, parseInt(searchParams.get("pageSize") || "50", 10)));
   const eventId = searchParams.get("eventId")?.trim();
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
@@ -224,66 +224,65 @@ export async function GET(request: Request) {
     }
   }
 
-  // 1. Fetch paginated participant_events with optional eventId / scope filter
-  let peQuery = supabaseAdmin
-    .from("participant_events")
-    .select(
-      "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, main_checked_in, main_checked_in_at, registration_group_id, is_archived, created_at",
+  // 1. Fetch paginated participant_events with optional eventId / scope filter in 1000-row chunks
+  const DB_BATCH_SIZE = 1000;
+  const buildPeQuery = (legacy = false) => {
+    let q = supabaseAdmin.from("participant_events").select(
+      legacy
+        ? "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at"
+        : "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, main_checked_in, main_checked_in_at, registration_group_id, is_archived, created_at",
       { count: "exact" }
     );
-
-  if (eventId) {
-    peQuery = peQuery.eq("event_id", eventId);
-  } else if (allowedEventIds !== null) {
-    peQuery = peQuery.in("event_id", allowedEventIds);
-  }
-
-  let {
-    data: participantEventsData,
-    count: totalCount,
-    error: peError,
-  } = await peQuery
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    if (eventId) {
+      q = q.eq("event_id", eventId);
+    } else if (allowedEventIds !== null) {
+      q = q.in("event_id", allowedEventIds);
+    }
+    return q.order("created_at", { ascending: false }).order("id", { ascending: false });
+  };
 
   let schemaWarning: string | undefined;
+  const firstBatchEnd = Math.min(to, from + DB_BATCH_SIZE - 1);
+  let firstRes = await buildPeQuery(false).range(from, firstBatchEnd);
 
-  if (peError && peError.code === "42703") {
+  if (firstRes.error && firstRes.error.code === "42703") {
     console.warn("Main check-in columns missing. Falling back to legacy query.");
     schemaWarning = "Main check-in migration is not applied.";
-    
-    peQuery = supabaseAdmin
-      .from("participant_events")
-      .select(
-        "id, participant_id, event_id, registration_status, payment_status, payment_amount, payment_id, team_name, checked_in, checked_in_at, is_archived, created_at",
-        { count: "exact" }
-      );
-      
-    if (eventId) {
-      peQuery = peQuery.eq("event_id", eventId);
-    } else if (allowedEventIds !== null) {
-      peQuery = peQuery.in("event_id", allowedEventIds);
-    }
-
-    const fallbackResult = await peQuery
-      .order("created_at", { ascending: false })
-      .range(from, to);
-
-    participantEventsData = fallbackResult.data;
-    totalCount = fallbackResult.count;
-    peError = fallbackResult.error;
+    firstRes = await buildPeQuery(true).range(from, firstBatchEnd);
   }
 
-  if (peError) {
-    console.error("Admin registrations query failed:", peError);
+  if (firstRes.error) {
+    console.error("Admin registrations query failed:", firstRes.error);
     return NextResponse.json(
       { error: "Could not load registrations." },
       { status: 500 }
     );
   }
 
-  const participantEvents =
-    (participantEventsData ?? []) as ParticipantEvent[];
+  const totalCount = firstRes.count ?? (firstRes.data?.length || 0);
+  const participantEvents: ParticipantEvent[] = [...((firstRes.data ?? []) as unknown as ParticipantEvent[])];
+
+  const effectiveEnd = Math.min(to, totalCount - 1);
+  const isLegacy = Boolean(schemaWarning);
+
+  if (effectiveEnd > firstBatchEnd) {
+    for (let currentOffset = from + DB_BATCH_SIZE; currentOffset <= effectiveEnd; currentOffset += DB_BATCH_SIZE) {
+      const currentBatchEnd = Math.min(effectiveEnd, currentOffset + DB_BATCH_SIZE - 1);
+      const nextRes = await buildPeQuery(isLegacy).range(currentOffset, currentBatchEnd);
+      if (nextRes.error) {
+        console.error("Admin registrations batch chunk failed:", nextRes.error);
+        return NextResponse.json(
+          { error: "Could not load complete registrations dataset." },
+          { status: 500 }
+        );
+      }
+      if (nextRes.data && nextRes.data.length > 0) {
+        participantEvents.push(...(nextRes.data as unknown as ParticipantEvent[]));
+      } else {
+        break;
+      }
+    }
+  }
 
   const participantIds = Array.from(
     new Set(participantEvents.map((pe) => pe.participant_id).filter(Boolean))

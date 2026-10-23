@@ -382,65 +382,130 @@ export async function POST(
       });
 
       const fetchedGatewayPaymentId = details.gatewayPaymentId;
+      const verifiedAmountPaise = details.amount || Math.round(Number(paymentOrder.amount) * 100);
+      const verifiedCurrency = details.currency || paymentOrder.currency || "INR";
 
-      const { data: eventClaim, error: claimError } = await supabaseAdmin
-        .from("processed_payment_events")
-        .insert({
-          order_id: paymentOrder.id,
-          payment_id: fetchedGatewayPaymentId,
-          event_type: "payment.captured.recovery",
-        })
-        .select("id")
-        .maybeSingle();
+      // ─── Atomic Database Settlement RPC ──────────────────────
+      const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc("process_payment_success", {
+        p_gateway_order_id: paymentOrder.gateway_order_id,
+        p_gateway_payment_id: fetchedGatewayPaymentId,
+        p_amount_paise: verifiedAmountPaise,
+        p_currency: verifiedCurrency,
+        p_gateway_name: gateway.name,
+      });
 
-      const isDuplicate = claimError?.code === "23505" || (!claimError && !eventClaim);
+      if (rpcError || !rpcData) {
+        console.error("Payment settlement RPC returned error or unexpected result:", {
+          rpcError,
+          paymentOrderId: paymentOrder.id,
+          gatewayOrderId: paymentOrder.gateway_order_id,
+        });
 
-      if (!isDuplicate) {
-        await supabaseAdmin
+        // Reconcile ambiguous outcomes: check if the order was actually settled atomically despite timeout/error
+        const { data: refreshedOrder } = await supabaseAdmin
           .from("payment_orders")
-          .update({
-            status: "paid",
-            gateway_payment_id: fetchedGatewayPaymentId,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", paymentOrder.id);
+          .select("id, status, gateway_order_id, gateway_payment_id")
+          .eq("id", paymentOrder.id)
+          .maybeSingle();
 
-        const { data: orderItems } = await supabaseAdmin
-          .from("payment_order_items")
-          .select("participant_event_id, participant_id")
-          .eq("payment_order_id", paymentOrder.id);
+        const isTransactionVerified =
+          Boolean(refreshedOrder) &&
+          refreshedOrder?.id === paymentOrder.id &&
+          refreshedOrder?.status === "paid" &&
+          Boolean(refreshedOrder?.gateway_order_id) &&
+          refreshedOrder?.gateway_order_id === paymentOrder.gateway_order_id &&
+          Boolean(refreshedOrder?.gateway_payment_id) &&
+          Boolean(fetchedGatewayPaymentId) &&
+          refreshedOrder?.gateway_payment_id === fetchedGatewayPaymentId;
 
-        const participantEventIds = (orderItems ?? [])
-          .map((item) => item.participant_event_id)
-          .filter(Boolean) as string[];
+        if (!isTransactionVerified) {
+          console.warn("Ambiguous payment settlement could not verify exact transaction identity:", {
+            paymentOrderId: paymentOrder.id,
+            expectedGatewayOrderId: paymentOrder.gateway_order_id,
+            expectedGatewayPaymentId: fetchedGatewayPaymentId,
+            refreshedOrder: refreshedOrder
+              ? {
+                  id: refreshedOrder.id,
+                  status: refreshedOrder.status,
+                  gateway_order_id: refreshedOrder.gateway_order_id,
+                  gateway_payment_id: refreshedOrder.gateway_payment_id,
+                }
+              : null,
+          });
 
-        if (participantEventIds.length > 0) {
-          await supabaseAdmin
-            .from("participant_events")
-            .update({
-              payment_status: "paid",
-              payment_id: fetchedGatewayPaymentId,
-              updated_at: new Date().toISOString(),
-            })
-            .in("id", participantEventIds);
+          // Fail closed: do NOT mark anything paid through manual fallback, do not insert payment claims, do not send email
+          const isCapabilityGate =
+            rpcError?.code === "PGRST202" ||
+            rpcError?.code === "42883" ||
+            Boolean(rpcError?.message && rpcError.message.includes("does not exist"));
+
+          return errorResponse(
+            isCapabilityGate
+              ? "Payment settlement service is temporarily unavailable. Please retry shortly."
+              : "Payment settlement could not be completed due to a system error. Please retry shortly.",
+            isCapabilityGate ? 503 : 500,
+            isCapabilityGate ? "SERVICE_UNAVAILABLE" : "SETTLEMENT_FAILED"
+          );
         }
 
-        if (paymentOrder.payer_participant_id) {
-          await supabaseAdmin
-            .from("payments")
-            .insert({
-              participant_id: paymentOrder.payer_participant_id,
-              participant_event_id: participantEventIds[0] ?? null,
-              amount: Number(paymentOrder.amount),
-              status: "paid",
-              gateway: gateway.name,
-              gateway_payment_id: fetchedGatewayPaymentId,
-              gateway_order_id: paymentOrder.gateway_order_id,
-            });
+        console.log("Order confirmed paid via authorized status lookup despite ambiguous RPC result:", {
+          paymentOrderId: paymentOrder.id,
+          gatewayOrderId: paymentOrder.gateway_order_id,
+          gatewayPaymentId: fetchedGatewayPaymentId,
+        });
+      } else if (!rpcData.success) {
+        console.error("Payment settlement RPC rejected captured payment:", {
+          error: rpcData.error,
+          paymentOrderId: paymentOrder.id,
+        });
+        return errorResponse(
+          rpcData.error || "Payment verification failed during settlement.",
+          400,
+          "SETTLEMENT_REJECTED"
+        );
+      } else {
+        // Require documented, explicitly valid action from process_payment_success contract
+        const validSettlementActions = [
+          "settled",
+          "settled_with_accommodation_conflict",
+          "already_paid",
+          "already_processed",
+          "already_refunded",
+        ];
+
+        const action = typeof rpcData.action === "string" ? rpcData.action : "";
+
+        if (!action || !validSettlementActions.includes(action)) {
+          console.error("Payment settlement RPC returned unexpected or missing action:", {
+            action: rpcData.action,
+            rpcData,
+            paymentOrderId: paymentOrder.id,
+            gatewayOrderId: paymentOrder.gateway_order_id,
+          });
+          return errorResponse(
+            "Payment settlement returned an unexpected response. Please contact support or retry shortly.",
+            500,
+            "INVALID_SETTLEMENT_RESPONSE"
+          );
         }
 
-        const { ensurePaymentConfirmationSent } = await import("@/lib/payments/post-payment");
-        await ensurePaymentConfirmationSent(paymentOrder.id);
+        if (action === "already_refunded") {
+          console.warn("Payment recovery halted because payment order is already refunded:", {
+            paymentOrderId: paymentOrder.id,
+            gatewayOrderId: paymentOrder.gateway_order_id,
+          });
+          return errorResponse(
+            "This payment order has already been refunded and cannot be processed.",
+            400,
+            "ORDER_ALREADY_REFUNDED"
+          );
+        }
+
+        // Only send confirmation email for newly settled orders, never for idempotent already settled callbacks
+        if (action === "settled" || action === "settled_with_accommodation_conflict") {
+          const { ensurePaymentConfirmationSent } = await import("@/lib/payments/post-payment");
+          await ensurePaymentConfirmationSent(paymentOrder.id);
+        }
       }
 
       const participantPublicId = payer.participant_id ?? "";

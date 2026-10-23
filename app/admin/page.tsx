@@ -460,7 +460,7 @@ export default function AdminPage() {
 
       try {
         const response = await fetch(
-          "/api/admin/registrations?pageSize=2000",
+          "/api/admin/registrations?pageSize=50000",
           { cache: "no-store" }
         );
 
