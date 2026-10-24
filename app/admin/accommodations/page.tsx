@@ -139,7 +139,10 @@ type ParticipantDetails = {
   phone: string;
   gender: string;
   state: string;
+  college?: string;
   is_faculty?: boolean;
+  participant_events?: any[];
+  participant_event_members?: any[];
 };
 
 type AccommodationRecord = {
@@ -1230,17 +1233,26 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
     return data.accommodations.filter(acc => {
       const p = acc.participants;
       if (!p) return false;
-      const q = search.toLowerCase();
+      const q = search.trim().toLowerCase();
+      const qDigits = q.replace(/\D/g, "");
       const room = data.rooms.find(r => r.id === acc.room_id);
       const hostel = data.hostels.find(h => h.id === acc.hostel_id);
 
-      const matchesSearch = !search || 
-        p.name?.toLowerCase().includes(q) || 
-        p.email?.toLowerCase().includes(q) || 
+      const hasTeamMatch =
+        p.participant_events?.some((pe: any) => pe.team_name?.toLowerCase().includes(q)) ||
+        p.participant_event_members?.some((pem: any) => pem.participant_events?.team_name?.toLowerCase().includes(q));
+
+      const matchesSearch = !q ||
+        p.name?.toLowerCase().includes(q) ||
+        p.email?.toLowerCase().includes(q) ||
         p.participant_id?.toLowerCase().includes(q) ||
+        (p.college && p.college.toLowerCase().includes(q)) ||
+        (p.state && p.state.toLowerCase().includes(q)) ||
+        (p.phone && (p.phone.toLowerCase().includes(q) || (qDigits.length >= 3 && p.phone.replace(/\D/g, "").includes(qDigits)))) ||
         room?.room_number?.toLowerCase().includes(q) ||
-        hostel?.name?.toLowerCase().includes(q);
-      const matchesStatus = filterStatus === "all" 
+        hostel?.name?.toLowerCase().includes(q) ||
+        Boolean(hasTeamMatch);
+      const matchesStatus = filterStatus === "all"
         ? (acc.status !== "cancelled" && acc.status !== "failed")
         : acc.status === filterStatus;
       const matchesGender = filterGender === "all" || p.gender === filterGender;
@@ -1759,12 +1771,31 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
   return (
     <div>
       <div className="flex flex-wrap gap-4 mb-6">
-        <input 
-          type="text" 
-          placeholder="Search name, email, ID, room..." 
-          className="border border-black/10 rounded-full px-4 py-2 text-sm w-full md:w-auto text-black placeholder:text-black/40 bg-white"
-          value={search} onChange={e => setSearch(e.target.value)}
-        />
+        <label
+          htmlFor="admin-acco-search-input"
+          className="border border-black/10 rounded-full px-4 py-2 text-sm w-full md:w-auto bg-white flex items-center gap-2 cursor-text focus-within:ring-2 focus-within:ring-black/10 transition"
+        >
+          <input
+            id="admin-acco-search-input"
+            type="text"
+            placeholder="Search name, ID, phone, college, team..."
+            className="text-black placeholder:text-black/40 bg-transparent outline-none w-full md:w-64"
+            value={search} onChange={e => setSearch(e.target.value)}
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSearch("");
+              }}
+              className="text-black/30 hover:text-black shrink-0 text-xs font-bold"
+              title="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </label>
         <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
           <option value="all">Active Only</option>
           <option value="paid">Paid</option>

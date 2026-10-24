@@ -145,6 +145,8 @@ export async function GET(request: Request) {
           accommodationAccess: auth.accommodation_access,
           overview: {
             totalParticipants: 0,
+            eventParticipantCount: 0,
+            accommodationOnlyCount: 0,
             withAccommodation: 0,
             withoutAccommodation: 0,
             totalHeadcount: 0,
@@ -447,6 +449,10 @@ export async function GET(request: Request) {
       eventStatsMap.set(pe.event_id, cur);
     }
 
+    // Event competitor count before including accommodation-only delegates
+    const eventParticipantCount = uniqueParticipantIdSet.size;
+    let accommodationOnlyCount = 0;
+
     // If viewing All Categories, also include participants with active accommodation who might not have registered for events yet
     if (selectedCategory === "all") {
       for (const acc of allAccommodations) {
@@ -457,6 +463,9 @@ export async function GET(request: Request) {
           if ((p.college || "").toLowerCase().trim() !== queryCollegeLower) {
             continue;
           }
+        }
+        if (!uniqueParticipantIdSet.has(acc.participant_id)) {
+          accommodationOnlyCount++;
         }
         uniqueParticipantIdSet.add(acc.participant_id);
       }
@@ -781,6 +790,8 @@ export async function GET(request: Request) {
         accommodationAccess: auth.accommodation_access,
         overview: {
           totalParticipants,
+          eventParticipantCount,
+          accommodationOnlyCount,
           withAccommodation,
           withoutAccommodation,
           totalHeadcount,

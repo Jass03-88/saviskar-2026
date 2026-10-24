@@ -55,6 +55,7 @@ import { ResendEmailDialog } from "@/components/admin/ResendEmailDialog";
 import { SitePageLocksModal } from "@/components/admin/SitePageLocksModal";
 import type { SiteAccessConfig } from "@/lib/config/site-access";
 import { isCgcInstitution } from "@/lib/admin/college-filter";
+import { calculateTeamPaymentSummary } from "@/lib/admin/team-payment-summary";
 
 /* =========================================================
    TYPES
@@ -177,7 +178,7 @@ type Registration = {
 };
 
 type StatusFilter = "all" | "checked-in" | "pending";
-type PaymentFilter = "all" | "paid" | "pending" | "not_required";
+type PaymentFilter = "all" | "any_pending" | "paid" | "pending" | "not_required";
 type EventTypeFilter = "all" | "paid_events" | "free_events";
 type ArchiveFilter = "active" | "archived" | "all";
 type AdminRole = "master" | "admin";
@@ -717,6 +718,7 @@ export default function AdminPage() {
     useMemo(() => {
       const query =
         search.trim().toLowerCase();
+      const queryDigits = query.replace(/\D/g, "");
 
       return registrations.filter(
         (item) => {
@@ -725,6 +727,35 @@ export default function AdminPage() {
 
           const eventName =
             item.event?.name ?? "";
+
+          // Comprehensive search across primary participant and all team members
+          const memberMatches = (item.members ?? []).some((m) => {
+            const memPart = m.participants;
+            const nameMatch = m.name?.toLowerCase().includes(query);
+            const emailMatch = m.email?.toLowerCase().includes(query);
+            const phoneMatch =
+              m.phone?.toLowerCase().includes(query) ||
+              (queryDigits.length >= 3 &&
+                m.phone &&
+                m.phone.replace(/\D/g, "").includes(queryDigits));
+            const idMatch =
+              m.participant_id?.toLowerCase().includes(query) ||
+              memPart?.participant_id?.toLowerCase().includes(query);
+            const colMatch =
+              memPart?.college?.toLowerCase().includes(query);
+            const stateMatch =
+              m.state?.toLowerCase().includes(query) ||
+              memPart?.state?.toLowerCase().includes(query);
+
+            return (
+              nameMatch ||
+              emailMatch ||
+              phoneMatch ||
+              idMatch ||
+              colMatch ||
+              stateMatch
+            );
+          });
 
           const matchesSearch =
             !query ||
@@ -737,10 +768,19 @@ export default function AdminPage() {
             participant.phone
               ?.toLowerCase()
               .includes(query) ||
+            (queryDigits.length >= 3 &&
+              participant.phone &&
+              participant.phone.replace(/\D/g, "").includes(queryDigits)) ||
             participant.college
               ?.toLowerCase()
               .includes(query) ||
             participant.participant_id
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.id
+              ?.toLowerCase()
+              .includes(query) ||
+            participant.state
               ?.toLowerCase()
               .includes(query) ||
             eventName
@@ -748,7 +788,8 @@ export default function AdminPage() {
               .includes(query) ||
             item.registration.team_name
               ?.toLowerCase()
-              .includes(query);
+              .includes(query) ||
+            memberMatches;
 
           let matchesEvent = true;
 
@@ -775,12 +816,31 @@ export default function AdminPage() {
               item.registration
                 .checked_in !== true);
 
-          const matchesPayment =
-            paymentFilter === "all" ||
-            item.registration
-              .payment_status
-              ?.toLowerCase() ===
-            paymentFilter;
+          const matchesPayment = (() => {
+            if (paymentFilter === "all") return true;
+            if (paymentFilter === "any_pending") {
+              const summary = calculateTeamPaymentSummary(item);
+              return summary.hasAnyPendingPayment;
+            }
+            if (paymentFilter === "paid") {
+              return item.registration.payment_status?.toLowerCase() === "paid";
+            }
+            if (paymentFilter === "pending") {
+              return (
+                item.registration.payment_status?.toLowerCase() === "pending" ||
+                item.registration.payment_status?.toLowerCase() === "unpaid"
+              );
+            }
+            if (paymentFilter === "not_required") {
+              return (
+                item.registration.payment_status?.toLowerCase() === "not_required" ||
+                item.event?.payment_type === "free"
+              );
+            }
+            return (
+              item.registration.payment_status?.toLowerCase() === paymentFilter
+            );
+          })();
 
           const matchesArchive =
             archiveFilter === "all" ||
@@ -892,13 +952,16 @@ export default function AdminPage() {
             .checked_in === true
       ).length;
 
+    const activePrimaryParticipantsSet = new Set<string>();
     const uniqueParticipantsSet = new Set<string>();
     activeRegistrations.forEach((item) => {
+      activePrimaryParticipantsSet.add(item.participant.id);
       uniqueParticipantsSet.add(item.participant.id);
       item.members?.forEach((m) => {
         if (m.participant_id) uniqueParticipantsSet.add(m.participant_id);
       });
     });
+    const activeGroupsTotal = activePrimaryParticipantsSet.size;
     const uniqueParticipants = uniqueParticipantsSet.size;
 
     const mainCheckedInSet = new Set<string>();
@@ -921,6 +984,7 @@ export default function AdminPage() {
     return {
       total,
       activeTotal,
+      activeGroupsTotal,
       archivedTotal,
       checkedIn,
       mainCheckedIn,
@@ -1963,8 +2027,8 @@ export default function AdminPage() {
             value={stats.total}
             subtitle={
               <span>
-                {stats.activeTotal} active
-                {stats.archivedTotal > 0 && ` · ${stats.archivedTotal} archived`}
+                {stats.activeTotal.toLocaleString()} active across {stats.activeGroupsTotal.toLocaleString()} participant groups
+                {stats.archivedTotal > 0 && ` · ${stats.archivedTotal.toLocaleString()} archived`}
               </span>
             }
             icon={
@@ -1980,7 +2044,7 @@ export default function AdminPage() {
             value={
               stats.uniqueParticipants
             }
-            subtitle="Unique delegates across all events & teams"
+            subtitle="Unique event competitors across squads & solo (1,627 total delegates incl. stay-only)"
             icon={
               <Users size={18} />
             }
@@ -2643,13 +2707,17 @@ export default function AdminPage() {
         <div className="mb-5 rounded-[24px] bg-white p-3 shadow-[0_15px_50px_rgba(0,0,0,0.035)]">
           <div className="flex flex-col gap-3 md:flex-row md:flex-wrap">
 
-            <div className="flex flex-1 min-w-[250px] items-center gap-3 rounded-[18px] bg-black/[0.035] px-4 py-3">
+            <label
+              htmlFor="admin-search-input"
+              className="flex flex-1 min-w-[250px] items-center gap-3 rounded-[18px] bg-black/[0.035] px-4 py-3 cursor-text focus-within:ring-2 focus-within:ring-black/10 transition"
+            >
               <Search
                 size={17}
-                className="text-black/30"
+                className="text-black/30 pointer-events-none shrink-0"
               />
 
               <input
+                id="admin-search-input"
                 type="search"
                 value={search}
                 onChange={(e) =>
@@ -2664,15 +2732,17 @@ export default function AdminPage() {
               {search && (
                 <button
                   type="button"
-                  onClick={() =>
-                    setSearch("")
-                  }
-                  className="text-black/30 hover:text-black"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSearch("");
+                  }}
+                  className="text-black/30 hover:text-black shrink-0"
+                  title="Clear search"
                 >
                   <X size={15} />
                 </button>
               )}
-            </div>
+            </label>
 
             <select
               value={eventFilter}
@@ -2782,18 +2852,22 @@ export default function AdminPage() {
                     .value as PaymentFilter
                 )
               }
-              className="rounded-[18px] border border-black/10 bg-black px-4 py-3 text-sm outline-none"
+              className="rounded-[18px] border border-black/10 bg-black px-4 py-3 text-sm outline-none text-white font-medium"
             >
               <option value="all">
                 All payments
               </option>
 
+              <option value="any_pending">
+                Any payment pending (event or accommodation)
+              </option>
+
               <option value="paid">
-                Paid
+                Paid (Event fee)
               </option>
 
               <option value="pending">
-                Payment pending
+                Payment pending (Event fee)
               </option>
 
               <option value="not_required">
@@ -2961,13 +3035,17 @@ export default function AdminPage() {
               <span>
                 Showing{" "}
                 <span className="font-semibold text-black/70">
-                  {filteredRegistrations.length}
+                  {participantGroups.length.toLocaleString()}
+                </span>{" "}
+                primary participant groups representing{" "}
+                <span className="font-semibold text-black/70">
+                  {filteredRegistrations.length.toLocaleString()}
                 </span>{" "}
                 of{" "}
                 <span className="font-semibold text-black/70">
-                  {stats.activeTotal}
+                  {stats.activeTotal.toLocaleString()}
                 </span>{" "}
-                active registrations
+                active event registrations
               </span>
               {institutionFilter !== "all" && (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-300 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-900 lowercase tracking-normal">
@@ -2989,13 +3067,13 @@ export default function AdminPage() {
               )}
               {filteredRegistrations.length !== stats.activeTotal && (
                 <span className="font-normal text-amber-700/80 lowercase tracking-normal">
-                  ({stats.activeTotal - filteredRegistrations.length} filtered out)
+                  ({(stats.activeTotal - filteredRegistrations.length).toLocaleString()} registrations / {(stats.activeGroupsTotal - participantGroups.length).toLocaleString()} groups filtered out)
                 </span>
               )}
             </div>
             {stats.archivedTotal > 0 && (
               <div className="text-black/30">
-                {stats.archivedTotal} archived {stats.archivedTotal === 1 ? "record" : "records"}
+                {stats.archivedTotal.toLocaleString()} archived {stats.archivedTotal === 1 ? "record" : "records"}
               </div>
             )}
           </div>
@@ -3038,7 +3116,7 @@ export default function AdminPage() {
 
             <div className="hidden border-b border-black/10 bg-black/[0.025] px-6 py-4 lg:grid lg:grid-cols-[55px_1.25fr_1fr_1.6fr_1fr_1fr_auto] lg:gap-5">
               <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
-                Sr. No.
+                Sr. No. (Group)
               </span>
 
               <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-black/30">
@@ -3065,7 +3143,7 @@ export default function AdminPage() {
                 <input
                   type="checkbox"
                   id="select-all-visible"
-                  aria-label="Select all visible registrations"
+                  aria-label="Select all visible participant groups"
                   checked={
                     participantGroups.length > 0 &&
                     participantGroups.every((g) =>
@@ -3074,7 +3152,7 @@ export default function AdminPage() {
                   }
                   onChange={toggleSelectAll}
                   className="h-4 w-4 rounded border-black/20 text-black focus:ring-black cursor-pointer"
-                  title="Select all visible registrations"
+                  title="Select all visible participant groups"
                 />
               </div>
             </div>
@@ -3089,6 +3167,7 @@ export default function AdminPage() {
                   const acc = group.find((item) => item.accommodation)?.accommodation;
                   const memberAcc = group.flatMap((item) => item.members ?? []).find((m) => m.accommodation)?.accommodation;
                   const effectiveAcc = acc || memberAcc;
+                  const groupSummary = calculateTeamPaymentSummary(group);
 
                   const checked =
                     group.filter(
@@ -3113,7 +3192,7 @@ export default function AdminPage() {
                     >
                       {/* SR NO */}
                       <div className="flex items-center text-xs font-mono font-medium text-black/40">
-                        <span className="lg:hidden text-[10px] uppercase tracking-wider text-black/30 font-sans mr-2">Sr. No.</span>
+                        <span className="lg:hidden text-[10px] uppercase tracking-wider text-black/30 font-sans mr-2">Group #</span>
                         {index + 1}
                       </div>
 
@@ -3155,15 +3234,21 @@ export default function AdminPage() {
                                 participant.participant_id
                               }
                             </span>
-                            {effectiveAcc && (
+                            {groupSummary.hasAnyStay && (
                               <span
                                 className={`inline-flex items-center rounded-full px-1.5 py-0.2 text-[8px] font-bold tracking-tight border ${
-                                  effectiveAcc.status === "paid"
+                                  groupSummary.stayBadgeVariant === "paid"
                                     ? "bg-violet-50 text-violet-700 border-violet-200"
+                                    : groupSummary.stayBadgeVariant === "partial"
+                                    ? "bg-purple-50 text-purple-700 border-purple-200"
                                     : "bg-amber-50 text-amber-700 border-amber-200"
                                 }`}
+                                title={groupSummary.stayBreakdownText || undefined}
                               >
-                                🏨 Stay {effectiveAcc.status === "paid" ? "Paid" : "Pending"}{!acc && memberAcc ? " (Member)" : ""}
+                                🏨 Stay {groupSummary.stayBadgeVariant === "paid" ? "Paid" : groupSummary.stayBadgeVariant === "partial" ? "Partial" : "Pending"}
+                                {groupSummary.totalTeamMembers > 1
+                                  ? ` (${groupSummary.membersPaidStayCount}/${groupSummary.membersWithStayCount})`
+                                  : (!acc && memberAcc ? " (Member)" : "")}
                               </span>
                             )}
                           </div>
@@ -3205,7 +3290,15 @@ export default function AdminPage() {
 
                       {/* EVENTS */}
 
-                      <div className="flex min-w-0 flex-wrap gap-1.5">
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        {group.length > 1 && (
+                          <span
+                            className="rounded-full bg-purple-50 text-purple-700 px-2 py-0.5 text-[8.5px] font-bold border border-purple-200 shrink-0"
+                            title={`${group.length} event registrations in this group`}
+                          >
+                            {group.length} events
+                          </span>
+                        )}
                         {group
                           .slice(0, 3)
                           .map(
@@ -3269,15 +3362,18 @@ export default function AdminPage() {
                             +{group.length - 3}
                           </span>
                         )}
-                        {acc && (
+                        {groupSummary.hasAnyStay && (
                           <span
                             className={`rounded-full px-2.5 py-1 text-[9px] font-bold tracking-wider border ${
-                              acc.status === "paid"
+                              groupSummary.stayBadgeVariant === "paid"
                                 ? "bg-violet-50 text-violet-700 border-violet-200"
+                                : groupSummary.stayBadgeVariant === "partial"
+                                ? "bg-purple-50 text-purple-700 border-purple-200"
                                 : "bg-amber-50 text-amber-700 border-amber-200"
                             }`}
+                            title={groupSummary.stayBreakdownText || undefined}
                           >
-                            🏨 Stay: {acc.status === "paid" ? `₹${acc.amount ?? 0} · PAID` : "PENDING"}
+                            🏨 {groupSummary.stayBadgeText}
                           </span>
                         )}
                       </div>
