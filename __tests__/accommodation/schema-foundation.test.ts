@@ -54,16 +54,24 @@ describe("Phase 0 + Accommodation Database Foundation Invariants", () => {
   describe("Phase 0B: Footer Credit", () => {
     it("credits creators in footer", () => {
       expect(footerContent).toContain("Made by");
+      expect(footerContent).toContain("Jashan Jot Singh");
+      expect(footerContent).toContain("·");
       expect(footerContent).toContain("Madhav Vashisht");
 
-      if (footerContent.includes("Jashan Jot")) {
-        expect(footerContent).toContain("(Student Advisory Council)");
-        const madhavIndex = footerContent.indexOf("Madhav Vashisht");
-        const jashanIndex = footerContent.indexOf("Jashan Jot");
-        expect(madhavIndex).toBeGreaterThan(-1);
-        expect(jashanIndex).toBeGreaterThan(-1);
-        expect(jashanIndex).toBeGreaterThan(madhavIndex);
-      }
+      const madeByIndex = footerContent.indexOf("Made by");
+      const jashanIndex = footerContent.indexOf("Jashan Jot Singh");
+      const separatorIndex = footerContent.indexOf("·", jashanIndex);
+      const madhavIndex = footerContent.indexOf("Madhav Vashisht");
+
+      expect(madeByIndex).toBeGreaterThan(-1);
+      expect(jashanIndex).toBeGreaterThan(-1);
+      expect(separatorIndex).toBeGreaterThan(-1);
+      expect(madhavIndex).toBeGreaterThan(-1);
+
+      // Jashan appears immediately after 'Made by' and before the separator and Madhav's link
+      expect(madeByIndex).toBeLessThan(jashanIndex);
+      expect(jashanIndex).toBeLessThan(separatorIndex);
+      expect(separatorIndex).toBeLessThan(madhavIndex);
     });
 
     it("preserves Madhav's website link and visual styling classes", () => {
