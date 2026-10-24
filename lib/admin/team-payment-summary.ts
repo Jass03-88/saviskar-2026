@@ -36,6 +36,9 @@ export interface MemberLike {
   email?: string | null;
   phone?: string | null;
   is_team_leader?: boolean | null;
+  gender?: string | null;
+  state?: string | null;
+  id_card_storage_path?: string | null;
   accommodation?: AccommodationRecordLike | null;
   accommodations?: AccommodationRecordLike[] | null;
   participants?: {

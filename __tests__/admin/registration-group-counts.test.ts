@@ -20,17 +20,61 @@ import {
 import { buildRegistrationsWorkbook } from "@/lib/admin/excel-export";
 
 // Helper replicating the grouping logic from app/admin/page.tsx
-function groupRegistrationsByParticipant<T extends { participant: { id: string }; registration: { id: string } }>(
-  items: T[]
-): T[][] {
+function groupRegistrationsByParticipant<
+  T extends {
+    participant: { id?: string | null };
+    registration: { id?: string | null };
+  }
+>(items: T[]): T[][] {
   const map = new Map<string, T[]>();
   for (const item of items) {
-    const id = item.participant.id;
+    const id = item.participant.id ?? "unknown";
     const existing = map.get(id) ?? [];
     existing.push(item);
     map.set(id, existing);
   }
   return Array.from(map.values());
+}
+
+// Strongly-typed fixture factory for complete CsvRegistrationItem records
+function createMockRegistrationItem(overrides: {
+  participantId?: string;
+  pId?: string;
+  name?: string;
+  email?: string;
+  college?: string;
+  eventId?: string;
+  eventName?: string;
+  category?: string;
+  registrationId?: string;
+  teamName?: string | null;
+  paymentStatus?: string;
+  members?: CsvRegistrationItem["members"];
+}): CsvRegistrationItem {
+  const pId = overrides.pId ?? overrides.participantId ?? "p-default";
+  return {
+    participant: {
+      id: pId,
+      participant_id: overrides.participantId ?? `SVK26-${pId.toUpperCase()}`,
+      name: overrides.name ?? "Test User",
+      email: overrides.email ?? `${pId}@example.com`,
+      college: overrides.college ?? "CGC University",
+    },
+    event: {
+      name: overrides.eventName ?? "Test Event",
+      category: overrides.category ?? "Technical",
+      payment_type: "free",
+      registration_fee: 0,
+    },
+    registration: {
+      id: overrides.registrationId ?? `reg-${pId}-1`,
+      event_id: overrides.eventId ?? "evt-default",
+      registration_status: "confirmed",
+      payment_status: overrides.paymentStatus ?? "free",
+      team_name: overrides.teamName ?? null,
+    },
+    members: overrides.members ?? [],
+  };
 }
 
 // Helper replicating the dynamic count summary logic
@@ -52,36 +96,36 @@ describe("SAVISKAR 2026 — Registrations Table Grouping & Count Integrity", () 
   // Test 1: Multiple event registrations grouped under one primary participant
   it("groups multiple event registrations under the same primary participant into a single table group", () => {
     const items: CsvRegistrationItem[] = [
-      {
-        participant: {
-          id: "p-01",
-          participant_id: "SVK26-P001",
-          name: "Alice Sharma",
-          email: "alice@example.com",
-        },
-        event: { name: "Hackathon", category: "Technical" },
-        registration: { id: "reg-01", event_id: "evt-01" },
-      },
-      {
-        participant: {
-          id: "p-01",
-          participant_id: "SVK26-P001",
-          name: "Alice Sharma",
-          email: "alice@example.com",
-        },
-        event: { name: "RoboRace", category: "Technical" },
-        registration: { id: "reg-02", event_id: "evt-02" },
-      },
-      {
-        participant: {
-          id: "p-02",
-          participant_id: "SVK26-P002",
-          name: "Bob Verma",
-          email: "bob@example.com",
-        },
-        event: { name: "Dance Battle", category: "Cultural" },
-        registration: { id: "reg-03", event_id: "evt-03" },
-      },
+      createMockRegistrationItem({
+        pId: "p-01",
+        participantId: "SVK26-P001",
+        name: "Alice Sharma",
+        email: "alice@example.com",
+        eventName: "Hackathon",
+        category: "Technical",
+        registrationId: "reg-01",
+        eventId: "evt-01",
+      }),
+      createMockRegistrationItem({
+        pId: "p-01",
+        participantId: "SVK26-P001",
+        name: "Alice Sharma",
+        email: "alice@example.com",
+        eventName: "RoboRace",
+        category: "Technical",
+        registrationId: "reg-02",
+        eventId: "evt-02",
+      }),
+      createMockRegistrationItem({
+        pId: "p-02",
+        participantId: "SVK26-P002",
+        name: "Bob Verma",
+        email: "bob@example.com",
+        eventName: "Dance Battle",
+        category: "Cultural",
+        registrationId: "reg-03",
+        eventId: "evt-03",
+      }),
     ];
 
     const groups = groupRegistrationsByParticipant(items);
@@ -98,26 +142,10 @@ describe("SAVISKAR 2026 — Registrations Table Grouping & Count Integrity", () 
   // Test 2: Accurate group count vs individual event-registration count
   it("distinguishes group count (table rows) from individual event registration count", () => {
     const items: CsvRegistrationItem[] = [
-      {
-        participant: { id: "p-1", name: "User 1" },
-        event: { name: "Event A" },
-        registration: { id: "r-1" },
-      },
-      {
-        participant: { id: "p-1", name: "User 1" },
-        event: { name: "Event B" },
-        registration: { id: "r-2" },
-      },
-      {
-        participant: { id: "p-1", name: "User 1" },
-        event: { name: "Event C" },
-        registration: { id: "r-3" },
-      },
-      {
-        participant: { id: "p-2", name: "User 2" },
-        event: { name: "Event A" },
-        registration: { id: "r-4" },
-      },
+      createMockRegistrationItem({ pId: "p-1", name: "User 1", eventName: "Event A", registrationId: "r-1" }),
+      createMockRegistrationItem({ pId: "p-1", name: "User 1", eventName: "Event B", registrationId: "r-2" }),
+      createMockRegistrationItem({ pId: "p-1", name: "User 1", eventName: "Event C", registrationId: "r-3" }),
+      createMockRegistrationItem({ pId: "p-2", name: "User 2", eventName: "Event A", registrationId: "r-4" }),
     ];
 
     const groups = groupRegistrationsByParticipant(items);
@@ -140,11 +168,15 @@ describe("SAVISKAR 2026 — Registrations Table Grouping & Count Integrity", () 
       for (let e = 1; e <= eventCount; e++) {
         const regId = `reg-${p}-${e}`;
         originalIds.add(regId);
-        items.push({
-          participant: { id: `p-${p}`, name: `User ${p}` },
-          event: { name: `Event ${e}` },
-          registration: { id: regId },
-        });
+        items.push(
+          createMockRegistrationItem({
+            pId: `p-${p}`,
+            name: `User ${p}`,
+            eventName: `Event ${e}`,
+            registrationId: regId,
+            eventId: `evt-${e}`,
+          })
+        );
       }
     }
 
@@ -156,8 +188,8 @@ describe("SAVISKAR 2026 — Registrations Table Grouping & Count Integrity", () 
 
     for (const group of groups) {
       for (const item of group) {
-        expect(collectedIds.has(item.registration.id)).toBe(false); // No duplicates
-        collectedIds.add(item.registration.id);
+        expect(collectedIds.has(item.registration.id!)).toBe(false); // No duplicates
+        collectedIds.add(item.registration.id!);
         totalCollected++;
       }
     }
@@ -174,10 +206,14 @@ describe("SAVISKAR 2026 — Registrations Table Grouping & Count Integrity", () 
   // Test 4: Multiple events and secondary team members within a group
   it("maintains secondary team members and event details correctly within grouped rows", () => {
     const items: CsvRegistrationItem[] = [
-      {
-        participant: { id: "p-lead", name: "Lead Dev", email: "lead@cgc.edu" },
-        event: { name: "Hackathon 2026", category: "Technical" },
-        registration: { id: "reg-team-01", team_name: "CodeWarriors" },
+      createMockRegistrationItem({
+        pId: "p-lead",
+        name: "Lead Dev",
+        email: "lead@cgc.edu",
+        eventName: "Hackathon 2026",
+        category: "Technical",
+        registrationId: "reg-team-01",
+        teamName: "CodeWarriors",
         members: [
           {
             id: "m-01",
@@ -192,13 +228,17 @@ describe("SAVISKAR 2026 — Registrations Table Grouping & Count Integrity", () 
             is_team_leader: false,
           },
         ],
-      },
-      {
-        participant: { id: "p-lead", name: "Lead Dev", email: "lead@cgc.edu" },
-        event: { name: "Solo Code", category: "Technical" },
-        registration: { id: "reg-solo-02", team_name: null },
+      }),
+      createMockRegistrationItem({
+        pId: "p-lead",
+        name: "Lead Dev",
+        email: "lead@cgc.edu",
+        eventName: "Solo Code",
+        category: "Technical",
+        registrationId: "reg-solo-02",
+        teamName: null,
         members: [],
-      },
+      }),
     ];
 
     const groups = groupRegistrationsByParticipant(items);
@@ -220,21 +260,30 @@ describe("SAVISKAR 2026 — Registrations Table Grouping & Count Integrity", () 
   // Test 5: Search and filters preserving the correct underlying event registrations
   it("filters registrations by search term without silently dropping matching records", () => {
     const items: CsvRegistrationItem[] = [
-      {
-        participant: { id: "p-1", name: "Aman Deep", email: "aman@gmail.com", college: "CGC Jhanjeri" },
-        event: { name: "Web Dev" },
-        registration: { id: "reg-a1" },
-      },
-      {
-        participant: { id: "p-1", name: "Aman Deep", email: "aman@gmail.com", college: "CGC Jhanjeri" },
-        event: { name: "Gaming" },
-        registration: { id: "reg-a2" },
-      },
-      {
-        participant: { id: "p-2", name: "Rohit Kumar", email: "rohit@gmail.com", college: "IIT" },
-        event: { name: "Robotics" },
-        registration: { id: "reg-r1" },
-      },
+      createMockRegistrationItem({
+        pId: "p-1",
+        name: "Aman Deep",
+        email: "aman@gmail.com",
+        college: "CGC Jhanjeri",
+        eventName: "Web Dev",
+        registrationId: "reg-a1",
+      }),
+      createMockRegistrationItem({
+        pId: "p-1",
+        name: "Aman Deep",
+        email: "aman@gmail.com",
+        college: "CGC Jhanjeri",
+        eventName: "Gaming",
+        registrationId: "reg-a2",
+      }),
+      createMockRegistrationItem({
+        pId: "p-2",
+        name: "Rohit Kumar",
+        email: "rohit@gmail.com",
+        college: "IIT",
+        eventName: "Robotics",
+        registrationId: "reg-r1",
+      }),
     ];
 
     // Filter by participant name
@@ -258,23 +307,19 @@ describe("SAVISKAR 2026 — Registrations Table Grouping & Count Integrity", () 
     for (let p = 1; p <= 1085; p++) {
       const count = p <= 384 ? 2 : 1;
       for (let e = 1; e <= count; e++) {
-        largeDataset.push({
-          participant: {
-            id: `p-${p}`,
-            participant_id: `SVK26-P${p.toString().padStart(4, "0")}`,
+        largeDataset.push(
+          createMockRegistrationItem({
+            pId: `p-${p}`,
+            participantId: `SVK26-P${p.toString().padStart(4, "0")}`,
             name: `Participant ${p}`,
             email: `user${p}@example.com`,
-          },
-          event: {
-            name: `Event ${e}`,
+            eventName: `Event ${e}`,
             category: "Technical",
-            payment_type: "free",
-          },
-          registration: {
-            id: `reg-${regCounter}`,
-            payment_status: "free",
-          },
-        });
+            registrationId: `reg-${regCounter}`,
+            eventId: `evt-${e}`,
+            paymentStatus: "free",
+          })
+        );
         regCounter++;
       }
     }

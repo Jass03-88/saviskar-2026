@@ -31,10 +31,10 @@ describe("Search and Combined Pending Payment Filter Logic", () => {
           m.participant_id?.toLowerCase().includes(query) ||
           memPart?.participant_id?.toLowerCase().includes(query);
         const colMatch =
-          memPart?.college?.toLowerCase().includes(query);
+          Boolean(typeof memPart?.college === "string" && memPart.college.toLowerCase().includes(query));
         const stateMatch =
-          m.state?.toLowerCase().includes(query) ||
-          memPart?.state?.toLowerCase().includes(query);
+          Boolean(typeof m.state === "string" && m.state.toLowerCase().includes(query)) ||
+          Boolean(typeof memPart?.state === "string" && memPart.state.toLowerCase().includes(query));
 
         return (
           nameMatch ||

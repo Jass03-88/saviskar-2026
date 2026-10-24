@@ -139,7 +139,7 @@ type ParticipantDetails = {
   phone: string;
   gender: string;
   state: string;
-  college?: string;
+  college?: string | null;
   is_faculty?: boolean;
   participant_events?: any[];
   participant_event_members?: any[];
