@@ -108,6 +108,8 @@ type RevenueBreakdown = {
 
 type OverviewStats = {
   totalParticipants: number;
+  eventParticipantCount?: number;
+  accommodationOnlyCount?: number;
   withAccommodation: number;
   withoutAccommodation: number;
   totalHeadcount: number;
@@ -860,8 +862,13 @@ export default function AdminAnalyticsPage() {
                 <p className="mt-3 text-3xl font-bold tracking-tight text-black">
                   {overview?.totalParticipants.toLocaleString() ?? "0"}
                 </p>
-                <p className="mt-1 text-xs text-black/50">
-                  Headcount: <span className="font-semibold text-black">{overview?.totalHeadcount.toLocaleString() ?? 0}</span> (including all team members)
+                <p className="mt-1 text-xs text-black/60 font-medium">
+                  {typeof overview?.accommodationOnlyCount === "number" && overview.accommodationOnlyCount > 0
+                    ? `${(overview.eventParticipantCount ?? 0).toLocaleString()} in events · ${overview.accommodationOnlyCount} stay-only`
+                    : `Headcount: ${(overview?.totalHeadcount ?? 0).toLocaleString()}`}
+                </p>
+                <p className="mt-0.5 text-[11px] text-black/40">
+                  Headcount: <span className="font-semibold text-black/70">{overview?.totalHeadcount.toLocaleString() ?? 0}</span> (including all team members)
                 </p>
               </div>
 

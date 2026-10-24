@@ -230,8 +230,10 @@ export default function Footer() {
               <p className="font-mono text-[11px] tracking-wider text-zinc-400">
                 © 2026 SAVISKAR • CGC UNIVERSITY MOHALI • ALL RIGHTS RESERVED
               </p>
-              <p className="text-[11px] text-zinc-300 flex items-center gap-1">
+              <p className="text-[11px] text-zinc-300 flex flex-wrap items-center gap-1">
                 <span>Made by</span>
+                <span className="font-medium text-violet-300">Jashan Jot Singh</span>
+                <span className="text-zinc-400">·</span>
                 <a
                   href="https://www.amadhav.com"
                   target="_blank"
