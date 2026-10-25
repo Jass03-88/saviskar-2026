@@ -23,13 +23,6 @@ jobs:
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "mock-anon-key-ci"
       SUPABASE_SECRET_KEY: "mock-secret-key-ci"
       NEXT_PUBLIC_APP_URL: "http://localhost:3000"
-      NEXT_PUBLIC_SITE_URL: "http://localhost:3000"
-      PAYMENT_CALLBACK_BASE_URL: "http://localhost:3000"
-      E2E_EMAIL_TRANSPORT: "mailpit"
-      ENABLE_TEST_RECIPIENT_GUARD: "true"
-      APPROVED_TEST_EMAIL: "jashan.cgcu@gmail.com"
-      MAILPIT_API_URL: "http://127.0.0.1:54324"
-      RESEND_FROM_EMAIL: "Saviskar 2026 <noreply@saviskar.co.in>"
 
     steps:
       - name: Checkout repository
@@ -40,6 +33,15 @@ jobs:
         with:
           node-version: 22
           cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type Check (TypeScript)
+        run: npx tsc --noEmit
+
+      - name: Run Automated Test Suite (Vitest)
+        run: npx vitest run --exclude "**/mailpit-live-receipt.test.ts"
 
       - name: Wait for Mailpit Service Health
         run: |
@@ -56,14 +58,16 @@ jobs:
           done
           echo "Mailpit is healthy and accessible after ${ELAPSED}s"
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Type Check (TypeScript)
-        run: npx tsc --noEmit
-
-      - name: Run Automated Test Suite (Vitest)
-        run: npm run test
+      - name: Run Live Mailpit Receipt E2E Integration Test (Vitest)
+        env:
+          E2E_EMAIL_TRANSPORT: "mailpit"
+          ENABLE_TEST_RECIPIENT_GUARD: "true"
+          APPROVED_TEST_EMAIL: "jashan.cgcu@gmail.com"
+          MAILPIT_API_URL: "http://127.0.0.1:54324"
+          NEXT_PUBLIC_SITE_URL: "http://localhost:3000"
+          PAYMENT_CALLBACK_BASE_URL: "http://localhost:3000"
+          RESEND_FROM_EMAIL: "Saviskar 2026 <noreply@saviskar.co.in>"
+        run: npx vitest run __tests__/email/mailpit-live-receipt.test.ts
 
       - name: Build Next.js Production App
         run: npm run build

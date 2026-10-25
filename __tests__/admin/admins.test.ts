@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GET, POST, DELETE, PATCH } from "@/app/api/admin/admins/route";
 import { POST as RESET_POST } from "@/app/api/admin/admins/reset-password/route";
 import { POST as FORGOT_PASSWORD_POST } from "@/app/api/admin/auth/forgot-password/route";
@@ -109,8 +109,16 @@ vi.mock("@supabase/supabase-js", () => {
 });
 
 describe("Admin Management API Security & RBAC", () => {
+  const originalEnv = { ...process.env };
+  const setNodeEnv = (val: string) => {
+    (process.env as Record<string, string | undefined>).NODE_ENV = val;
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env = { ...originalEnv };
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SECRET_KEY = "test-secret-key";
     delete process.env.PRIMARY_ADMIN_USER_ID;
     delete process.env.PRIMARY_ADMIN_EMAIL;
 
@@ -139,6 +147,10 @@ describe("Admin Management API Security & RBAC", () => {
     mockGetUserById.mockResolvedValue({
       data: { user: { id: "target-user", email: "test@example.com" } },
     });
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
   });
 
   const createMockRequest = (
@@ -304,6 +316,7 @@ describe("Admin Management API Security & RBAC", () => {
 
     // 6. Other Master POST role=admin -> ALLOW 201
     it("6. Other Master POST role=admin -> ALLOW (201)", async () => {
+      setNodeEnv("production");
       mockAsOtherMaster();
       mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
       mockBuilder.insert.mockResolvedValueOnce({ error: null });
@@ -411,6 +424,7 @@ describe("Admin Management API Security & RBAC", () => {
 
     // 14. Primary Master POST role=master -> ALLOW 201
     it("14. Primary Master POST role=master -> ALLOW (201)", async () => {
+      setNodeEnv("production");
       mockAsPrimaryMaster();
       mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
       mockBuilder.insert.mockResolvedValueOnce({ error: null });
@@ -649,6 +663,7 @@ describe("Admin Management API Security & RBAC", () => {
     });
 
     it("existing user re-invitation sends reset email and logs audit", async () => {
+      setNodeEnv("production");
       mockAsPrimaryMaster();
       mockListUsers.mockResolvedValueOnce({
         data: { users: [{ id: "existing-u", email: "exist@example.com" }] },
@@ -667,6 +682,55 @@ describe("Admin Management API Security & RBAC", () => {
           target_id: "existing-u",
         })
       );
+    });
+
+    it("uses configured local origin for invitation in development environment", async () => {
+      setNodeEnv("development");
+      process.env.NEXT_PUBLIC_SITE_URL = "http://localhost:3000";
+      mockAsPrimaryMaster();
+      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res = await POST(createMockRequest("POST", { email: "devadmin@example.com", role: "admin" }));
+      expect(res.status).toBe(201);
+      expect(mockInviteUserByEmail).toHaveBeenCalledWith("devadmin@example.com", {
+        data: { saviskar_role: "admin" },
+        redirectTo: "http://localhost:3000/admin/accept-invite?email=devadmin%40example.com",
+      });
+    });
+
+    it("uses configured local origin for existing-admin reset in development environment", async () => {
+      setNodeEnv("development");
+      process.env.NEXT_PUBLIC_SITE_URL = "http://localhost:3000";
+      mockAsPrimaryMaster();
+      mockListUsers.mockResolvedValueOnce({
+        data: { users: [{ id: "dev-exist-u", email: "devexist@example.com" }] },
+        error: null,
+      });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res = await POST(createMockRequest("POST", { email: "devexist@example.com", role: "admin" }));
+      expect(res.status).toBe(201);
+      expect(mockResetPasswordForEmail).toHaveBeenCalledWith("devexist@example.com", {
+        redirectTo: "http://localhost:3000/admin/reset-password",
+      });
+    });
+
+    it("untrusted host/origin cannot hijack administrator invitation redirect in production", async () => {
+      setNodeEnv("production");
+      process.env.NEXT_PUBLIC_SITE_URL = "https://malicious-attacker.com";
+      mockAsPrimaryMaster();
+      mockListUsers.mockResolvedValueOnce({ data: { users: [] }, error: null });
+      mockBuilder.insert.mockResolvedValueOnce({ error: null });
+
+      const res = await POST(
+        createMockRequest("POST", { email: "hijack-target@example.com", role: "admin" }, "https://malicious-attacker.com/api/admin/admins")
+      );
+      expect(res.status).toBe(201);
+      expect(mockInviteUserByEmail).toHaveBeenCalledWith("hijack-target@example.com", {
+        data: { saviskar_role: "admin" },
+        redirectTo: "https://saviskar.co.in/admin/accept-invite?email=hijack-target%40example.com",
+      });
     });
 
     it("prevents re-adding an already configured administrator with 409 Conflict", async () => {
