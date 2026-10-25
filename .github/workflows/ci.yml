@@ -11,6 +11,13 @@ jobs:
     name: Build, Lint & Test Validation
     runs-on: ubuntu-latest
 
+    services:
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 54324:8025
+          - 54325:1025
+
     env:
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321"
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "mock-anon-key-ci"
@@ -34,7 +41,33 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Run Automated Test Suite (Vitest)
-        run: npm run test
+        run: npx vitest run --exclude "**/mailpit-live-receipt.test.ts"
+
+      - name: Wait for Mailpit Service Health
+        run: |
+          echo "Waiting for Mailpit HTTP API at http://127.0.0.1:54324/api/v1/messages..."
+          TIMEOUT=30
+          ELAPSED=0
+          until curl -s -f http://127.0.0.1:54324/api/v1/messages > /dev/null; do
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+              echo "Error: Mailpit service failed to become healthy within ${TIMEOUT}s on http://127.0.0.1:54324"
+              exit 1
+            fi
+            sleep 1
+            ELAPSED=$((ELAPSED + 1))
+          done
+          echo "Mailpit is healthy and accessible after ${ELAPSED}s"
+
+      - name: Run Live Mailpit Receipt E2E Integration Test (Vitest)
+        env:
+          E2E_EMAIL_TRANSPORT: "mailpit"
+          ENABLE_TEST_RECIPIENT_GUARD: "true"
+          APPROVED_TEST_EMAIL: "jashan.cgcu@gmail.com"
+          MAILPIT_API_URL: "http://127.0.0.1:54324"
+          NEXT_PUBLIC_SITE_URL: "http://localhost:3000"
+          PAYMENT_CALLBACK_BASE_URL: "http://localhost:3000"
+          RESEND_FROM_EMAIL: "Saviskar 2026 <noreply@saviskar.co.in>"
+        run: npx vitest run __tests__/email/mailpit-live-receipt.test.ts
 
       - name: Build Next.js Production App
         run: npm run build

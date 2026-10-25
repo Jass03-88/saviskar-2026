@@ -32,15 +32,22 @@ import {
   createPaymentResumeToken,
 } from "@/lib/payments/resume-token";
 import { getCanonicalPaymentBaseUrl } from "@/lib/payments/canonical-url";
+import { CHECKOUT_EXPIRATION_THRESHOLD_MS } from "@/lib/accommodation-expiration";
 
 function errorResponse(
   message: string,
   status: number,
   code?: string,
-  headers?: Record<string, string>
+  headers?: Record<string, string>,
+  extra?: Record<string, unknown>
 ) {
   return NextResponse.json(
-    { success: false, error: message, ...(code ? { code } : {}) },
+    {
+      success: false,
+      error: message,
+      ...(code ? { code } : {}),
+      ...(extra || {}),
+    },
     {
       status,
       headers: {
@@ -145,7 +152,9 @@ export async function POST(
       currency,
       gateway,
       gateway_order_id,
-      status
+      status,
+      created_at,
+      updated_at
     `
     )
     .eq("id", paymentOrderId)
@@ -219,7 +228,7 @@ export async function POST(
 
   const { data: orderItems, error: itemsError } = await supabaseAdmin
     .from("payment_order_items")
-    .select("id, participant_id, participant_event_id, amount")
+    .select("id, participant_id, participant_event_id, participant_accommodation_id, amount")
     .eq("payment_order_id", paymentOrder.id);
 
   if (itemsError || !orderItems || orderItems.length === 0) {
@@ -327,16 +336,27 @@ export async function POST(
   }
 
   if (paymentOrder.status === "failed") {
-    // If order was marked failed, check if another active pending attempt already exists for these participant events
+    // If order was marked failed, check if another active pending attempt already exists for these participant events or accommodations
     const participantEventIds = orderItems.map((item) => item.participant_event_id).filter(Boolean);
-    if (participantEventIds.length > 0) {
-      const { data: activeOrder } = await supabaseAdmin
+    const participantAccommodationIds = orderItems.map((item) => item.participant_accommodation_id).filter(Boolean);
+    if (participantEventIds.length > 0 || participantAccommodationIds.length > 0) {
+      let activeQuery = supabaseAdmin
         .from("payment_order_items")
         .select("payment_orders!inner(id, status)")
-        .in("participant_event_id", participantEventIds)
         .eq("payment_orders.status", "pending")
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+
+      if (participantEventIds.length > 0 && participantAccommodationIds.length > 0) {
+        activeQuery = activeQuery.or(
+          `participant_event_id.in.(${participantEventIds.join(",")}),participant_accommodation_id.in.(${participantAccommodationIds.join(",")})`
+        );
+      } else if (participantEventIds.length > 0) {
+        activeQuery = activeQuery.in("participant_event_id", participantEventIds);
+      } else {
+        activeQuery = activeQuery.in("participant_accommodation_id", participantAccommodationIds);
+      }
+
+      const { data: activeOrder } = await activeQuery.maybeSingle();
 
       if (activeOrder) {
         return errorResponse(
@@ -536,12 +556,36 @@ export async function POST(
       );
     }
 
+    // ─── Evaluate Order Age & Gateway Terminal State ───────────
+    const rawDateStr = paymentOrder.updated_at || paymentOrder.created_at;
+    const orderTimestamp = rawDateStr ? new Date(rawDateStr).getTime() : NaN;
+    const hasValidDate = !Number.isNaN(orderTimestamp) && orderTimestamp > 0;
+    const orderAgeMs = hasValidDate ? Date.now() - orderTimestamp : 0;
+    const isLegitimatelyExpired = hasValidDate && orderAgeMs >= CHECKOUT_EXPIRATION_THRESHOLD_MS;
+
     // ─── Case B: Active Pending Payment in Progress on Gateway ───
     if (details.status === "pending") {
+      const participantPublicId = payer.participant_id ?? "";
+      const resumeToken = createPaymentResumeToken({
+        paymentOrderId: paymentOrder.id,
+        participantId: participantPublicId,
+        payerParticipantUuid: paymentOrder.payer_participant_id ?? "",
+      });
+      const resumeUrl = `${resolvedBaseUrl}/payment/resume?token=${encodeURIComponent(resumeToken)}`;
+
       return errorResponse(
         "A payment attempt is currently being processed by the gateway. Please complete it on your payment app or wait a few moments before retrying.",
         409,
-        "PAYMENT_PENDING"
+        "PAYMENT_PENDING",
+        undefined,
+        {
+          paymentOrderId: paymentOrder.id,
+          orderReference: paymentOrder.order_reference,
+          amount: paymentOrder.amount,
+          resumeToken,
+          resumeUrl,
+          activeCheckout: true,
+        }
       );
     }
 
@@ -555,32 +599,60 @@ export async function POST(
         rawLower === "bounced" ||
         rawLower === "usercancelled" ||
         rawLower === "dropped" ||
+        rawLower === "expired" ||
+        rawLower === "auto_cancelled" ||
+        rawLower === "timed_out" ||
+        rawLower === "rejected" ||
         !rawLower
       );
 
-    if (!isTerminalFailure) {
+    // Only abandoned draft checkouts (where PayU reports not_found and order age >= 60m)
+    // or confirmed terminal failures are eligible for atomic retry.
+    const isAbandonedDraft = details.status === "not_found" && isLegitimatelyExpired;
+
+    if (!isTerminalFailure && !isAbandonedDraft) {
       // ─── Case D: Ambiguous / Unresolved Gateway Status (Not Found or Unknown) ──
-      // PayU 'Not Found' does not guarantee that no customer debit occurred.
-      // The available schema cannot distinguish a never-dispatched draft from an
-      // in-flight checkout. Fail closed: retain existing payment state and protective
-      // holds, and reject replacement checkout until payment outcome is resolved.
+      // PayU 'Not Found' within active window does not guarantee that no customer debit occurred.
+      // Genuinely pending or unresolved attempts must not be superseded by elapsed time alone.
       console.warn(
         `Payment attempt ${paymentOrder.gateway_order_id} has ambiguous gateway status "${details.status}" (raw: "${details.rawStatus}"). Failing closed.`
       );
+
+      const participantPublicId = payer.participant_id ?? "";
+      const resumeToken = createPaymentResumeToken({
+        paymentOrderId: paymentOrder.id,
+        participantId: participantPublicId,
+        payerParticipantUuid: paymentOrder.payer_participant_id ?? "",
+      });
+      const resumeUrl = `${resolvedBaseUrl}/payment/resume?token=${encodeURIComponent(resumeToken)}`;
+
       return errorResponse(
         "Payment status is currently ambiguous on the gateway (Not Found). Please wait a few moments before retrying or contact support if your account was debited.",
         409,
-        "PAYMENT_STATUS_AMBIGUOUS"
+        "PAYMENT_STATUS_AMBIGUOUS",
+        undefined,
+        {
+          paymentOrderId: paymentOrder.id,
+          orderReference: paymentOrder.order_reference,
+          amount: paymentOrder.amount,
+          resumeToken,
+          resumeUrl,
+          activeCheckout: true,
+        }
       );
     }
 
-    // ─── Case C: Authoritatively Verified Terminal Failure Attempt ──
+    // ─── Case C: Authoritatively Verified Terminal Failure OR Abandoned Draft ──
     // The previous txnid must NEVER be reused for PayU checkout.
     // Atomically transition via database RPC:
-    // Locks participant events and old order, checks concurrency, marks old order 'failed',
-    // creates new 'pending' order, and copies order items atomically.
+    // Locks participant events / accommodations and old order, checks concurrency,
+    // marks old order 'failed', creates new 'pending' order, and copies order items atomically.
     console.log(
-      `Payment attempt ${paymentOrder.gateway_order_id} resolved to terminal failure status "${details.status}". Initiating atomic retry via RPC.`
+      `Payment attempt ${paymentOrder.gateway_order_id} eligible for atomic retry (` +
+      (isAbandonedDraft
+        ? `abandoned draft checkout: not_found and age ${Math.round(orderAgeMs / 60000)}m >= ${Math.round(CHECKOUT_EXPIRATION_THRESHOLD_MS / 60000)}m`
+        : `terminal failure: "${details.status}"`) +
+      `). Initiating atomic retry via RPC.`
     );
 
     const newOrderRef = `SVK-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -601,7 +673,12 @@ export async function POST(
           "CONCURRENT_RETRY_CONFLICT"
         );
       }
-      if (rpcError?.code === "23505" || errorMsg.includes("ALREADY_PAID") || errorMsg.includes("EVENT_ALREADY_PAID")) {
+      if (
+        rpcError?.code === "23505" ||
+        errorMsg.includes("ALREADY_PAID") ||
+        errorMsg.includes("EVENT_ALREADY_PAID") ||
+        errorMsg.includes("ACCOMMODATION_ALREADY_PAID")
+      ) {
         return errorResponse(
           "This registration has already been paid.",
           400,

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -7,17 +7,11 @@ import {
   Mail,
   Phone,
   GraduationCap,
-  Bed,
-  Calendar,
   CheckCircle2,
-  Clock,
   AlertCircle,
   FileText,
   ExternalLink,
   RefreshCw,
-  Users,
-  Shield,
-  Layers,
 } from "lucide-react";
 import { useBodyScrollLock } from "@/lib/admin/useBodyScrollLock";
 import type { AccommodationRecord } from "@/lib/admin/accommodation-grouping";
@@ -419,43 +413,94 @@ export function ParticipantDetailDialog({ acc, onClose }: ParticipantDetailDialo
           {/* Accommodation Booking Summary */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-black/40 mb-2.5">
-              Campus Accommodation Record
+              Campus Accommodation Record{accommodations.length > 1 ? ` (${accommodations.length} Stays)` : ""}
             </h3>
-            <div className="rounded-2xl border border-black/10 bg-zinc-50/50 p-4 space-y-3 text-xs">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <p className="text-[10px] uppercase font-semibold text-black/40">Status</p>
-                  <p className="font-semibold text-black mt-0.5 uppercase">{acc.status}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase font-semibold text-black/40">Duration</p>
-                  <p className="font-semibold text-black mt-0.5">{acc.duration_days} Day(s)</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase font-semibold text-black/40">Check-in Date</p>
-                  <p className="font-semibold text-black mt-0.5">{acc.start_date || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase font-semibold text-black/40">Check-out Date</p>
-                  <p className="font-semibold text-black mt-0.5">{acc.end_date || "—"}</p>
-                </div>
+            {accommodations.length > 1 ? (
+              <div className="space-y-3">
+                {accommodations.map((a, idx) => (
+                  <div
+                    key={a.id || idx}
+                    className={`rounded-2xl border p-4 space-y-3 text-xs ${
+                      a.id === acc.id
+                        ? "border-indigo-300 bg-indigo-50/30"
+                        : "border-black/10 bg-zinc-50/50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between pb-2 border-b border-black/5">
+                      <span className="font-semibold text-black">
+                        {a.planName || "Campus Stay"}{" "}
+                        {a.id === acc.id && (
+                          <span className="ml-1 text-[10px] text-indigo-600 font-mono">(Current Row)</span>
+                        )}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
+                          a.status === "paid"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-amber-50 text-amber-700 border-amber-200"
+                        }`}
+                      >
+                        {a.status === "paid" ? "Paid" : "Pending"}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div>
+                        <p className="text-[10px] uppercase font-semibold text-black/40">Duration</p>
+                        <p className="font-semibold text-black mt-0.5">{a.duration_days ?? 1} Day(s)</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase font-semibold text-black/40">Check-in Date</p>
+                        <p className="font-semibold text-black mt-0.5">{a.start_date || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase font-semibold text-black/40">Check-out Date</p>
+                        <p className="font-semibold text-black mt-0.5">{a.end_date || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase font-semibold text-black/40">Room / Bed</p>
+                        <p className="font-semibold text-black mt-0.5">{a.roomNumber ? `Room ${a.roomNumber}` : "Awaiting"}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
+            ) : (
+              <div className="rounded-2xl border border-black/10 bg-zinc-50/50 p-4 space-y-3 text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div>
+                    <p className="text-[10px] uppercase font-semibold text-black/40">Status</p>
+                    <p className="font-semibold text-black mt-0.5 uppercase">{acc.status}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-semibold text-black/40">Duration</p>
+                    <p className="font-semibold text-black mt-0.5">{acc.duration_days} Day(s)</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-semibold text-black/40">Check-in Date</p>
+                    <p className="font-semibold text-black mt-0.5">{acc.start_date || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase font-semibold text-black/40">Check-out Date</p>
+                    <p className="font-semibold text-black mt-0.5">{acc.end_date || "—"}</p>
+                  </div>
+                </div>
 
-              <div className="pt-3 border-t border-black/10 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div>
-                  <span className="text-black/50">Room Assignment: </span>
-                  <span className="font-semibold text-black">
-                    {acc.room_id ? "Assigned" : "Awaiting Room Allocation"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-black/50">Hostel Lifecycle: </span>
-                  <span className="font-semibold text-black">
-                    {acc.checked_out ? "Checked Out" : acc.checked_in ? "Checked In" : "Not Checked In"}
-                  </span>
+                <div className="pt-3 border-t border-black/10 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div>
+                    <span className="text-black/50">Room Assignment: </span>
+                    <span className="font-semibold text-black">
+                      {acc.room_id ? "Assigned" : "Awaiting Room Allocation"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-black/50">Hostel Lifecycle: </span>
+                    <span className="font-semibold text-black">
+                      {acc.checked_out ? "Checked Out" : acc.checked_in ? "Checked In" : "Not Checked In"}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 

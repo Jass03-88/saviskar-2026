@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { randomBytes } from "crypto";
 import { getRegistrationSession } from "@/lib/auth/session";
-import { verifyPaymentResumeToken } from "@/lib/payments/resume-token";
+import {
+  verifyPaymentResumeToken,
+  createPaymentResumeToken,
+} from "@/lib/payments/resume-token";
+import { getCanonicalPaymentBaseUrl } from "@/lib/payments/canonical-url";
 
 function errorResponse(message: string, status: number) {
   return NextResponse.json(
@@ -203,7 +207,7 @@ export async function POST(request: NextRequest) {
     .select(`
       payment_order_id,
       participant_id,
-      payment_orders!inner(id, status, payer_participant_id)
+      payment_orders!inner(id, status, payer_participant_id, amount)
     `)
     .eq("payment_orders.status", "pending")
     .limit(1);
@@ -236,8 +240,27 @@ export async function POST(request: NextRequest) {
       return errorResponse("Payment token does not match this order.", 403);
     }
 
+    if (paymentOrderData?.status === "paid") {
+      return errorResponse("Payment is already completed.", 400);
+    }
+
+    const resolvedBaseUrl = getCanonicalPaymentBaseUrl();
+    const participantPublicId = participantData.participant_id ?? "";
+    const orderResumeToken = createPaymentResumeToken({
+      paymentOrderId: existingItem.payment_order_id,
+      participantId: participantPublicId,
+      payerParticipantUuid: participantData.id,
+    });
+    const resumeUrl = `${resolvedBaseUrl}/payment/resume?token=${encodeURIComponent(orderResumeToken)}`;
+
     return NextResponse.json(
-      { paymentOrderId: existingItem.payment_order_id },
+      {
+        success: true,
+        paymentOrderId: existingItem.payment_order_id,
+        amount: Number(paymentOrderData?.amount || amount),
+        resumeToken: orderResumeToken,
+        resumeUrl,
+      },
       { headers: { "Cache-Control": "no-store" } }
     );
   }
@@ -299,8 +322,23 @@ export async function POST(request: NextRequest) {
       .eq("id", participantAccommodationId);
   }
 
+  const resolvedBaseUrl = getCanonicalPaymentBaseUrl();
+  const participantPublicId = participantData.participant_id ?? "";
+  const newOrderResumeToken = createPaymentResumeToken({
+    paymentOrderId: newOrder.id,
+    participantId: participantPublicId,
+    payerParticipantUuid: participantData.id,
+  });
+  const resumeUrl = `${resolvedBaseUrl}/payment/resume?token=${encodeURIComponent(newOrderResumeToken)}`;
+
   return NextResponse.json(
-    { paymentOrderId: newOrder.id },
+    {
+      success: true,
+      paymentOrderId: newOrder.id,
+      amount,
+      resumeToken: newOrderResumeToken,
+      resumeUrl,
+    },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

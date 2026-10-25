@@ -43,13 +43,19 @@ describe("Email Recipient Safeguard & Environment-Aware Routing", () => {
   };
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    mockSend.mockReset();
     process.env = { ...originalEnv };
+    delete process.env.E2E_EMAIL_TRANSPORT;
+    delete process.env.MAILPIT_API_URL;
+    delete process.env.ENABLE_TEST_RECIPIENT_GUARD;
+    delete process.env.APPROVED_TEST_EMAIL;
     process.env.RESEND_API_KEY = "re_test_key_mock";
     process.env.RESEND_FROM_EMAIL = "Saviskar 2026 <no-reply@saviskar.cgc.ac.in>";
   });
 
   afterEach(() => {
+    mockSend.mockReset();
     process.env = { ...originalEnv };
   });
 

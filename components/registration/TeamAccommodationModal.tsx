@@ -232,16 +232,22 @@ export default function TeamAccommodationModal({
           effectiveSlug = "4_days";
           effectiveDate = "2026-10-27";
         } else {
-          effectiveDate = sel.selectedDate || "2026-10-28";
+          effectiveDate = sel.selectedDate === "2026-10-30" ? "2026-10-30" : "2026-10-28";
         }
       } else if (sel.planSlug === "3_days") {
-        if (sel.extraDays === "before_27" || sel.selectedDate === "2026-10-27") {
+        if (sel.selectedDate === "2026-10-29") {
+          effectiveDate = "2026-10-29";
+        } else if (sel.extraDays === "before_27" || sel.selectedDate === "2026-10-27") {
           effectiveDate = "2026-10-27";
         } else {
           effectiveDate = "2026-10-28";
         }
       } else if (sel.planSlug === "4_days") {
-        effectiveDate = "2026-10-27";
+        if (sel.selectedDate === "2026-10-28") {
+          effectiveDate = "2026-10-28";
+        } else {
+          effectiveDate = "2026-10-27";
+        }
       }
 
       const { startDate, endDate, durationDays } = calculateStayDates(
@@ -253,8 +259,8 @@ export default function TeamAccommodationModal({
       // Determine price
       let price = 499;
       if (effectiveSlug === "2_days") price = 999;
-      else if (effectiveSlug === "3_days") price = 1499;
-      else if (effectiveSlug === "4_days") price = 1999;
+      else if (effectiveSlug === "3_days") price = 1498;
+      else if (effectiveSlug === "4_days") price = 1997;
 
       // Check conflict with member's existing stays
       let conflictMessage: string | null = null;
@@ -561,8 +567,8 @@ export default function TeamAccommodationModal({
                             >
                               <option value="1_day">1 Day Pass — ₹499</option>
                               <option value="2_days">2 Days Pass — ₹999</option>
-                              <option value="3_days">3 Days Pass — ₹1,499</option>
-                              <option value="4_days">4 Days Full Festival — ₹1,999</option>
+                              <option value="3_days">3 Days Pass — ₹1,498</option>
+                              <option value="4_days">4 Days Full Festival — ₹1,997</option>
                             </select>
                           </div>
 
@@ -583,53 +589,59 @@ export default function TeamAccommodationModal({
                                 <option value="2026-10-28">28 Oct (Day 1)</option>
                                 <option value="2026-10-29">29 Oct (Day 2)</option>
                                 <option value="2026-10-30">30 Oct (Day After)</option>
+                                <option value="2026-10-31">31 Oct (Day 4 • Checkout 1 Nov)</option>
                               </select>
                             )}
 
                             {sel.planSlug === "2_days" && (
                               <select
-                                value={sel.extraDays}
-                                onChange={(e) => {
-                                  const extra = e.target.value as any;
-                                  let date = "2026-10-28";
-                                  if (extra === "before_27" || extra === "both") {
-                                    date = "2026-10-27";
-                                  }
+                                value={sel.selectedDate === "2026-10-30" ? "2026-10-30" : "2026-10-28"}
+                                onChange={(e) =>
                                   updateMemberSelection(m.email, {
-                                    extraDays: extra,
-                                    selectedDate: date,
-                                  });
-                                }}
+                                    selectedDate: e.target.value,
+                                    extraDays: "none",
+                                  })
+                                }
                                 className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2 text-xs text-white outline-none focus:border-violet-400 font-mono"
                               >
-                                <option value="none">28–29 Oct (Standard 2 Days) — ₹999</option>
-                                <option value="before_27">27–29 Oct (+Early Check-in) — ₹1,499</option>
-                                <option value="after_30">28–30 Oct (+Late Check-out) — ₹1,499</option>
-                                <option value="both">27–30 Oct (Both Extra Days) — ₹1,999</option>
+                                <option value="2026-10-28">28–29 Oct (Standard 2 Days • Checkout 30 Oct) — ₹999</option>
+                                <option value="2026-10-30">30–31 Oct (Weekend Extended • Checkout 1 Nov) — ₹999</option>
                               </select>
                             )}
 
                             {sel.planSlug === "3_days" && (
                               <select
-                                value={sel.extraDays === "after_30" ? "after_30" : "before_27"}
+                                value={sel.selectedDate === "2026-10-29" ? "2026-10-29" : sel.selectedDate === "2026-10-27" ? "2026-10-27" : "2026-10-28"}
                                 onChange={(e) => {
-                                  const extra = e.target.value as any;
+                                  const dt = e.target.value;
                                   updateMemberSelection(m.email, {
-                                    extraDays: extra,
-                                    selectedDate: extra === "before_27" ? "2026-10-27" : "2026-10-28",
+                                    selectedDate: dt,
+                                    extraDays: dt === "2026-10-27" ? "before_27" : dt === "2026-10-28" ? "after_30" : "none",
                                   });
                                 }}
                                 className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2 text-xs text-white outline-none focus:border-violet-400 font-mono"
                               >
-                                <option value="before_27">27–29 Oct (Starts 27th Oct)</option>
-                                <option value="after_30">28–30 Oct (Starts 28th Oct)</option>
+                                <option value="2026-10-27">27–29 Oct (Early Arrival • Checkout 30 Oct) — ₹1,498</option>
+                                <option value="2026-10-28">28–30 Oct (Fest + Day After • Checkout 31 Oct) — ₹1,498</option>
+                                <option value="2026-10-29">29–31 Oct (Extended Stay • Checkout 1 Nov) — ₹1,498</option>
                               </select>
                             )}
 
                             {sel.planSlug === "4_days" && (
-                              <div className="rounded-xl border border-white/10 bg-zinc-900/50 px-3 py-2 text-xs text-emerald-300 font-mono">
-                                27 Oct to 31 Oct (Full Festival Access)
-                              </div>
+                              <select
+                                value={sel.selectedDate === "2026-10-28" ? "2026-10-28" : "2026-10-27"}
+                                onChange={(e) => {
+                                  const dt = e.target.value;
+                                  updateMemberSelection(m.email, {
+                                    selectedDate: dt,
+                                    extraDays: dt === "2026-10-27" ? "both" : "none",
+                                  });
+                                }}
+                                className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2 text-xs text-white outline-none focus:border-violet-400 font-mono"
+                              >
+                                <option value="2026-10-27">27–30 Oct (Full Fest Stay • Checkout 31 Oct) — ₹1,997</option>
+                                <option value="2026-10-28">28–31 Oct (Extended Full Stay • Checkout 1 Nov) — ₹1,997</option>
+                              </select>
                             )}
                           </div>
                         </div>

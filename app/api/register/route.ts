@@ -5,7 +5,7 @@ import { checkRateLimitAsync, getClientIp } from "@/lib/rate-limit";
 import { generatePaymentResumeUrl } from "@/lib/payments/resume-token";
 import { getRegistrationSession } from "@/lib/auth/session";
 import { getSiteAccess } from "@/lib/config/site-access";
-import { calculateStayDates } from "@/lib/accommodation-dates";
+import { calculateStayDates, isValidAccommodationDate } from "@/lib/accommodation-dates";
 import { formatAccommodationOverlapError } from "@/lib/accommodation-expiration";
 
 type MemberInput = {
@@ -745,7 +745,7 @@ export async function POST(
         return errorResponse("Accommodation plan is required.", 400);
       }
 
-      let selectedDate = "2026-10-28";
+      let selectedDate = (accPlanSlug === "4_days") ? "2026-10-27" : "2026-10-28";
       if (rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
         selectedDate = rawDate;
       } else if (rawDate === "27" || rawDate?.includes("27")) {
@@ -754,6 +754,8 @@ export async function POST(
         selectedDate = "2026-10-29";
       } else if (rawDate === "30" || rawDate?.includes("30")) {
         selectedDate = "2026-10-30";
+      } else if (rawDate === "31" || rawDate?.includes("31")) {
+        selectedDate = "2026-10-31";
       }
 
       let effectivePlanSlug = accPlanSlug;
@@ -769,13 +771,18 @@ export async function POST(
           selectedDate = "2026-10-27";
         }
       } else if (accPlanSlug === "3_days") {
-        if (rawExtraDays === "before_27" || selectedDate === "2026-10-27") {
+        if (rawExtraDays === "before_27") {
           selectedDate = "2026-10-27";
-        } else {
+        } else if (rawExtraDays === "after_30" || selectedDate === "2026-10-30") {
           selectedDate = "2026-10-28";
         }
-      } else if (accPlanSlug === "4_days") {
-        selectedDate = "2026-10-27";
+      }
+
+      if (!isValidAccommodationDate(effectivePlanSlug, selectedDate)) {
+        return errorResponse(
+          `Invalid accommodation date ${selectedDate} for plan ${effectivePlanSlug}.`,
+          400
+        );
       }
 
       const { startDate, endDate } = calculateStayDates(

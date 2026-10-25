@@ -5,7 +5,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  useRef,
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -259,6 +258,8 @@ function escapeCsv(value: unknown) {
    PAGE
 ========================================================= */
 
+let globalDocumentRequestId = 0;
+
 export default function AdminPage() {
   const router = useRouter();
 
@@ -402,86 +403,88 @@ export default function AdminPage() {
   const [activeDocumentPath, setActiveDocumentPath] = useState<string | null>(null);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
-  const documentRequestRef = useRef(0);
 
   const [facultyDocumentUrl, setFacultyDocumentUrl] = useState<string | null>(null);
   const [facultyDocumentLoading, setFacultyDocumentLoading] = useState(false);
   const [facultyDocumentError, setFacultyDocumentError] = useState<string | null>(null);
 
-  async function handleViewDocument(
-    path: string | null | undefined,
-    target: "participant" | "faculty" = "participant",
-    label?: string | null
-  ) {
-    if (target === "faculty") {
-      if (!path || !path.trim()) {
-        setFacultyDocumentError("No ID card document was uploaded.");
-        return;
-      }
-      setFacultyDocumentLoading(true);
-      setFacultyDocumentError(null);
-      setFacultyDocumentUrl(null);
-      try {
-        const res = await fetch("/api/admin/documents/signed-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: path.trim() }),
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || "Failed to load document");
-        setFacultyDocumentUrl(json.signedUrl);
-      } catch (e: any) {
-        setFacultyDocumentError(e.message || "Document not available");
-      } finally {
-        setFacultyDocumentLoading(false);
-      }
-    } else {
-      const requestId = ++documentRequestRef.current;
-      setViewDocumentUrl(null);
-      setDocumentError(null);
-      setActiveDocumentLabel(label ?? null);
-      setActiveDocumentPath(path ?? null);
+  const handleViewDocument = useCallback(
+    async (
+      path: string | null | undefined,
+      target: "participant" | "faculty" = "participant",
+      label?: string | null
+    ) => {
+      if (target === "faculty") {
+        if (!path || !path.trim()) {
+          setFacultyDocumentError("No ID card document was uploaded.");
+          return;
+        }
+        setFacultyDocumentLoading(true);
+        setFacultyDocumentError(null);
+        setFacultyDocumentUrl(null);
+        try {
+          const res = await fetch("/api/admin/documents/signed-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: path.trim() }),
+          });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error || "Failed to load document");
+          setFacultyDocumentUrl(json.signedUrl);
+        } catch (e: any) {
+          setFacultyDocumentError(e.message || "Document not available");
+        } finally {
+          setFacultyDocumentLoading(false);
+        }
+      } else {
+        const requestId = ++globalDocumentRequestId;
+        setViewDocumentUrl(null);
+        setDocumentError(null);
+        setActiveDocumentLabel(label ?? null);
+        setActiveDocumentPath(path ?? null);
 
-      if (!path || !path.trim()) {
-        setDocumentError(
-          label ? `No ID card document was uploaded for ${label}.` : "No ID card document was uploaded."
-        );
-        return;
-      }
-
-      setDocumentLoading(true);
-
-      if (typeof document !== "undefined") {
-        document.getElementById("participant-id-card-preview")?.scrollIntoView({
-          behavior: "smooth",
-          block: "nearest",
-        });
-      }
-
-      try {
-        const res = await fetch("/api/admin/documents/signed-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: path.trim() }),
-        });
-        const json = await res.json();
-
-        if (requestId !== documentRequestRef.current) {
+        if (!path || !path.trim()) {
+          setDocumentError(
+            label ? `No ID card document was uploaded for ${label}.` : "No ID card document was uploaded."
+          );
           return;
         }
 
-        if (!res.ok) throw new Error(json.error || "Failed to load document");
-        setViewDocumentUrl(json.signedUrl);
-      } catch (e: any) {
-        if (requestId !== documentRequestRef.current) return;
-        setDocumentError(e.message || "Document not available");
-      } finally {
-        if (requestId === documentRequestRef.current) {
-          setDocumentLoading(false);
+        setDocumentLoading(true);
+
+        if (typeof document !== "undefined") {
+          document.getElementById("participant-id-card-preview")?.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+          });
+        }
+
+        try {
+          const res = await fetch("/api/admin/documents/signed-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: path.trim() }),
+          });
+          const json = await res.json();
+
+          if (requestId !== globalDocumentRequestId) {
+            return;
+          }
+
+          if (!res.ok) throw new Error(json.error || "Failed to load document");
+          setViewDocumentUrl(json.signedUrl);
+        } catch (e: any) {
+          if (requestId !== globalDocumentRequestId) return;
+          setDocumentError(e.message || "Document not available");
+        } finally {
+          if (requestId === globalDocumentRequestId) {
+            setDocumentLoading(false);
+          }
         }
       }
-    }
-  }
+    },
+    []
+  );
 
   const [serverTotal, setServerTotal] = useState<number | null>(null);
 
@@ -1012,7 +1015,7 @@ export default function AdminPage() {
     });
 
     const accList = Array.from(accMap.values());
-    let totalBookings = accList.length;
+    const totalBookings = accList.length;
     let paidBookings = 0;
     let pendingBookings = 0;
     let expectedAmount = 0;
@@ -1158,7 +1161,7 @@ export default function AdminPage() {
     });
 
     const accList = Array.from(accMap.values());
-    let totalBookings = accList.length;
+    const totalBookings = accList.length;
     let paidBookings = 0;
     let pendingBookings = 0;
     let expectedAmount = 0;
@@ -1376,7 +1379,7 @@ export default function AdminPage() {
     setDocumentError(null);
     setFacultyDocumentUrl(null);
     setFacultyDocumentError(null);
-    documentRequestRef.current++;
+    globalDocumentRequestId++;
   }
 
   const closeDrawer = useCallback(() => {
@@ -1388,7 +1391,7 @@ export default function AdminPage() {
     setDocumentError(null);
     setFacultyDocumentUrl(null);
     setFacultyDocumentError(null);
-    documentRequestRef.current++;
+    globalDocumentRequestId++;
   }, []);
 
   useEffect(() => {
@@ -3888,6 +3891,16 @@ export default function AdminPage() {
                                         ? formatDate(acc.checked_out_at)
                                         : "Checked out")
                                     : "Pending"
+                                }
+                              />
+                              <SmallDetail
+                                label="Payment Reference"
+                                value={
+                                  acc.payment_order_reference ||
+                                  acc.gateway_payment_id ||
+                                  (acc.payment_order_id
+                                    ? `Order: ${acc.payment_order_id.slice(0, 8)}…`
+                                    : "Unlinked / Direct")
                                 }
                               />
                             </div>

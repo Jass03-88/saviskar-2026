@@ -7,6 +7,7 @@
 
 import { Resend } from "resend";
 import { getEmailSender } from "@/lib/email-sender";
+import { isTestEmailTransportActive, sendViaTestTransport } from "@/lib/email/test-transport";
 
 /**
  * RECIPIENT SAFEGUARD POLICY:
@@ -70,8 +71,9 @@ export async function sendOtpEmail(
     };
   }
 
+  const testTransportActive = isTestEmailTransportActive();
   const apiKey = process.env.RESEND_API_KEY?.trim();
-  if (!apiKey) {
+  if (!apiKey && !testTransportActive) {
     if (process.env.NODE_ENV === "production") {
       console.error("[AUTH OTP ERROR] RESEND_API_KEY is not configured in production.");
       return {
@@ -89,7 +91,7 @@ export async function sendOtpEmail(
     };
   }
 
-  const resend = new Resend(apiKey);
+  const resend = apiKey ? new Resend(apiKey) : null;
   const fromEmail = senderResult.from;
 
   const subject = "Your Saviskar 2026 verification code";
@@ -195,6 +197,23 @@ export async function sendOtpEmail(
 
     const destinationEmail = guardActive ? HARDCODED_PERMITTED_TEST_EMAIL : normalizedToEmail;
     console.log(`[AUTH OTP] Dispatching verification code to recipient: ${destinationEmail}`);
+
+    if (testTransportActive) {
+      return await sendViaTestTransport({
+        from: fromEmail,
+        to: destinationEmail,
+        subject,
+        html,
+      });
+    }
+
+    if (!resend) {
+      return {
+        success: false,
+        error: "Email client is not initialized.",
+      };
+    }
+
     const { data, error } = await resend.emails.send({
       from: fromEmail,
       to: [destinationEmail],
