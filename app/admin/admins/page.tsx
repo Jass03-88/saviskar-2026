@@ -1159,7 +1159,7 @@ export default function AdminManagementPage() {
       </div>
 
       {editingScopeAdmin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="relative w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl md:p-8">
             <button
               type="button"

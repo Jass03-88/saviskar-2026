@@ -516,7 +516,7 @@ export default function AdminAnalyticsPage() {
                 </button>
 
                 {showExportMenu && (
-                  <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white border border-black/10 shadow-xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white border border-black/10 shadow-xl p-2 z-[100] animate-in fade-in zoom-in-95 duration-150">
                     <button
                       type="button"
                       onClick={exportStatesCsv}
@@ -763,7 +763,7 @@ export default function AdminAnalyticsPage() {
                 </button>
 
                 {showCollegeDropdown && (
-                  <div className="absolute right-0 sm:left-0 sm:right-auto mt-2 w-80 sm:w-96 rounded-2xl bg-white border border-black/15 shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="absolute right-0 sm:left-0 sm:right-auto mt-2 w-80 sm:w-96 rounded-2xl bg-white border border-black/15 shadow-2xl p-3 z-[100] animate-in fade-in zoom-in-95 duration-150">
                     <div className="relative mb-2">
                       <Search
                         size={14}

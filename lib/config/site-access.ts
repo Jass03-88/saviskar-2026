@@ -14,8 +14,7 @@ export const DEFAULT_SITE_ACCESS = {
     process.env.NEXT_PUBLIC_ENABLE_SCHEDULE === "true",
 
   // Sponsors & partners showcase (/sponsors)
-  SPONSORS_ENABLED:
-    process.env.NEXT_PUBLIC_ENABLE_SPONSORS === "true",
+  SPONSORS_ENABLED: true,
 
   // Star Night concert lineup (/starnight)
   STARNIGHT_ENABLED: true,
@@ -92,14 +91,14 @@ export const SITE_PAGE_DEFINITIONS: Record<
     summary: "Official competition rulebooks, evaluation rubrics, prize pool allocations, and registration slots are undergoing final domain scrutiny.",
   },
   SPONSORS_ENABLED: {
-    name: "Sponsors & Partners",
+    name: "Partners & Strategic Allies",
     path: "/sponsors",
     category: "Corporate Allies",
-    description: "Title partners, brand showcase, associate partners, corporate tier matrix.",
+    description: "Official brand partners, corporate patrons, associate allies, tier matrix.",
     moduleCode: "ALLIES.SYS",
     classification: "CORPORATE ALLIES // TIER 1 MATRIX",
     estimatedRelease: "CORPORATE REVEAL STAGE",
-    summary: "Title sponsors, technology partners, automotive showcases, and realm titleholders powering the 50+ competitions and stadium headliners at CGC University, Mohali.",
+    summary: "Official brand partners, technology leaders, luxury allies, and corporate patrons powering the 50+ competitions and stadium headliners at CGC University, Mohali.",
   },
   LEGACY_ENABLED: {
     name: "Institutional Legacy",

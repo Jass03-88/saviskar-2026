@@ -4,14 +4,14 @@ import SponsorsView from "@/components/sponsors/SponsorsView";
 import { getSiteAccess } from "@/lib/config/site-access";
 
 export const metadata: Metadata = {
-  title: "Corporate Sponsors & Allies | CGC Saviskar 2026 — CGC University Mohali",
+  title: "Official Partners & Strategic Allies | CGC Saviskar 2026 — CGC University Mohali",
   description:
-    "Corporate partners, tech sponsors, automotive partners, and associates backing Saviskar 2026: Aevorian Reverie at CGC University, Mohali.",
+    "Official corporate partners and strategic allies powering Saviskar 2026: Aevorian Reverie at CGC University, Mohali. Featuring Coca-Cola, OPPO, QILVER Jewelry, P.L. Industries, BAKE, Liv Up, and Secret Temptation.",
   openGraph: {
-    title: "Corporate Sponsors & Allies | CGC Saviskar 2026",
+    title: "Official Partners & Strategic Allies | CGC Saviskar 2026",
     description:
-      "Corporate partners and strategic allies powering North India's benchmark festival at CGC University, Mohali.",
-    images: ["/images/concert-stadium.webp"],
+      "Coca-Cola, OPPO, QILVER Jewelry, P.L. Industries, BAKE, Liv Up, and Secret Temptation powering North India's benchmark university festival at CGC University, Mohali.",
+    images: ["/images/sponsors-arena-bg.jpg"],
   },
 };
 
@@ -22,11 +22,11 @@ export default async function SponsorsPage() {
     return (
       <TerminalPlaceholder
         moduleCode="ALLIES.SYS"
-        moduleName="Sponsors & Partners"
+        moduleName="Strategic Partners & Allies"
         category="PARTNERSHIP PROTOCOL"
         classification="CORPORATE ALLIES // TIER 1 MATRIX"
         estimatedRelease="CORPORATE REVEAL STAGE"
-        summary="Title sponsors, technology partners, automotive showcases, and realm titleholders powering the 50+ competitions and stadium headliners at CGC University, Mohali."
+        summary="Official beverages, smartphone, fine jewellery, corporate gifting, skin care, hydration, and fragrance partners powering Saviskar 2026: Aevorian Reverie at CGC University, Mohali."
       />
     );
   }

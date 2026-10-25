@@ -145,9 +145,10 @@ export function ParticipantDetailDialog({ acc, onClose }: ParticipantDetailDialo
 
   return (
     <div
-      className="fixed inset-0 z-[150] flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-[999999] flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
       role="dialog"
       aria-modal="true"
+      data-lenis-prevent="true"
       aria-labelledby="participant-detail-modal-title"
     >
       {/* Backdrop */}

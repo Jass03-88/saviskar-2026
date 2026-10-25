@@ -273,11 +273,12 @@ export function SitePageLocksModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="page-locks-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-200"
+      data-lenis-prevent="true"
+      className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-in fade-in duration-200"
     >
       <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col rounded-[32px] bg-white text-black shadow-2xl overflow-hidden border border-black/10">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-black/10 px-6 py-5 sm:px-8">
+        <div className="flex items-center justify-between border-b border-black/10 px-6 py-5 sm:px-8 shrink-0">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-black text-white shadow-md">
               <Lock size={20} className="text-white" />
@@ -311,7 +312,7 @@ export function SitePageLocksModal({
         </div>
 
         {/* Security Notice Banner */}
-        <div className="bg-neutral-900 px-6 py-3.5 text-white sm:px-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-black/10">
+        <div className="bg-neutral-900 px-6 py-3.5 text-white sm:px-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-black/10 shrink-0">
           <div className="flex items-center gap-2.5 text-xs text-neutral-300">
             <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
             <span>
@@ -358,7 +359,7 @@ export function SitePageLocksModal({
         )}
 
         {/* Controls Toolbar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 sm:px-8 border-b border-black/5 bg-black/[0.015]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 sm:px-8 border-b border-black/5 bg-black/[0.015] shrink-0">
           <div className="relative flex-1 max-w-sm">
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-black/35" />
             <input
@@ -518,7 +519,7 @@ export function SitePageLocksModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-black/10 bg-neutral-50 px-6 py-4 sm:px-8">
+        <div className="flex items-center justify-between border-t border-black/10 bg-neutral-50 px-6 py-4 sm:px-8 shrink-0">
           <p className="text-[11px] text-black/45">
             Locked pages automatically display the cybersecurity lockdown matrix (
             <code>TerminalPlaceholder</code>) with classified security badges to visitors.

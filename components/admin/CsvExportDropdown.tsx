@@ -141,7 +141,7 @@ export function CsvExportDropdown({
           id="csv-export-dropdown-menu"
           role="menu"
           aria-labelledby="csv-export-dropdown-button"
-          className="absolute right-0 top-full mt-2 z-50 w-72 sm:w-80 rounded-2xl bg-white p-1.5 shadow-2xl border border-black/10 divide-y divide-black/[0.06] animate-in fade-in zoom-in-95 duration-100"
+          className="absolute right-0 top-full mt-2 z-[100] w-72 sm:w-80 rounded-2xl bg-white p-1.5 shadow-2xl border border-black/10 divide-y divide-black/[0.06] animate-in fade-in zoom-in-95 duration-100"
         >
           <div className="p-1">
             <button

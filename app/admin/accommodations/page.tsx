@@ -967,7 +967,7 @@ export default function AccommodationsAdmin() {
 
       {/* HOSTEL MODAL */}
       {hostelModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-xl">
             <h2 className="text-2xl font-semibold mb-4 text-black">{editingHostel ? "Edit Hostel" : "Add Hostel"}</h2>
             <div className="flex flex-col gap-4">
@@ -1026,7 +1026,7 @@ export default function AccommodationsAdmin() {
 
       {/* FLOOR MODAL */}
       {floorModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-xl">
             <h2 className="text-2xl font-semibold mb-4 text-black">{editingFloor ? "Edit Floor" : "Add Floor"}</h2>
             <div className="flex flex-col gap-4">
@@ -1097,7 +1097,7 @@ export default function AccommodationsAdmin() {
 
       {/* ROOM MODAL */}
       {roomModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-xl">
             <h2 className="text-2xl font-semibold mb-4 text-black">{editingRoom ? "Edit Room" : "Add Room"}</h2>
             <div className="flex flex-col gap-4">
@@ -2260,7 +2260,7 @@ function AllocateModal({ acc, data, onClose, onSuccess }: { acc: AccommodationRe
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-lg bg-white rounded-3xl p-8 shadow-2xl">
         <h2 className="text-2xl font-semibold mb-2 text-black">{isReallocation ? "Reallocate Participant" : "Allocate Participant"}</h2>
         <p className="text-sm text-black/50 mb-6">{acc.participants?.name} ({acc.participants?.gender || "Unknown"})</p>
@@ -2386,7 +2386,7 @@ function HistoryModal({ acc, onClose }: { acc: AccommodationRecord; onClose: () 
   }, [acc.id]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-2xl bg-white rounded-3xl p-8 max-h-[80vh] flex flex-col shadow-2xl">
         <h2 className="text-2xl font-semibold mb-2 text-black">Allocation History</h2>
         <p className="text-sm text-black/50 mb-6">{acc.participants?.name}</p>
@@ -3163,7 +3163,7 @@ function BulkActionModal({ action, selectedIds, data, onClose, onSuccess }: { ac
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-lg bg-white rounded-3xl p-8 shadow-2xl">
         <h2 className="text-2xl font-semibold mb-2 text-black capitalize">Bulk {action}</h2>
         <p className="text-sm text-black/50 mb-6">Confirm your bulk action below.</p>
