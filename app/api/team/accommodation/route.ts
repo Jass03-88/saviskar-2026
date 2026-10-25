@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getRegistrationSession } from "@/lib/auth/session";
 import { checkRateLimitAsync, getClientIp } from "@/lib/rate-limit";
-import { calculateStayDates } from "@/lib/accommodation-dates";
+import { calculateStayDates, isValidAccommodationDate } from "@/lib/accommodation-dates";
 import { formatAccommodationOverlapError } from "@/lib/accommodation-expiration";
 import { getPaymentGateway } from "@/lib/payments";
 
@@ -254,7 +254,7 @@ export async function POST(request: NextRequest) {
       return errorResponse("Accommodation plan is required for each delegate.", 400);
     }
 
-    let selectedDate = "2026-10-28";
+    let selectedDate = (planSlug === "4_days") ? "2026-10-27" : "2026-10-28";
     if (rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
       selectedDate = rawDate;
     } else if (rawDate === "27" || rawDate?.includes("27")) {
@@ -263,6 +263,8 @@ export async function POST(request: NextRequest) {
       selectedDate = "2026-10-29";
     } else if (rawDate === "30" || rawDate?.includes("30")) {
       selectedDate = "2026-10-30";
+    } else if (rawDate === "31" || rawDate?.includes("31")) {
+      selectedDate = "2026-10-31";
     }
 
     let effectivePlanSlug = planSlug;
@@ -278,13 +280,18 @@ export async function POST(request: NextRequest) {
         selectedDate = "2026-10-27";
       }
     } else if (planSlug === "3_days") {
-      if (rawExtraDays === "before_27" || selectedDate === "2026-10-27") {
+      if (rawExtraDays === "before_27") {
         selectedDate = "2026-10-27";
-      } else {
+      } else if (rawExtraDays === "after_30" || selectedDate === "2026-10-30") {
         selectedDate = "2026-10-28";
       }
-    } else if (planSlug === "4_days") {
-      selectedDate = "2026-10-27";
+    }
+
+    if (!isValidAccommodationDate(effectivePlanSlug, selectedDate)) {
+      return errorResponse(
+        `Invalid accommodation date ${selectedDate} for plan ${effectivePlanSlug}.`,
+        400
+      );
     }
 
     const { startDate, endDate } = calculateStayDates(

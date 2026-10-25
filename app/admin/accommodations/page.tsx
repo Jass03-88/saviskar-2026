@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronRight
 } from "lucide-react";
+import { getCanonicalStayLabel } from "@/lib/accommodation-dates";
 import { groupAccommodationRecords, paginateGroupedAccommodations, getGroupControlsId, getGroupHeaderId } from "@/lib/admin/accommodation-grouping";
 import { ParticipantDetailDialog } from "@/components/admin/ParticipantDetailDialog";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
@@ -43,21 +44,7 @@ function maskPhone(phone: string | null | undefined): string {
 
 function getAccommodationStayLabel(acc?: { start_date?: string | null; duration_days?: number | null }): string {
   if (!acc) return "Unknown";
-  const duration = acc.duration_days ?? 1;
-  const start = acc.start_date ?? "";
-  if (duration === 1) {
-    if (start.includes("27")) return "27 Oct (Day Before)";
-    if (start.includes("29")) return "29 Oct (Day 2)";
-    if (start.includes("30")) return "30 Oct (Day After)";
-    return "28 Oct (Day 1)";
-  }
-  if (duration === 2) return "28–29 Oct (2 Days)";
-  if (duration === 3) {
-    if (start.includes("27")) return "27–29 Oct (3 Days • Day Before)";
-    return "28–30 Oct (3 Days • Day After)";
-  }
-  if (duration === 4) return "27–30 Oct (4 Days • Full Stay)";
-  return start ? `${start} (${duration} Days)` : "Unknown";
+  return getCanonicalStayLabel(acc.start_date, acc.duration_days);
 }
 
 function renderAccommodationStayBadge(acc?: { start_date?: string | null; duration_days?: number | null }) {
@@ -86,6 +73,13 @@ function renderAccommodationStayBadge(acc?: { start_date?: string | null; durati
         </span>
       );
     }
+    if (start.includes("31")) {
+      return (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200 text-[10px] font-medium">
+          31 Oct (Day 4 • Checkout 1 Nov)
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-medium">
         28 Oct (Day 1)
@@ -93,6 +87,13 @@ function renderAccommodationStayBadge(acc?: { start_date?: string | null; durati
     );
   }
   if (duration === 2) {
+    if (start.includes("30")) {
+      return (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200 text-[10px] font-medium">
+          30–31 Oct (2 Days • Checkout 1 Nov)
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-medium">
         28–29 Oct (2 Days)
@@ -107,6 +108,13 @@ function renderAccommodationStayBadge(acc?: { start_date?: string | null; durati
         </span>
       );
     }
+    if (start.includes("29")) {
+      return (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-700 border border-cyan-200 text-[10px] font-medium">
+          29–31 Oct (3 Days • Checkout 1 Nov)
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 text-[10px] font-medium">
         28–30 Oct (3 Days • Day After)
@@ -114,6 +122,13 @@ function renderAccommodationStayBadge(acc?: { start_date?: string | null; durati
     );
   }
   if (duration === 4) {
+    if (start.includes("28")) {
+      return (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-lime-50 text-lime-700 border border-lime-200 text-[10px] font-medium">
+          28–31 Oct (4 Days • Checkout 1 Nov)
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-medium">
         27–30 Oct (4 Days • Full Stay)
@@ -1284,14 +1299,22 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
         matchesDate = (acc.start_date === "2026-10-29" || acc.start_date?.includes("29")) && acc.duration_days === 1;
       } else if (filterDate === "30") {
         matchesDate = (acc.start_date === "2026-10-30" || acc.start_date?.includes("30")) && acc.duration_days === 1;
+      } else if (filterDate === "31") {
+        matchesDate = (acc.start_date === "2026-10-31" || acc.start_date?.includes("31")) && acc.duration_days === 1;
       } else if (filterDate === "2_days") {
-        matchesDate = acc.duration_days === 2;
+        matchesDate = acc.duration_days === 2 && (acc.start_date === "2026-10-28" || acc.start_date?.includes("28"));
+      } else if (filterDate === "2_days_30") {
+        matchesDate = acc.duration_days === 2 && (acc.start_date === "2026-10-30" || acc.start_date?.includes("30"));
       } else if (filterDate === "3_days_27") {
         matchesDate = acc.duration_days === 3 && (acc.start_date === "2026-10-27" || acc.start_date?.includes("27"));
       } else if (filterDate === "3_days_30") {
         matchesDate = acc.duration_days === 3 && (acc.start_date === "2026-10-28" || acc.start_date?.includes("28") || acc.start_date?.includes("30"));
+      } else if (filterDate === "3_days_29") {
+        matchesDate = acc.duration_days === 3 && (acc.start_date === "2026-10-29" || acc.start_date?.includes("29"));
       } else if (filterDate === "4_days") {
-        matchesDate = acc.duration_days === 4;
+        matchesDate = acc.duration_days === 4 && (acc.start_date === "2026-10-27" || acc.start_date?.includes("27"));
+      } else if (filterDate === "4_days_28") {
+        matchesDate = acc.duration_days === 4 && (acc.start_date === "2026-10-28" || acc.start_date?.includes("28"));
       } else if (filterDate === "both" || filterDate === "multi") {
         matchesDate = acc.duration_days >= 2;
       }
@@ -1833,10 +1856,14 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
           <option value="28">28 Oct Only (Day 1)</option>
           <option value="29">29 Oct Only (Day 2)</option>
           <option value="30">30 Oct Only (Day After)</option>
+          <option value="31">31 Oct Only (Day 4 • Checkout 1 Nov)</option>
           <option value="2_days">28–29 Oct (2 Days)</option>
+          <option value="2_days_30">30–31 Oct (2 Days • Checkout 1 Nov)</option>
           <option value="3_days_27">27–29 Oct (3 Days • Day Before)</option>
           <option value="3_days_30">28–30 Oct (3 Days • Day After)</option>
+          <option value="3_days_29">29–31 Oct (3 Days • Checkout 1 Nov)</option>
           <option value="4_days">27–30 Oct (4 Days • Full Stay)</option>
+          <option value="4_days_28">28–31 Oct (4 Days • Checkout 1 Nov)</option>
           <option value="multi">All Multi-Day (2+ Days)</option>
         </select>
         <select 

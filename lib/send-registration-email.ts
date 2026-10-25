@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import QRCode from "qrcode";
+import { isTestEmailTransportActive, sendViaTestTransport } from "@/lib/email/test-transport";
 
 /**
  * RECIPIENT SAFEGUARD POLICY:
@@ -104,11 +105,12 @@ export async function sendRegistrationEmail(
   data: RegistrationEmailData
 ): Promise<SendResult> {
   console.log("[REGISTER EMAIL] send-registration-email function entered");
+  const testTransportActive = isTestEmailTransportActive();
   const apiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.RESEND_FROM_EMAIL;
-  console.log(`[REGISTER EMAIL] RESEND_API_KEY present: ${!!apiKey}`);
+  console.log(`[REGISTER EMAIL] RESEND_API_KEY present: ${!!apiKey}, testTransportActive: ${testTransportActive}`);
 
-  if (!apiKey) {
+  if (!apiKey && !testTransportActive) {
     console.error(
       "sendRegistrationEmail: RESEND_API_KEY is missing."
     );
@@ -181,7 +183,7 @@ export async function sendRegistrationEmail(
     };
   }
 
-  const resend = new Resend(apiKey);
+  const resend = apiKey ? new Resend(apiKey) : null;
 
   /*
    * Generate QR code as a PNG buffer for Resend CID inline attachment.
@@ -1081,6 +1083,54 @@ export async function sendRegistrationEmail(
               : []),
           ]
         : undefined;
+
+      if (testTransportActive) {
+        console.log(`[REGISTER EMAIL] Dispatching via test transport (Mailpit) to: ${destinationEmail}`);
+        const testRes = await sendViaTestTransport({
+          from: fromEmail,
+          to: destinationEmail,
+          subject: subjectLine,
+          html: emailHtml,
+          attachments: (qrBuffer || receiptPdf)
+            ? [
+                ...(qrBuffer
+                  ? [
+                      {
+                        filename: "qr.png",
+                        content: qrBuffer,
+                        contentType: "image/png",
+                      },
+                    ]
+                  : []),
+                ...(receiptPdf
+                  ? [
+                      {
+                        filename: receiptPdf.filename,
+                        content: receiptPdf.buffer,
+                        contentType: "application/pdf",
+                      },
+                    ]
+                  : []),
+              ]
+            : undefined,
+        });
+
+        if (testRes.success) {
+          results.push({
+            email: destinationEmail,
+            emailId: testRes.messageId || null,
+          });
+          continue;
+        } else {
+          console.error(`[REGISTER EMAIL] Test transport error: ${testRes.error}`);
+          continue;
+        }
+      }
+
+      if (!resend) {
+        console.error("[REGISTER EMAIL] Resend client is not initialized.");
+        continue;
+      }
 
       let { data, error } = await resend.emails.send({
         from: fromEmail,

@@ -835,19 +835,33 @@ export default function ScannerPage() {
                                       <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-xs font-medium">
                                         30 Oct (Day After)
                                       </span>
+                                    ) : acc.start_date?.includes("31") ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200 text-xs font-medium">
+                                        31 Oct (Day 4 • Checkout 1 Nov)
+                                      </span>
                                     ) : (
                                       <span className="inline-flex items-center px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-xs font-medium">
                                         28 Oct (Day 1)
                                       </span>
                                     )
                                   ) : acc.duration_days === 2 ? (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 text-xs font-medium">
-                                      28–29 Oct (2 Days)
-                                    </span>
+                                    acc.start_date?.includes("30") ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200 text-xs font-medium">
+                                        30–31 Oct (2 Days • Checkout 1 Nov)
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 text-xs font-medium">
+                                        28–29 Oct (2 Days)
+                                      </span>
+                                    )
                                   ) : acc.duration_days === 3 ? (
                                     acc.start_date?.includes("27") ? (
                                       <span className="inline-flex items-center px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-medium">
                                         27–29 Oct (3 Days • Day Before)
+                                      </span>
+                                    ) : acc.start_date?.includes("29") ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-cyan-50 text-cyan-700 border border-cyan-200 text-xs font-medium">
+                                        29–31 Oct (3 Days • Checkout 1 Nov)
                                       </span>
                                     ) : (
                                       <span className="inline-flex items-center px-2 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-200 text-xs font-medium">
@@ -855,9 +869,15 @@ export default function ScannerPage() {
                                       </span>
                                     )
                                   ) : acc.duration_days === 4 ? (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
-                                      27–30 Oct (4 Days • Full Stay)
-                                    </span>
+                                    acc.start_date?.includes("28") ? (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-lime-50 text-lime-700 border border-lime-200 text-xs font-medium">
+                                        28–31 Oct (4 Days • Checkout 1 Nov)
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
+                                        27–30 Oct (4 Days • Full Stay)
+                                      </span>
+                                    )
                                   ) : null}
                                 </div>
                                 {isAllocated ? (
