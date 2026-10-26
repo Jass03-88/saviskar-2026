@@ -1037,7 +1037,7 @@ export default function EventsAdminPage() {
       </div>
 
       {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[28px] bg-white p-6 md:p-8">
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>

@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireMasterAdmin } from "@/lib/supabase/server";
-import { getBroadcastSupabaseAdmin } from "@/lib/broadcast/supabase-admin";
-import { processNextBroadcastBatch } from "@/lib/broadcast/campaign-worker";
+import {
+  getBroadcastSupabaseAdmin,
+  isHybridDevelopmentModeActive,
+  isLiveBroadcastEnabled,
+  isPreviewDeployment,
+  isProductionReadOnlyEnabled,
+} from "@/lib/broadcast/supabase-admin";
+import {
+  processNextBroadcastBatch,
+  updateCampaignProgressAndStatus,
+} from "@/lib/broadcast/campaign-worker";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +34,38 @@ export async function POST(
 
   const { id } = await context.params;
   try {
+    const isPreview = isPreviewDeployment(request);
+    if (isPreview) {
+      return NextResponse.json(
+        {
+          error: "Batch queue processing is disabled in Preview Mode.",
+          code: "PREVIEW_MODE_PROCESSING_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    const isReadOnly = isProductionReadOnlyEnabled(request);
+    if (isReadOnly) {
+      return NextResponse.json(
+        {
+          error: "Batch queue processing is disabled in Production Read-Only Mode.",
+          code: "PRODUCTION_READONLY_MODE_PROCESSING_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!isLiveBroadcastEnabled(request) && !isHybridDevelopmentModeActive()) {
+      return NextResponse.json(
+        {
+          error: "Batch queue processing is disabled because live broadcast mode is not enabled in this deployment.",
+          code: "LIVE_BROADCAST_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
     let batchSize = 10;
     try {
       const body = await request.json();
@@ -36,43 +77,31 @@ export async function POST(
     }
 
     const supabaseAdmin = getBroadcastSupabaseAdmin();
-    const result = await processNextBroadcastBatch(supabaseAdmin, batchSize);
 
-    // Update campaign status if all deliveries are finished
-    const { data: remaining } = await supabaseAdmin
-      .from("broadcast_deliveries")
-      .select("status")
-      .eq("campaign_id", id)
-      .in("status", ["queued", "sending"]);
+    // 1. Atomically process batch strictly scoped to this specific campaign
+    const result = await processNextBroadcastBatch(supabaseAdmin, {
+      batchSize,
+      campaignId: id,
+    });
 
-    if (remaining && remaining.length === 0) {
-      const { data: counts } = await supabaseAdmin
-        .from("broadcast_deliveries")
-        .select("status")
-        .eq("campaign_id", id);
-
-      const total = counts?.length || 0;
-      const sent = counts?.filter((c) => c.status === "sent" || c.status === "delivered").length || 0;
-      const failed = counts?.filter((c) => c.status === "failed" || c.status === "manual_review").length || 0;
-
-      await supabaseAdmin
-        .from("broadcast_campaigns")
-        .update({
-          status: sent === total ? "completed" : "failed",
-          sent_count: sent,
-          failed_count: failed,
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", id);
-    }
+    // 2. Authoritatively reconcile campaign status and counters adhering to check constraints
+    const progress = await updateCampaignProgressAndStatus(supabaseAdmin, id);
 
     return NextResponse.json({
       success: true,
       batchSize,
+      campaignStatus: progress.status,
+      remainingCount: progress.remainingCount,
       ...result,
     });
   } catch (err: any) {
     console.error("[PROCESS BATCH ERROR]:", err);
-    return NextResponse.json({ error: err?.message || "Batch processing failed" }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        error: err?.message || "Batch processing failed",
+      },
+      { status: 500 }
+    );
   }
 }

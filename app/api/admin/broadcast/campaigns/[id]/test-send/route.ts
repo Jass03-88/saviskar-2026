@@ -4,6 +4,9 @@ import {
   getBroadcastSupabaseAdmin,
   isHybridDevelopmentModeActive,
   isSyntheticTestEmail,
+  isPreviewDeployment,
+  isProductionReadOnlyEnabled,
+  isLiveBroadcastEnabled,
   HYBRID_READONLY_ERROR,
 } from "@/lib/broadcast/supabase-admin";
 import { sendCampaignEmail } from "@/lib/email/campaign-service";
@@ -32,6 +35,38 @@ export async function POST(
 
   const { id } = await context.params;
   try {
+    const isPreview = isPreviewDeployment(request);
+    if (isPreview) {
+      return NextResponse.json(
+        {
+          error: "Test email dispatch is disabled in Preview Mode. Outbound transmission is blocked.",
+          code: "PREVIEW_MODE_DISPATCH_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    const isReadOnly = isProductionReadOnlyEnabled(request);
+    if (isReadOnly) {
+      return NextResponse.json(
+        {
+          error: "Test email dispatch is disabled in Production Read-Only Mode. Outbound transmission is blocked.",
+          code: "PRODUCTION_READONLY_MODE_DISPATCH_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!isLiveBroadcastEnabled(request) && !isHybridDevelopmentModeActive()) {
+      return NextResponse.json(
+        {
+          error: "Test email dispatch is disabled because live broadcast mode is not enabled in this deployment.",
+          code: "LIVE_BROADCAST_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const testEmail = (body.testEmail || body.destinationEmail)?.trim();
 
@@ -85,6 +120,7 @@ export async function POST(
       `,
       text: `[ADMIN TEST DISPATCH]\n\n${campaign.body_text}`,
       attachments: attachments.length > 0 ? attachments : undefined,
+      request: request,
     });
 
     if (!sendResult.success) {

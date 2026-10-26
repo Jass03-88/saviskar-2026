@@ -6,12 +6,20 @@ import {
   getHostedRegistrationReadClient,
   isHybridDevelopmentModeActive,
   isSyntheticTestEmail,
+  isLiveBroadcastEnabled,
+  isPreviewDeployment,
+  isProductionReadOnlyEnabled,
+  getBroadcastOperationalMode,
+  getBroadcastDiagnostics,
   HYBRID_READONLY_ERROR,
+  PREVIEW_READONLY_ERROR,
+  PRODUCTION_READONLY_ERROR,
 } from "@/lib/broadcast/supabase-admin";
 import {
   createGeneralBroadcastCampaign,
   createCertificateCampaign,
   processNextBroadcastBatch,
+  updateCampaignProgressAndStatus,
 } from "@/lib/broadcast/campaign-worker";
 import {
   resolveGeneralBroadcastRecipients,
@@ -22,53 +30,11 @@ import {
   SYNTHETIC_CERTIFICATE_CANDIDATES,
 } from "@/lib/broadcast/hybrid-fixtures";
 
-async function reconcileCampaignStatus(supabaseAdmin: any, campaignId: string) {
-  let batchResult = { processedCount: 0, successCount: 0, failureCount: 0, details: [] as any[] };
-  try {
-    batchResult = await processNextBroadcastBatch(supabaseAdmin, 25);
-
-    const { data: remaining } = await supabaseAdmin
-      .from("broadcast_deliveries")
-      .select("status")
-      .eq("campaign_id", campaignId)
-      .in("status", ["queued", "sending"]);
-
-    if (remaining && remaining.length === 0) {
-      const { data: counts } = await supabaseAdmin
-        .from("broadcast_deliveries")
-        .select("status")
-        .eq("campaign_id", campaignId);
-
-      const total = counts?.length || 0;
-      const sent = counts?.filter((c: any) => c.status === "sent" || c.status === "delivered").length || 0;
-      const failed = counts?.filter((c: any) => c.status === "failed" || c.status === "manual_review").length || 0;
-
-      await supabaseAdmin
-        .from("broadcast_campaigns")
-        .update({
-          status: sent === total ? "completed" : "failed",
-          sent_count: sent,
-          failed_count: failed,
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", campaignId);
-    } else {
-      await supabaseAdmin
-        .from("broadcast_campaigns")
-        .update({
-          status: "sending",
-        })
-        .eq("id", campaignId);
-    }
-  } catch (procErr) {
-    console.error("[AUTO BATCH WORKER ERROR]:", procErr);
-  }
-  return batchResult;
-}
-
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(): Promise<NextResponse>;
+export async function GET(request: Request): Promise<NextResponse>;
+export async function GET(request?: Request): Promise<NextResponse> {
   const auth = await requireMasterAdmin();
 
   if (auth.error) {
@@ -84,6 +50,28 @@ export async function GET() {
   }
 
   try {
+    const isPreview = isPreviewDeployment(request);
+    const isProductionReadOnly = isProductionReadOnlyEnabled(request);
+    const isLiveProduction = isLiveBroadcastEnabled(request);
+    const mode = getBroadcastOperationalMode(request);
+    const diagnostics = getBroadcastDiagnostics(request);
+
+    console.info("[BROADCAST CAMPAIGNS DIAGNOSTICS]", JSON.stringify(diagnostics));
+
+    if (isPreview) {
+      return NextResponse.json({
+        campaigns: [],
+        mode: "preview",
+        isPreviewMode: true,
+        isProductionReadOnly: false,
+        isLiveProduction: false,
+        isHybridMode: false,
+        schemaReady: false,
+        note: "Preview Mode: Campaign storage is unmounted to protect production database.",
+        diagnostics,
+      });
+    }
+
     const storageClient = getBroadcastSupabaseAdmin();
     const { data: campaigns, error } = await storageClient
       .from("broadcast_campaigns")
@@ -114,6 +102,7 @@ export async function GET() {
           error: isMissingTable
             ? "Database table 'broadcast_campaigns' not found. Verify that migration 20261026000001_broadcast_and_certificates.sql is applied."
             : error.message || "Failed to load campaigns",
+          diagnostics,
         },
         { status: 500 }
       );
@@ -121,7 +110,11 @@ export async function GET() {
 
     return NextResponse.json({
       campaigns: campaigns || [],
+      mode,
+      isProductionReadOnly,
+      isLiveProduction,
       isHybridMode: isHybridDevelopmentModeActive(),
+      diagnostics,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "Failed to load campaigns" }, { status: 500 });
@@ -144,6 +137,38 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const isPreview = isPreviewDeployment(request);
+    if (isPreview) {
+      return NextResponse.json(
+        {
+          error: "Campaign creation is disabled in Preview Mode. Preview deployments cannot write campaign records to the production database.",
+          code: "PREVIEW_MODE_READ_ONLY",
+        },
+        { status: 403 }
+      );
+    }
+
+    const isReadOnly = isProductionReadOnlyEnabled(request);
+    if (isReadOnly) {
+      return NextResponse.json(
+        {
+          error: "Campaign creation is disabled in Production Read-Only Mode. Database schema mutations and email dispatches are prevented.",
+          code: "PRODUCTION_READONLY_MODE_MUTATION_DENIED",
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!isLiveBroadcastEnabled(request) && !isHybridDevelopmentModeActive()) {
+      return NextResponse.json(
+        {
+          error: "Campaign creation is disabled because live broadcast mode is not enabled in this deployment.",
+          code: "LIVE_BROADCAST_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const {
       title,
@@ -155,6 +180,7 @@ export async function POST(request: NextRequest) {
       selectedItemKeys,
       sendIndividual = true,
       sendTeamBackup = true,
+      dispatchImmediately = false,
     } = body;
 
     if (!title || !subject || !bodyHtml) {
@@ -220,13 +246,24 @@ export async function POST(request: NextRequest) {
         adminEmail,
       });
 
-      // Atomically claim and dispatch initial batch in local Docker Supabase
-      const batchResult = await reconcileCampaignStatus(storageClient, result.campaignId);
+      let batchResult = { processedCount: 0, successCount: 0, failureCount: 0 };
+      let campaignStatus = "queued";
+
+      // Dispatch behavior: enqueue only by default; begin dispatch immediately only upon explicit request
+      if (dispatchImmediately) {
+        batchResult = await processNextBroadcastBatch(storageClient, {
+          batchSize: 25,
+          campaignId: result.campaignId,
+        });
+        const progress = await updateCampaignProgressAndStatus(storageClient, result.campaignId);
+        campaignStatus = progress.status;
+      }
 
       return NextResponse.json({
         success: true,
         campaignId: result.campaignId,
         totalDeliveries: result.totalDeliveries,
+        campaignStatus,
         processedCount: batchResult.processedCount,
         successCount: batchResult.successCount,
         failureCount: batchResult.failureCount,
@@ -294,14 +331,25 @@ export async function POST(request: NextRequest) {
         authoritativeCandidates
       );
 
-      // Atomically claim and dispatch initial batch in local Docker Supabase
-      const batchResult = await reconcileCampaignStatus(storageClient, result.campaignId);
+      let batchResult = { processedCount: 0, successCount: 0, failureCount: 0 };
+      let campaignStatus = "queued";
+
+      // Dispatch behavior: enqueue only by default; begin dispatch immediately only upon explicit request
+      if (dispatchImmediately) {
+        batchResult = await processNextBroadcastBatch(storageClient, {
+          batchSize: 25,
+          campaignId: result.campaignId,
+        });
+        const progress = await updateCampaignProgressAndStatus(storageClient, result.campaignId);
+        campaignStatus = progress.status;
+      }
 
       return NextResponse.json({
         success: true,
         campaignId: result.campaignId,
         totalDeliveries: result.totalDeliveries,
         totalCertificates: result.totalCertificates,
+        campaignStatus,
         processedCount: batchResult.processedCount,
         successCount: batchResult.successCount,
         failureCount: batchResult.failureCount,

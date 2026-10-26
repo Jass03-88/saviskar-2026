@@ -4,7 +4,10 @@ import { requireMasterAdmin } from "@/lib/supabase/server";
 import {
   getBroadcastSupabaseAdmin,
   isHybridDevelopmentModeActive,
+  isLiveBroadcastEnabled,
   isSyntheticTestEmail,
+  isPreviewDeployment,
+  isProductionReadOnlyEnabled,
   HYBRID_READONLY_ERROR,
 } from "@/lib/broadcast/supabase-admin";
 
@@ -30,6 +33,38 @@ export async function POST(
 
   const { id } = await context.params;
   try {
+    const isPreview = isPreviewDeployment(request);
+    if (isPreview) {
+      return NextResponse.json(
+        {
+          error: "Campaign delivery retry is disabled in Preview Mode.",
+          code: "PREVIEW_MODE_RETRY_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    const isReadOnly = isProductionReadOnlyEnabled(request);
+    if (isReadOnly) {
+      return NextResponse.json(
+        {
+          error: "Campaign delivery retry is disabled in Production Read-Only Mode.",
+          code: "PRODUCTION_READONLY_MODE_RETRY_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!isLiveBroadcastEnabled(request) && !isHybridDevelopmentModeActive()) {
+      return NextResponse.json(
+        {
+          error: "Campaign delivery retry is disabled because live broadcast mode is not enabled in this deployment.",
+          code: "LIVE_BROADCAST_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const deliveryIds = Array.isArray(body?.deliveryIds)
       ? body.deliveryIds
@@ -83,10 +118,13 @@ export async function POST(
       }
 
       // Ensure campaign is set back to processing / queued
-      await supabaseAdmin
+      const { error: updateCampErr } = await supabaseAdmin
         .from("broadcast_campaigns")
         .update({ status: "processing" })
         .eq("id", id);
+      if (updateCampErr) {
+        return NextResponse.json({ error: updateCampErr.message }, { status: 500 });
+      }
 
       return NextResponse.json({
         success: true,
@@ -118,7 +156,17 @@ export async function POST(
         .in("id", deliveryIds);
 
       if (fetchErr || !existingDeliveries) {
-        return NextResponse.json({ error: "Failed to load existing deliveries" }, { status: 500 });
+        return NextResponse.json(
+          { error: fetchErr?.message || "Failed to load existing deliveries" },
+          { status: 500 }
+        );
+      }
+
+      if (existingDeliveries.length === 0) {
+        return NextResponse.json(
+          { error: "No matching deliveries found to resend." },
+          { status: 404 }
+        );
       }
 
       const newDeliveries: any[] = [];
@@ -157,25 +205,94 @@ export async function POST(
       }
 
       if (newDeliveries.length > 0) {
-        await supabaseAdmin.from("broadcast_deliveries").insert(newDeliveries);
-        if (newAttachments.length > 0) {
-          await supabaseAdmin.from("broadcast_delivery_attachments").insert(newAttachments);
+        const createdDeliveryIds = newDeliveries.map((d) => d.id);
+
+        // 1. Insert new delivery rows with error handling
+        const { error: insertDelErr } = await supabaseAdmin
+          .from("broadcast_deliveries")
+          .insert(newDeliveries);
+
+        if (insertDelErr) {
+          console.error("[RESEND EXPLICIT DELIVERIES INSERT ERROR]:", insertDelErr);
+          return NextResponse.json(
+            { error: insertDelErr.message || "Failed to insert resend deliveries" },
+            { status: 500 }
+          );
         }
 
-        // Increment campaign total deliveries
-        const { data: campaign } = await supabaseAdmin
+        // 2. Insert attachments if applicable with rollback compensation
+        if (newAttachments.length > 0) {
+          const { error: insertAttErr } = await supabaseAdmin
+            .from("broadcast_delivery_attachments")
+            .insert(newAttachments);
+
+          if (insertAttErr) {
+            console.error("[RESEND EXPLICIT ATTACHMENTS INSERT ERROR]:", insertAttErr);
+            // Safe compensation: delete newly created deliveries to prevent attachment-free resends
+            try {
+              await supabaseAdmin
+                .from("broadcast_deliveries")
+                .delete()
+                .in("id", createdDeliveryIds);
+            } catch (compErr) {
+              console.error("[RESEND COMPENSATION ERROR]:", compErr);
+            }
+            return NextResponse.json(
+              { error: insertAttErr.message || "Failed to insert attachments for resend deliveries" },
+              { status: 500 }
+            );
+          }
+        }
+
+        // 3. Query current campaign totals with error handling
+        const { data: campaign, error: campFetchErr } = await supabaseAdmin
           .from("broadcast_campaigns")
           .select("total_deliveries")
           .eq("id", id)
           .single();
 
-        await supabaseAdmin
+        if (campFetchErr || !campaign) {
+          console.error("[RESEND CAMPAIGN TOTALS FETCH ERROR]:", campFetchErr);
+          // Safe compensation: rollback newly created deliveries
+          try {
+            await supabaseAdmin
+              .from("broadcast_deliveries")
+              .delete()
+              .in("id", createdDeliveryIds);
+          } catch (compErr) {
+            console.error("[RESEND COMPENSATION ERROR]:", compErr);
+          }
+          return NextResponse.json(
+            { error: campFetchErr?.message || "Failed to query campaign totals" },
+            { status: 500 }
+          );
+        }
+
+        // 4. Update campaign counter and status with error handling
+        const { error: updateCampErr2 } = await supabaseAdmin
           .from("broadcast_campaigns")
           .update({
-            total_deliveries: (campaign?.total_deliveries || 0) + newDeliveries.length,
+            total_deliveries: (campaign.total_deliveries || 0) + newDeliveries.length,
             status: "processing",
           })
           .eq("id", id);
+
+        if (updateCampErr2) {
+          console.error("[RESEND CAMPAIGN COUNTER UPDATE ERROR]:", updateCampErr2);
+          // Safe compensation: rollback newly created deliveries
+          try {
+            await supabaseAdmin
+              .from("broadcast_deliveries")
+              .delete()
+              .in("id", createdDeliveryIds);
+          } catch (compErr) {
+            console.error("[RESEND COMPENSATION ERROR]:", compErr);
+          }
+          return NextResponse.json(
+            { error: updateCampErr2.message || "Failed to update campaign delivery counters" },
+            { status: 500 }
+          );
+        }
       }
 
       return NextResponse.json({

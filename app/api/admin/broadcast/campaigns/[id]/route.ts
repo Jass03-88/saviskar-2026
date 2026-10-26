@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireMasterAdmin } from "@/lib/supabase/server";
-import { getBroadcastSupabaseAdmin } from "@/lib/broadcast/supabase-admin";
+import {
+  getBroadcastSupabaseAdmin,
+  isPreviewDeployment,
+} from "@/lib/broadcast/supabase-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +28,17 @@ export async function GET(
   const { id } = await context.params;
   if (!id) {
     return NextResponse.json({ error: "Missing campaign id" }, { status: 400 });
+  }
+
+  const isPreview = isPreviewDeployment(request);
+  if (isPreview) {
+    return NextResponse.json(
+      {
+        error: "Campaign details are unavailable in Preview Mode.",
+        code: "PREVIEW_MODE_UNAVAILABLE",
+      },
+      { status: 404 }
+    );
   }
 
   try {

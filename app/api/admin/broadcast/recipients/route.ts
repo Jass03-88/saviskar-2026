@@ -4,6 +4,11 @@ import {
   getHostedRegistrationReadClient,
   getBroadcastStorageClient,
   isHybridDevelopmentModeActive,
+  isPreviewDeployment,
+  isProductionReadOnlyEnabled,
+  isLiveBroadcastEnabled,
+  getBroadcastOperationalMode,
+  getBroadcastDiagnostics,
 } from "@/lib/broadcast/supabase-admin";
 import {
   resolveGeneralBroadcastRecipients,
@@ -33,12 +38,64 @@ export async function GET(request: NextRequest) {
 
   try {
     const isHybridMode = isHybridDevelopmentModeActive();
-    const registrationClient = isHybridMode
-      ? getHostedRegistrationReadClient()
-      : getBroadcastStorageClient();
+    const isPreview = isPreviewDeployment(request);
+    const isProductionReadOnly = isProductionReadOnlyEnabled(request);
+    const isLiveProduction = isLiveBroadcastEnabled(request);
+    const mode = getBroadcastOperationalMode(request);
+    const diagnostics = getBroadcastDiagnostics(request);
+
+    // Safe server-side diagnostic log: booleans and host matching only, zero secrets or user data
+    console.info("[BROADCAST SERVER DIAGNOSTICS]", JSON.stringify(diagnostics));
 
     const searchParams = request.nextUrl.searchParams;
     const type = searchParams.get("type") || "general";
+
+    if (isPreview) {
+      if (type === "certificate") {
+        const candidates = SYNTHETIC_CERTIFICATE_CANDIDATES;
+        const eligibleCount = candidates.filter((c) => c.certificateEligible).length;
+        const ineligibleCount = candidates.length - eligibleCount;
+
+        return NextResponse.json({
+          type: "certificate",
+          mode: "preview",
+          isPreviewMode: true,
+          isProductionReadOnly: false,
+          isLiveProduction: false,
+          isHybridMode: false,
+          total: candidates.length,
+          eligibleCount,
+          ineligibleCount,
+          recipients: candidates,
+          diagnostics,
+        });
+      }
+
+      const recipients = SYNTHETIC_GENERAL_RECIPIENTS;
+      const validCount = recipients.filter((r) => r.isValidEmail).length;
+      const invalidCount = recipients.length - validCount;
+
+      return NextResponse.json({
+        type: "general",
+        mode: "preview",
+        isPreviewMode: true,
+        isProductionReadOnly: false,
+        isLiveProduction: false,
+        isHybridMode: false,
+        total: recipients.length,
+        validCount,
+        invalidCount,
+        recipients,
+        diagnostics,
+      });
+    }
+
+    // In production read-only mode, hosted registration reads are strictly wrapped in createReadOnlySupabaseClient
+    const registrationClient = isProductionReadOnly
+      ? getHostedRegistrationReadClient()
+      : isHybridMode
+      ? getHostedRegistrationReadClient()
+      : getBroadcastStorageClient();
 
     if (type === "certificate") {
       const eventId = searchParams.get("eventId") || undefined;
@@ -54,11 +111,16 @@ export async function GET(request: NextRequest) {
 
       return NextResponse.json({
         type: "certificate",
+        mode,
+        isProductionReadOnly,
+        isLiveProduction,
         isHybridMode,
+        isPreviewMode: false,
         total: candidates.length,
         eligibleCount,
         ineligibleCount,
         recipients: candidates,
+        diagnostics,
       });
     }
 
@@ -73,11 +135,16 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       type: "general",
+      mode,
+      isProductionReadOnly,
+      isLiveProduction,
       isHybridMode,
+      isPreviewMode: false,
       total: recipients.length,
       validCount,
       invalidCount,
       recipients,
+      diagnostics,
     });
   } catch (err: any) {
     console.error("[API BROADCAST RECIPIENTS ERROR]:", err);

@@ -12,8 +12,12 @@ import {
 } from "@/lib/certificates/generator";
 import {
   isHybridDevelopmentModeActive,
+  isPreviewDeployment,
+  isProductionReadOnlyEnabled,
   isSyntheticTestEmail,
   HYBRID_READONLY_ERROR,
+  PREVIEW_READONLY_ERROR,
+  PRODUCTION_READONLY_ERROR,
   resolveCampaignCreatorIdentity,
 } from "./supabase-admin";
 
@@ -69,6 +73,13 @@ export async function createGeneralBroadcastCampaign(
   supabaseAdmin: SupabaseClient,
   params: CreateGeneralCampaignParams
 ): Promise<{ campaignId: string; totalDeliveries: number }> {
+  if (isPreviewDeployment()) {
+    throw new Error(PREVIEW_READONLY_ERROR);
+  }
+  if (isProductionReadOnlyEnabled()) {
+    throw new Error(PRODUCTION_READONLY_ERROR);
+  }
+
   const cleanEmails = Array.from(
     new Set(params.selectedEmails.map((e) => e.trim().toLowerCase()).filter(Boolean))
   );
@@ -139,8 +150,15 @@ export async function createCertificateCampaign(
   params: CreateCertificateCampaignParams,
   eligibleCandidates: any[]
 ): Promise<{ campaignId: string; totalDeliveries: number; totalCertificates: number }> {
+  if (isPreviewDeployment()) {
+    throw new Error(PREVIEW_READONLY_ERROR);
+  }
+  if (isProductionReadOnlyEnabled()) {
+    throw new Error(PRODUCTION_READONLY_ERROR);
+  }
+
   const selectedKeySet = new Set(params.selectedItemKeys);
-  const selectedCandidates = eligibleCandidates.filter(
+  const selectedCandidates = (eligibleCandidates || []).filter(
     (c) => selectedKeySet.has(c.issueSourceKey) && c.certificateEligible
   );
 
@@ -438,28 +456,62 @@ export async function createCertificateCampaign(
   }
 }
 
+export interface ProcessBatchOptions {
+  batchSize?: number;
+  workerId?: string;
+  leaseSeconds?: number;
+  campaignId?: string;
+}
+
 /**
  * Worker function to claim and process the next bounded batch of deliveries atomically.
+ * Supports optional campaignId scoping to ensure batch execution is strictly isolated to a specific campaign.
  */
 export async function processNextBroadcastBatch(
   supabaseAdmin: SupabaseClient,
-  batchSize = 10,
-  workerId = `worker_${process.pid}_${Math.random().toString(36).substring(7)}`,
-  leaseSeconds = 300
+  batchSizeOrOptions: number | ProcessBatchOptions = 10,
+  workerIdArg?: string,
+  leaseSecondsArg = 300,
+  campaignIdArg?: string
 ): Promise<ProcessBatchResult> {
+  const isOptions = typeof batchSizeOrOptions === "object" && batchSizeOrOptions !== null;
+  const batchSize = isOptions ? batchSizeOrOptions.batchSize ?? 10 : batchSizeOrOptions;
+  const workerId = isOptions
+    ? batchSizeOrOptions.workerId ?? `worker_${process.pid}_${Math.random().toString(36).substring(7)}`
+    : workerIdArg ?? `worker_${process.pid}_${Math.random().toString(36).substring(7)}`;
+  const leaseSeconds = isOptions ? batchSizeOrOptions.leaseSeconds ?? 300 : leaseSecondsArg;
+  const campaignId = isOptions ? batchSizeOrOptions.campaignId : campaignIdArg;
+
+  // Fail-closed guard: Batch worker processing is strictly forbidden in preview or read-only mode
+  if (isPreviewDeployment()) {
+    throw new Error(PREVIEW_READONLY_ERROR);
+  }
+  if (isProductionReadOnlyEnabled()) {
+    throw new Error(PRODUCTION_READONLY_ERROR);
+  }
+
   // 1. Atomic claim via RPC (FOR UPDATE SKIP LOCKED)
+  const rpcParams: Record<string, any> = {
+    p_batch_size: batchSize,
+    p_worker_id: workerId,
+    p_lease_seconds: leaseSeconds,
+  };
+  if (campaignId) {
+    rpcParams.p_campaign_id = campaignId;
+  }
+
   const { data: claimedDeliveries, error: claimErr } = await supabaseAdmin.rpc(
     "claim_broadcast_deliveries",
-    {
-      p_batch_size: batchSize,
-      p_worker_id: workerId,
-      p_lease_seconds: leaseSeconds,
-    }
+    rpcParams
   );
 
   if (claimErr) {
     console.error("[CAMPAIGN WORKER] Claim error:", claimErr);
-    return { processedCount: 0, successCount: 0, failureCount: 0, details: [] };
+    const error = new Error(
+      claimErr.message || "Failed to claim broadcast deliveries from queue"
+    );
+    (error as any).code = claimErr.code;
+    throw error;
   }
 
   if (!claimedDeliveries || claimedDeliveries.length === 0) {
@@ -664,4 +716,65 @@ export async function processNextBroadcastBatch(
     failureCount,
     details,
   };
+}
+
+/**
+ * Authoritatively calculates progress counters and updates campaign status
+ * strictly adhering to database constraints: 'draft', 'queued', 'processing', 'completed', 'paused', 'cancelled', 'failed'.
+ */
+export async function updateCampaignProgressAndStatus(
+  supabaseAdmin: SupabaseClient,
+  campaignId: string
+): Promise<{ status: "draft" | "queued" | "processing" | "completed" | "paused" | "cancelled" | "failed"; sentCount: number; failedCount: number; remainingCount: number }> {
+  // Query all delivery statuses for this campaign
+  const { data: deliveries, error: delErr } = await supabaseAdmin
+    .from("broadcast_deliveries")
+    .select("status")
+    .eq("campaign_id", campaignId);
+
+  if (delErr) {
+    console.error(`[CAMPAIGN WORKER] Error querying deliveries for campaign ${campaignId}:`, delErr);
+    throw delErr;
+  }
+
+  const allDeliveries = deliveries || [];
+  const total = allDeliveries.length;
+  const sentCount = allDeliveries.filter((d) => d.status === "sent" || d.status === "delivered").length;
+  const failedCount = allDeliveries.filter((d) => d.status === "failed" || d.status === "manual_review").length;
+  const remainingCount = allDeliveries.filter((d) => d.status === "queued" || d.status === "sending").length;
+
+  let newStatus: "draft" | "queued" | "processing" | "completed" | "paused" | "cancelled" | "failed";
+
+  if (total === 0) {
+    newStatus = "queued";
+  } else if (remainingCount > 0) {
+    // If any deliveries are still queued or sending, campaign is actively processing
+    newStatus = "processing";
+  } else {
+    // All deliveries finished (none queued or sending)
+    newStatus = (sentCount === total || sentCount > 0) ? "completed" : "failed";
+  }
+
+  const updatePayload: Record<string, any> = {
+    status: newStatus,
+    sent_count: sentCount,
+    failed_count: failedCount,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (newStatus === "completed" || newStatus === "failed") {
+    updatePayload.completed_at = new Date().toISOString();
+  }
+
+  const { error: updateErr } = await supabaseAdmin
+    .from("broadcast_campaigns")
+    .update(updatePayload)
+    .eq("id", campaignId);
+
+  if (updateErr) {
+    console.error(`[CAMPAIGN WORKER] Error updating campaign ${campaignId} status to ${newStatus}:`, updateErr);
+    throw updateErr;
+  }
+
+  return { status: newStatus, sentCount, failedCount, remainingCount };
 }

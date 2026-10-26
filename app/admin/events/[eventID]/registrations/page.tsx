@@ -1534,7 +1534,8 @@ export default function EventRegistrationsPage() {
       {selectedRegistration && (
 
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+          data-lenis-prevent="true"
+          className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
           onClick={
             closeRegistration
           }

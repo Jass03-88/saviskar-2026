@@ -550,7 +550,7 @@ export function PaymentVerificationDialog({
       aria-labelledby="payment-verification-title"
       data-lenis-prevent="true"
       data-lenis-prevent-wheel="true"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+      className="fixed inset-0 z-[999999] flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
       style={{ overscrollBehavior: "contain" }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -1514,7 +1514,7 @@ export function PaymentVerificationDialog({
           aria-labelledby="confirm-reconciliation-title"
           data-lenis-prevent="true"
           data-lenis-prevent-wheel="true"
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150"
+          className="fixed inset-0 z-[1000000] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150"
           onClick={(e) => {
             if (e.target === e.currentTarget && !reconciling) {
               setReconciliationTarget(null);
