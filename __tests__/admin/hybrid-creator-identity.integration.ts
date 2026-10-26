@@ -424,4 +424,107 @@ describe("Phase 5: Hybrid Campaign Creator Identity & Atomic Rollback Tests", ()
     expect(delRow!.status).toBe("failed");
     expect(delRow!.error_code).toBe("HYBRID_READONLY_PROTECTION");
   });
+  it("9. Distinct queued campaigns isolation: processing Campaign A does not claim, dispatch, or mutate Campaign B deliveries", async () => {
+    const storageClient = getBroadcastStorageClient();
+    const titleA = `Isolation Campaign A ${Date.now()}`;
+    const titleB = `Isolation Campaign B ${Date.now()}`;
+
+    // 1. Create Campaign A
+    const { data: campA } = await storageClient
+      .from("broadcast_campaigns")
+      .insert({
+        title: titleA,
+        subject: "Subject A",
+        body_html: "<p>Body A</p>",
+        body_text: "Body A",
+        campaign_type: "general",
+        status: "queued",
+        total_recipients: 1,
+        total_deliveries: 1,
+        created_by: "db9424cb-b505-4cfd-b310-25c230138ca7",
+      })
+      .select("id")
+      .single();
+
+    createdCampaignIdsToClean.push(campA!.id);
+
+    // 2. Create Campaign B
+    const { data: campB } = await storageClient
+      .from("broadcast_campaigns")
+      .insert({
+        title: titleB,
+        subject: "Subject B",
+        body_html: "<p>Body B</p>",
+        body_text: "Body B",
+        campaign_type: "general",
+        status: "queued",
+        total_recipients: 1,
+        total_deliveries: 1,
+        created_by: "db9424cb-b505-4cfd-b310-25c230138ca7",
+      })
+      .select("id")
+      .single();
+
+    createdCampaignIdsToClean.push(campB!.id);
+
+    // 3. Insert Delivery for Campaign A
+    const delAId = crypto.randomUUID();
+    await storageClient.from("broadcast_deliveries").insert({
+      id: delAId,
+      campaign_id: campA!.id,
+      recipient_email: "synthetic.candidate@saviskar.test",
+      channel: "general",
+      subject: "Subject A",
+      body_html: "<p>Body A</p>",
+      body_text: "Body A",
+      status: "queued",
+      idempotency_key: `idemp_iso_a_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+    });
+
+    // 4. Insert Delivery for Campaign B
+    const delBId = crypto.randomUUID();
+    await storageClient.from("broadcast_deliveries").insert({
+      id: delBId,
+      campaign_id: campB!.id,
+      recipient_email: "synthetic.candidate@saviskar.test",
+      channel: "general",
+      subject: "Subject B",
+      body_html: "<p>Body B</p>",
+      body_text: "Body B",
+      status: "queued",
+      idempotency_key: `idemp_iso_b_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+    });
+
+    // 5. Explicitly process Campaign A only!
+    const batchRes = await processNextBroadcastBatch(storageClient, {
+      batchSize: 5,
+      campaignId: campA!.id,
+    });
+
+    expect(batchRes.processedCount).toBe(1);
+    expect(batchRes.successCount).toBe(1);
+    const detailA = batchRes.details.find((d) => d.deliveryId === delAId);
+    expect(detailA).toBeDefined();
+    expect(detailA!.success).toBe(true);
+
+    // 6. Verify Campaign A delivery state: updated to 'sent'
+    const { data: delRowA } = await storageClient
+      .from("broadcast_deliveries")
+      .select("status, attempts")
+      .eq("id", delAId)
+      .single();
+    expect(delRowA!.status).toBe("sent");
+
+    // 7. Verify Campaign B delivery state: strictly untouched, status remains 'queued', attempts remains 0!
+    const { data: delRowB } = await storageClient
+      .from("broadcast_deliveries")
+      .select("status, attempts, locked_at, locked_by")
+      .eq("id", delBId)
+      .single();
+    expect(delRowB!.status).toBe("queued");
+    expect(delRowB!.attempts).toBe(0);
+    expect(delRowB!.locked_at).toBeNull();
+    expect(delRowB!.locked_by).toBeNull();
+  });
+
 });

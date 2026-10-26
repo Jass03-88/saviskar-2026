@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireMasterAdmin } from "@/lib/supabase/server";
 import { getBroadcastSupabaseAdmin } from "@/lib/broadcast/supabase-admin";
-import { processNextBroadcastBatch } from "@/lib/broadcast/campaign-worker";
+import {
+  processNextBroadcastBatch,
+  updateCampaignProgressAndStatus,
+} from "@/lib/broadcast/campaign-worker";
 
 export const dynamic = "force-dynamic";
 
@@ -36,39 +39,21 @@ export async function POST(
     }
 
     const supabaseAdmin = getBroadcastSupabaseAdmin();
-    const result = await processNextBroadcastBatch(supabaseAdmin, batchSize);
 
-    // Update campaign status if all deliveries are finished
-    const { data: remaining } = await supabaseAdmin
-      .from("broadcast_deliveries")
-      .select("status")
-      .eq("campaign_id", id)
-      .in("status", ["queued", "sending"]);
+    // 1. Atomically process batch strictly scoped to this specific campaign
+    const result = await processNextBroadcastBatch(supabaseAdmin, {
+      batchSize,
+      campaignId: id,
+    });
 
-    if (remaining && remaining.length === 0) {
-      const { data: counts } = await supabaseAdmin
-        .from("broadcast_deliveries")
-        .select("status")
-        .eq("campaign_id", id);
-
-      const total = counts?.length || 0;
-      const sent = counts?.filter((c) => c.status === "sent" || c.status === "delivered").length || 0;
-      const failed = counts?.filter((c) => c.status === "failed" || c.status === "manual_review").length || 0;
-
-      await supabaseAdmin
-        .from("broadcast_campaigns")
-        .update({
-          status: sent === total ? "completed" : "failed",
-          sent_count: sent,
-          failed_count: failed,
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", id);
-    }
+    // 2. Authoritatively reconcile campaign status and counters adhering to check constraints
+    const progress = await updateCampaignProgressAndStatus(supabaseAdmin, id);
 
     return NextResponse.json({
       success: true,
       batchSize,
+      campaignStatus: progress.status,
+      remainingCount: progress.remainingCount,
       ...result,
     });
   } catch (err: any) {

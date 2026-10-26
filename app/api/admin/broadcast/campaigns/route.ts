@@ -12,6 +12,7 @@ import {
   createGeneralBroadcastCampaign,
   createCertificateCampaign,
   processNextBroadcastBatch,
+  updateCampaignProgressAndStatus,
 } from "@/lib/broadcast/campaign-worker";
 import {
   resolveGeneralBroadcastRecipients,
@@ -21,50 +22,6 @@ import {
   SYNTHETIC_GENERAL_RECIPIENTS,
   SYNTHETIC_CERTIFICATE_CANDIDATES,
 } from "@/lib/broadcast/hybrid-fixtures";
-
-async function reconcileCampaignStatus(supabaseAdmin: any, campaignId: string) {
-  let batchResult = { processedCount: 0, successCount: 0, failureCount: 0, details: [] as any[] };
-  try {
-    batchResult = await processNextBroadcastBatch(supabaseAdmin, 25);
-
-    const { data: remaining } = await supabaseAdmin
-      .from("broadcast_deliveries")
-      .select("status")
-      .eq("campaign_id", campaignId)
-      .in("status", ["queued", "sending"]);
-
-    if (remaining && remaining.length === 0) {
-      const { data: counts } = await supabaseAdmin
-        .from("broadcast_deliveries")
-        .select("status")
-        .eq("campaign_id", campaignId);
-
-      const total = counts?.length || 0;
-      const sent = counts?.filter((c: any) => c.status === "sent" || c.status === "delivered").length || 0;
-      const failed = counts?.filter((c: any) => c.status === "failed" || c.status === "manual_review").length || 0;
-
-      await supabaseAdmin
-        .from("broadcast_campaigns")
-        .update({
-          status: sent === total ? "completed" : "failed",
-          sent_count: sent,
-          failed_count: failed,
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", campaignId);
-    } else {
-      await supabaseAdmin
-        .from("broadcast_campaigns")
-        .update({
-          status: "sending",
-        })
-        .eq("id", campaignId);
-    }
-  } catch (procErr) {
-    console.error("[AUTO BATCH WORKER ERROR]:", procErr);
-  }
-  return batchResult;
-}
 
 export const dynamic = "force-dynamic";
 
@@ -155,6 +112,7 @@ export async function POST(request: NextRequest) {
       selectedItemKeys,
       sendIndividual = true,
       sendTeamBackup = true,
+      dispatchImmediately = false,
     } = body;
 
     if (!title || !subject || !bodyHtml) {
@@ -220,13 +178,24 @@ export async function POST(request: NextRequest) {
         adminEmail,
       });
 
-      // Atomically claim and dispatch initial batch in local Docker Supabase
-      const batchResult = await reconcileCampaignStatus(storageClient, result.campaignId);
+      let batchResult = { processedCount: 0, successCount: 0, failureCount: 0 };
+      let campaignStatus = "queued";
+
+      // Dispatch behavior: enqueue only by default; begin dispatch immediately only upon explicit request
+      if (dispatchImmediately) {
+        batchResult = await processNextBroadcastBatch(storageClient, {
+          batchSize: 25,
+          campaignId: result.campaignId,
+        });
+        const progress = await updateCampaignProgressAndStatus(storageClient, result.campaignId);
+        campaignStatus = progress.status;
+      }
 
       return NextResponse.json({
         success: true,
         campaignId: result.campaignId,
         totalDeliveries: result.totalDeliveries,
+        campaignStatus,
         processedCount: batchResult.processedCount,
         successCount: batchResult.successCount,
         failureCount: batchResult.failureCount,
@@ -294,14 +263,25 @@ export async function POST(request: NextRequest) {
         authoritativeCandidates
       );
 
-      // Atomically claim and dispatch initial batch in local Docker Supabase
-      const batchResult = await reconcileCampaignStatus(storageClient, result.campaignId);
+      let batchResult = { processedCount: 0, successCount: 0, failureCount: 0 };
+      let campaignStatus = "queued";
+
+      // Dispatch behavior: enqueue only by default; begin dispatch immediately only upon explicit request
+      if (dispatchImmediately) {
+        batchResult = await processNextBroadcastBatch(storageClient, {
+          batchSize: 25,
+          campaignId: result.campaignId,
+        });
+        const progress = await updateCampaignProgressAndStatus(storageClient, result.campaignId);
+        campaignStatus = progress.status;
+      }
 
       return NextResponse.json({
         success: true,
         campaignId: result.campaignId,
         totalDeliveries: result.totalDeliveries,
         totalCertificates: result.totalCertificates,
+        campaignStatus,
         processedCount: batchResult.processedCount,
         successCount: batchResult.successCount,
         failureCount: batchResult.failureCount,

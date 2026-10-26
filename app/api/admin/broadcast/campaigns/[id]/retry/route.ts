@@ -83,10 +83,13 @@ export async function POST(
       }
 
       // Ensure campaign is set back to processing / queued
-      await supabaseAdmin
+      const { error: updateCampErr } = await supabaseAdmin
         .from("broadcast_campaigns")
         .update({ status: "processing" })
         .eq("id", id);
+      if (updateCampErr) {
+        return NextResponse.json({ error: updateCampErr.message }, { status: 500 });
+      }
 
       return NextResponse.json({
         success: true,
@@ -169,13 +172,16 @@ export async function POST(
           .eq("id", id)
           .single();
 
-        await supabaseAdmin
+        const { error: updateCampErr2 } = await supabaseAdmin
           .from("broadcast_campaigns")
           .update({
             total_deliveries: (campaign?.total_deliveries || 0) + newDeliveries.length,
             status: "processing",
           })
           .eq("id", id);
+        if (updateCampErr2) {
+          return NextResponse.json({ error: updateCampErr2.message }, { status: 500 });
+        }
       }
 
       return NextResponse.json({

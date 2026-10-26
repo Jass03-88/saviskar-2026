@@ -86,6 +86,8 @@ export default function AdminBroadcastPage() {
 
   // General Broadcast state
   const [generalTitle, setGeneralTitle] = useState("");
+  const [generalDispatchImmediately, setGeneralDispatchImmediately] = useState(false);
+  const [certDispatchImmediately, setCertDispatchImmediately] = useState(false);
   const [generalSubject, setGeneralSubject] = useState("");
   const [generalBodyHtml, setGeneralBodyHtml] = useState(
     `<p>Dear Saviskar Participant,</p>\n<p>We are delighted to share key updates regarding Saviskar 2026.</p>\n<p>Best regards,<br/>Department of Student Affairs<br/>CGC University, Mohali</p>`
@@ -340,6 +342,7 @@ export default function AdminBroadcastPage() {
           bodyHtml: generalBodyHtml,
           campaignType: "general",
           selectedEmails: Array.from(selectedGeneralEmails),
+          dispatchImmediately: generalDispatchImmediately,
         }),
       });
 
@@ -398,6 +401,7 @@ export default function AdminBroadcastPage() {
           selectedItemKeys: Array.from(selectedCertKeys),
           sendIndividual,
           sendTeamBackup,
+          dispatchImmediately: certDispatchImmediately,
         }),
       });
 
@@ -725,6 +729,34 @@ export default function AdminBroadcastPage() {
                 />
               </div>
 
+              <div className="mb-3 rounded-2xl border border-black/10 bg-black/[0.02] p-3">
+                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-black/80 select-none">
+                  <input
+                    type="checkbox"
+                    checked={generalDispatchImmediately}
+                    onChange={(e) => setGeneralDispatchImmediately(e.target.checked)}
+                    className="h-4 w-4 rounded border-black/20 text-black focus:ring-0 accent-black cursor-pointer"
+                  />
+                  <span>Begin dispatch immediately upon creation (sends first batch of up to 25 emails)</span>
+                </label>
+                <p className="mt-1 text-[11px] text-black/50 pl-6">
+                  When unchecked, the campaign is enqueued safely in the database for review before manual dispatch via &ldquo;Process Queue&rdquo;.
+                </p>
+              </div>
+              <div className="mb-3 rounded-2xl border border-black/10 bg-black/[0.02] p-3">
+                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-black/80 select-none">
+                  <input
+                    type="checkbox"
+                    checked={certDispatchImmediately}
+                    onChange={(e) => setCertDispatchImmediately(e.target.checked)}
+                    className="h-4 w-4 rounded border-black/20 text-black focus:ring-0 accent-black cursor-pointer"
+                  />
+                  <span>Begin dispatch immediately upon creation (sends first batch of up to 25 emails)</span>
+                </label>
+                <p className="mt-1 text-[11px] text-black/50 pl-6">
+                  When unchecked, certificates are generated and queued in the database. You can review certificates before manual dispatch via &ldquo;Process Queue&rdquo;.
+                </p>
+              </div>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
                 <div className="text-xs text-black/50">
                   Dedicated Sender:{" "}

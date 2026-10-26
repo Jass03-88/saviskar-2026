@@ -16,6 +16,7 @@ import {
   RAW_ATTACHMENT_THRESHOLD_BYTES,
   EmailAttachment,
 } from "@/lib/email/campaign-service";
+import * as recipientResolverLib from "@/lib/broadcast/recipient-resolver";
 import {
   resolveGeneralBroadcastRecipients,
   resolveCertificateCandidates,
@@ -1355,4 +1356,180 @@ describe("Saviskar 2026 — Master Admin Email Broadcast & Participation Certifi
       expect(last.subject).toBe("Safe Hybrid Email");
     });
   });
+
+  // =========================================================================
+  // PRE-MERGE SAFETY REGRESSION SUITE: CAMPAIGN STATUS & SCOPED QUEUE WORKER
+  // =========================================================================
+  describe("Pre-Merge Safety: Campaign Status Consistency & Scoped Queue Worker", () => {
+    it("updateCampaignProgressAndStatus transitions multi-batch campaign through 'processing' to 'completed' without using 'sending'", async () => {
+      const { updateCampaignProgressAndStatus } = await import("@/lib/broadcast/campaign-worker");
+      const campaignId = "c-multi-batch-001";
+
+      // Mock deliveries: total 4 deliveries.
+      // Batch 1: 2 sent, 2 still queued.
+      let mockDeliveries = [
+        { status: "sent" },
+        { status: "sent" },
+        { status: "queued" },
+        { status: "queued" },
+      ];
+
+      let updatedPayload: any = null;
+      const mockSupabase = {
+        from: (table: string) => {
+          if (table === "broadcast_deliveries") {
+            return {
+              select: () => ({
+                eq: (col: string, val: string) => Promise.resolve({ data: mockDeliveries, error: null }),
+              }),
+            };
+          }
+          if (table === "broadcast_campaigns") {
+            return {
+              update: (payload: any) => ({
+                eq: (col: string, val: string) => {
+                  updatedPayload = payload;
+                  return Promise.resolve({ error: null });
+                },
+              }),
+            };
+          }
+          return {};
+        },
+      } as any;
+
+      // 1. After Batch 1: remainingCount = 2 > 0 -> status MUST transition to 'processing'
+      const progress1 = await updateCampaignProgressAndStatus(mockSupabase, campaignId);
+      expect(progress1.status).toBe("processing");
+      expect(progress1.sentCount).toBe(2);
+      expect(progress1.failedCount).toBe(0);
+      expect(progress1.remainingCount).toBe(2);
+      expect(updatedPayload.status).toBe("processing");
+      expect(updatedPayload.status).not.toBe("sending"); // Never 'sending' on campaign row
+      expect(updatedPayload.completed_at).toBeUndefined();
+
+      // 2. After Batch 2: all 4 are sent, remainingCount = 0 -> status MUST transition to 'completed'
+      mockDeliveries = [
+        { status: "sent" },
+        { status: "sent" },
+        { status: "sent" },
+        { status: "sent" },
+      ];
+
+      const progress2 = await updateCampaignProgressAndStatus(mockSupabase, campaignId);
+      expect(progress2.status).toBe("completed");
+      expect(progress2.sentCount).toBe(4);
+      expect(progress2.failedCount).toBe(0);
+      expect(progress2.remainingCount).toBe(0);
+      expect(updatedPayload.status).toBe("completed");
+      expect(updatedPayload.completed_at).toBeDefined();
+    });
+
+    it("updateCampaignProgressAndStatus throws and does not ignore database query or update errors", async () => {
+      const { updateCampaignProgressAndStatus } = await import("@/lib/broadcast/campaign-worker");
+      const campaignId = "c-err-001";
+
+      const mockSupabaseError = {
+        from: (table: string) => ({
+          select: () => ({
+            eq: () => Promise.resolve({ data: null, error: new Error("DB Connection Error") }),
+          }),
+        }),
+      } as any;
+
+      await expect(updateCampaignProgressAndStatus(mockSupabaseError, campaignId)).rejects.toThrow("DB Connection Error");
+    });
+
+    it("processNextBroadcastBatch passes campaignId to claim_broadcast_deliveries RPC preventing cross-campaign dispatch", async () => {
+      const { processNextBroadcastBatch } = await import("@/lib/broadcast/campaign-worker");
+      const targetCampaignId = "c-target-alpha-123";
+
+      let capturedRpcParams: any = null;
+      const mockSupabase = {
+        rpc: (fn: string, params: any) => {
+          if (fn === "claim_broadcast_deliveries") {
+            capturedRpcParams = params;
+            return Promise.resolve({ data: [], error: null });
+          }
+          return Promise.resolve({ data: null, error: null });
+        },
+      } as any;
+
+      const result = await processNextBroadcastBatch(mockSupabase, {
+        batchSize: 10,
+        campaignId: targetCampaignId,
+      });
+
+      expect(result.processedCount).toBe(0);
+      expect(capturedRpcParams).toBeDefined();
+      expect(capturedRpcParams.p_campaign_id).toBe(targetCampaignId);
+      expect(capturedRpcParams.p_batch_size).toBe(10);
+    });
+
+    it("POST /api/admin/broadcast/campaigns enqueues only by default without dispatching emails (processedCount = 0)", async () => {
+      vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+        user: { id: "master-uuid", email: "admin@saviskar.test" },
+      } as any);
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(true);
+      vi.spyOn(adminLib, "getHostedRegistrationReadClient").mockReturnValue({} as any);
+      vi.spyOn(recipientResolverLib, "resolveGeneralBroadcastRecipients").mockResolvedValue([
+        {
+          normalizedEmail: "synthetic.candidate@saviskar.test",
+          originalEmail: "synthetic.candidate@saviskar.test",
+          name: "Synthetic Candidate",
+          sources: ["event"],
+          details: { eventIds: ["evt-1"] },
+          isValidEmail: true,
+        },
+      ]);
+
+      const fakeCampaignId = "c-enqueue-default-999";
+      let campaignStatusSet: string = "";
+
+      const mockStorage = {
+        from: (table: string) => ({
+          insert: (payload: any) => ({
+            select: () => ({
+              single: () => {
+                campaignStatusSet = Array.isArray(payload) ? payload[0]?.status : payload?.status;
+                return Promise.resolve({
+                  data: { id: fakeCampaignId, ...payload },
+                  error: null,
+                });
+              },
+            }),
+          }),
+          select: () => ({
+            single: () => Promise.resolve({ data: { id: fakeCampaignId }, error: null }),
+            eq: () => Promise.resolve({ data: [], error: null }),
+          }),
+        }),
+      } as any;
+
+      vi.spyOn(adminLib, "getBroadcastSupabaseAdmin").mockReturnValue(mockStorage);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Default Enqueue Test",
+          subject: "Test Subject",
+          bodyHtml: "<p>Hello</p>",
+          campaignType: "general",
+          selectedEmails: ["synthetic.candidate@saviskar.test"],
+          // dispatchImmediately is omitted (default: false)
+        }),
+      });
+
+      const res = await postCampaignsRoute(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.campaignStatus).toBe("queued");
+      expect(json.processedCount).toBe(0);
+      expect(json.successCount).toBe(0);
+      expect(json.failureCount).toBe(0);
+      expect(campaignStatusSet).toBe("queued");
+    });
+  });
+
 });
