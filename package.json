@@ -11,7 +11,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "sync-rulebooks": "node --experimental-strip-types scripts/sync-rulebooks.mjs"
+    "sync-rulebooks": "node --experimental-strip-types scripts/sync-rulebooks.mjs",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",

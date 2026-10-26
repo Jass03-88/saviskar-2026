@@ -1,6 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isAdminSessionExpired, toAdminSessionCookieOptions } from "./admin-session";
+import {
+  isAdminSessionExpired,
+  toAdminSessionCookieOptions,
+  isLocalDevelopmentMfaBypassAllowed,
+} from "./admin-session";
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -119,7 +123,7 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
 
-  if (adminRow?.role === "master" && !isExemptPath) {
+  if (adminRow?.role === "master" && !isExemptPath && !isLocalDevelopmentMfaBypassAllowed()) {
     const { data: mfaData, error: mfaError } =
       await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
 

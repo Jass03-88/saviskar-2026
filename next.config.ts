@@ -28,13 +28,22 @@ const nextConfig: NextConfig = {
     ],
   },
   async headers() {
+    const isLocalSupabase =
+      process.env.NODE_ENV === "development" &&
+      Boolean(
+        process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("127.0.0.1:54321") ||
+        process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("localhost:54321")
+      );
+    const localConnectSrc = isLocalSupabase ? " http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*" : "";
+    const localImgSrc = isLocalSupabase ? " http://127.0.0.1:* http://localhost:*" : "";
+
     const cspHeader = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
-      "img-src 'self' data: blob: https://*.supabase.co https://img.youtube.com https://i.ytimg.com https://lh3.googleusercontent.com https://drive.google.com",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.resend.com https://secure.payu.in https://test.payu.in https://info.payu.in https://api.payu.in https://*.payu.in https://payu.in",
+      `img-src 'self' data: blob: https://*.supabase.co https://img.youtube.com https://i.ytimg.com https://lh3.googleusercontent.com https://drive.google.com${localImgSrc}`,
+      `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.resend.com https://secure.payu.in https://test.payu.in https://info.payu.in https://api.payu.in https://*.payu.in https://payu.in${localConnectSrc}`,
       "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://secure.payu.in https://test.payu.in https://api.payu.in https://*.payu.in https://payu.in",
       "worker-src 'self' blob:",
       "object-src 'none'",

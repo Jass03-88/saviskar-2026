@@ -19,6 +19,7 @@ vi.mock("../../lib/supabase/admin-session", () => ({
   getAdminSessionMaxAgeSeconds: vi.fn(),
   DEFAULT_ADMIN_SESSION_MAX_AGE_SECONDS: 3600,
   toAdminSessionCookieOptions: vi.fn(),
+  isLocalDevelopmentMfaBypassAllowed: vi.fn(() => false),
 }));
 
 describe("Admin MFA Regression", () => {
