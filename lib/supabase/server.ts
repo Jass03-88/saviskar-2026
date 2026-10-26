@@ -5,6 +5,7 @@ import {
   getAdminSessionMaxAgeSeconds,
   DEFAULT_ADMIN_SESSION_MAX_AGE_SECONDS,
   toAdminSessionCookieOptions,
+  isLocalDevelopmentMfaBypassAllowed,
 } from "./admin-session";
 
 export {
@@ -12,6 +13,7 @@ export {
   getAdminSessionMaxAgeSeconds,
   DEFAULT_ADMIN_SESSION_MAX_AGE_SECONDS,
   toAdminSessionCookieOptions,
+  isLocalDevelopmentMfaBypassAllowed,
 };
 
 export type AdminRole = "master" | "admin";
@@ -118,8 +120,8 @@ export async function requireAdmin() {
 
   const role = (admin.role ?? "admin") as AdminRole;
 
-  // Master admins MUST complete Google Authenticator MFA.
-  if (role === "master") {
+  // Master admins MUST complete Google Authenticator MFA (in production/staging).
+  if (role === "master" && !isLocalDevelopmentMfaBypassAllowed()) {
     const {
       data: assurance,
       error: assuranceError,

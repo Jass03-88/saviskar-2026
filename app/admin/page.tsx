@@ -1906,6 +1906,15 @@ export default function AdminPage() {
                     <span>Audit Logs</span>
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin/broadcast")}
+                    className="flex items-center gap-2 rounded-full bg-black px-4 py-2.5 text-sm text-white transition hover:scale-[1.02] shadow-sm"
+                  >
+                    <Mail size={15} />
+                    <span>Email Broadcast</span>
+                  </button>
+
                   {adminIdentity?.isPrimary && (
                     <button
                       type="button"
