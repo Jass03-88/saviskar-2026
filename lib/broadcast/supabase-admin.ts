@@ -23,37 +23,161 @@ export const CANONICAL_PRODUCTION_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Strips port number and handles bracketed IPv6 addresses safely.
+ */
+export function stripPort(host: string): string {
+  if (!host) return "";
+  const h = host.trim().toLowerCase();
+  if (h.startsWith(":")) return "malformed_host";
+  if (h.startsWith("[")) {
+    const closeBracket = h.indexOf("]");
+    if (closeBracket !== -1) {
+      return h.slice(0, closeBracket + 1);
+    }
+    return "malformed_host";
+  }
+  return h.includes(":") ? h.split(":")[0] : h;
+}
+
+/**
+ * Known loopback, local, and private RFC-1918 internal addresses used when Node.js runs
+ * behind a reverse proxy (e.g. Hostinger, Nginx, Docker, container networks).
+ */
+export const INTERNAL_LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
+  "localhost",
+  "127.0.0.1",
+  "0.0.0.0",
+  "::1",
+  "[::1]",
+]);
+
+export function isInternalOrLoopbackHost(host: string | null): boolean {
+  if (!host) return false;
+  const h = stripPort(host.trim().toLowerCase());
+  if (INTERNAL_LOOPBACK_HOSTS.has(h)) return true;
+
+  // Loopback 127.0.0.0/8
+  if (/^127(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/.test(h)) return true;
+
+  // RFC-1918 Private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+  if (/^10(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/.test(h)) return true;
+  if (/^172\.(?:1[6-9]|2[0-9]|3[0-1])(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){2}$/.test(h)) return true;
+  if (/^192\.168(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){2}$/.test(h)) return true;
+
+  // Internal domain suffixes
+  if (h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".lan")) return true;
+
+  // Single-word internal container hosts without dots (e.g. "node", "app", "web", "frontend")
+  if (!h.includes(".") && !h.includes(":") && !h.includes("[") && !h.includes("]")) return true;
+
+  return false;
+}
+
+export function isPreviewHost(host: string | null): boolean {
+  if (!host) return false;
+  const h = host.trim().toLowerCase();
+  return (
+    h.includes("hostingersite.com") ||
+    (h.includes("hostinger") && !isCanonicalProductionHost(h)) ||
+    h.includes("vercel.app") ||
+    h.includes("preview") ||
+    h.includes("ngrok") ||
+    h.includes("trycloudflare") ||
+    h.includes("loca.lt")
+  );
+}
+
+/**
  * Extracts normalized hostname from incoming HTTP request headers or NextUrl.
  * Supports standard Request, NextRequest, or mock objects with headers.
+ *
+ * Hostinger & Reverse Proxy Architecture:
+ * 1. Behind Hostinger's reverse proxy, Next.js runs on an internal loopback address (e.g. localhost, 127.0.0.1).
+ *    Consequently, nextUrl.hostname is an internal hostname.
+ * 2. The legitimate public hostname is supplied in the Host or X-Forwarded-Host headers.
+ * 3. Fail-closed security invariants:
+ *    - If ANY host source (nextUrl, Host, or any X-Forwarded-Host in the chain) contains a preview domain indicator,
+ *      fail closed to preview mode immediately.
+ *    - If the incoming Host header was sent for an external non-canonical domain (not internal/loopback),
+ *      a spoofed X-Forwarded-Host claiming saviskar.co.in must NEVER be trusted.
  */
 export function extractHostFromRequest(req?: Request | any): string | null {
   if (!req) return null;
 
-  // 1. Inspect underlying resolved request URL if available (e.g. from NextRequest).
-  // If the server physically received the request on a non-canonical host (e.g. Hostinger preview),
-  // an incoming x-forwarded-host header claiming saviskar.co.in must NEVER authorize production!
-  const nextUrlHost = req.nextUrl?.hostname ? req.nextUrl.hostname.toLowerCase() : null;
-  if (nextUrlHost && !isCanonicalProductionHost(nextUrlHost)) {
+  // 1. Gather raw host candidates from available sources:
+  const nextUrlHost = req.nextUrl?.hostname
+    ? stripPort(req.nextUrl.hostname.toLowerCase())
+    : req.url
+    ? (() => {
+        try {
+          return stripPort(new URL(req.url).hostname.toLowerCase());
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
+  const forwardedHeader = req.headers?.get?.("x-forwarded-host");
+  const hostHeader = req.headers?.get?.("host");
+
+  const parsedHostHeader = hostHeader
+    ? stripPort(hostHeader.split(",")[0].trim().toLowerCase())
+    : null;
+
+  const forwardedList = forwardedHeader
+    ? forwardedHeader
+        .split(",")
+        .map((h: string) => stripPort(h.trim().toLowerCase()))
+        .filter(Boolean)
+    : [];
+  const primaryForwardedHost = forwardedList.length > 0 ? forwardedList[0] : null;
+
+  // 2. FAIL-CLOSED CHECK: If ANY host source contains a preview domain indicator,
+  // fail closed to preview immediately.
+  if (
+    isPreviewHost(nextUrlHost) ||
+    isPreviewHost(parsedHostHeader) ||
+    forwardedList.some((h: string) => isPreviewHost(h))
+  ) {
+    return (
+      (isPreviewHost(nextUrlHost) && nextUrlHost) ||
+      (isPreviewHost(parsedHostHeader) && parsedHostHeader) ||
+      forwardedList.find((h: string) => isPreviewHost(h)) ||
+      "preview_detected"
+    );
+  }
+
+  // 3. FAIL-CLOSED CHECK: Anti-spoofing against non-internal host header mismatches.
+  // If the physical request host header was sent for an external non-canonical host (e.g. unknown domain),
+  // a spoofed x-forwarded-host claiming saviskar.co.in must NEVER be trusted!
+  if (
+    parsedHostHeader &&
+    !isCanonicalProductionHost(parsedHostHeader) &&
+    !isInternalOrLoopbackHost(parsedHostHeader)
+  ) {
+    return parsedHostHeader;
+  }
+
+  if (
+    nextUrlHost &&
+    !isCanonicalProductionHost(nextUrlHost) &&
+    !isInternalOrLoopbackHost(nextUrlHost)
+  ) {
     return nextUrlHost;
   }
 
-  // 2. Inspect headers
-  const forwarded = req.headers?.get?.("x-forwarded-host");
-  const hostHeader = req.headers?.get?.("host");
-  const raw = forwarded || hostHeader || nextUrlHost || null;
-  if (!raw || typeof raw !== "string") return null;
+  // 4. Resolve the legitimate host supplied by the trusted hosting layer:
+  // - If primaryForwardedHost is available, check it first.
+  // - Otherwise use parsedHostHeader.
+  // - Otherwise fallback to nextUrlHost.
+  const resolved = primaryForwardedHost || parsedHostHeader || nextUrlHost || null;
+  if (!resolved || typeof resolved !== "string") return null;
 
-  const first = raw.split(",")[0].trim().toLowerCase();
-  if (!first) return "malformed_empty_host";
-
-  // Strings starting with colon (e.g. ":::malformed" or ":3000") are malformed host headers
-  if (first.startsWith(":")) {
+  if (resolved.startsWith(":")) {
     return "malformed_host";
   }
 
-  // Strip trailing port if present (e.g., "saviskar.co.in:443" -> "saviskar.co.in")
-  const hostPart = first.includes(":") ? first.split(":")[0] : first;
-  return hostPart || "malformed_host";
+  return resolved;
 }
 
 /**
@@ -314,6 +438,108 @@ export function getBroadcastOperationalMode(req?: Request | any): BroadcastOpera
   if (selfModule.isProductionReadOnlyEnabled(req)) return "production_readonly";
   if (selfModule.isHybridDevelopmentModeActive()) return "hybrid_development";
   return "preview";
+}
+
+export interface BroadcastServerDiagnostics {
+  operationalMode: BroadcastOperationalMode;
+  isPreview: boolean;
+  isProductionReadOnly: boolean;
+  isLiveProduction: boolean;
+  isHybridDevelopment: boolean;
+  nodeEnv: string | null;
+  flags: {
+    liveDispatchEnabled: boolean;
+    productionReadOnlyEnabled: boolean;
+    hasVercelPreview: boolean;
+    hasHostingerPreview: boolean;
+    hasAppEnvPreview: boolean;
+    hasSaviskarPreview: boolean;
+  };
+  hostValidation: {
+    nextUrlHost: string | null;
+    isNextUrlInternal: boolean;
+    isNextUrlCanonical: boolean;
+    isNextUrlPreview: boolean;
+    hostHeader: string | null;
+    isHostHeaderCanonical: boolean;
+    isHostHeaderInternal: boolean;
+    isHostHeaderPreview: boolean;
+    forwardedHost: string | null;
+    isForwardedHostCanonical: boolean;
+    isForwardedHostPreview: boolean;
+    resolvedRequestHost: string | null;
+    isResolvedRequestHostCanonical: boolean;
+    siteUrlHost: string | null;
+    isSiteUrlCanonical: boolean;
+    isSiteUrlPreview: boolean;
+  };
+}
+
+/**
+ * Safe server-side diagnostic reporting mode and host-validation booleans.
+ * Never logs or exposes secrets, cookies, session tokens, service-role keys, or participant data.
+ */
+export function getBroadcastDiagnostics(req?: Request | any): BroadcastServerDiagnostics {
+  const nextUrlHost = req?.nextUrl?.hostname
+    ? stripPort(req.nextUrl.hostname.toLowerCase())
+    : req?.url
+    ? (() => {
+        try {
+          return stripPort(new URL(req.url).hostname.toLowerCase());
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
+  const rawHostHeader = req?.headers?.get?.("host");
+  const hostHeader = rawHostHeader
+    ? stripPort(rawHostHeader.split(",")[0].trim().toLowerCase())
+    : null;
+
+  const rawForwardedHeader = req?.headers?.get?.("x-forwarded-host");
+  const forwardedHost = rawForwardedHeader
+    ? stripPort(rawForwardedHeader.split(",")[0].trim().toLowerCase())
+    : null;
+
+  const resolved = extractHostFromRequest(req);
+  const siteUrlHost = extractHostFromSiteUrl();
+  const siteUrlRaw = (process.env.NEXT_PUBLIC_SITE_URL || "").toLowerCase();
+
+  return {
+    operationalMode: selfModule.getBroadcastOperationalMode(req),
+    isPreview: selfModule.isPreviewDeployment(req),
+    isProductionReadOnly: selfModule.isProductionReadOnlyEnabled(req),
+    isLiveProduction: selfModule.isLiveBroadcastEnabled(req),
+    isHybridDevelopment: selfModule.isHybridDevelopmentModeActive(),
+    nodeEnv: process.env.NODE_ENV || null,
+    flags: {
+      liveDispatchEnabled: process.env.SAVISKAR_BROADCAST_LIVE_ENABLED === "true",
+      productionReadOnlyEnabled: process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED === "true",
+      hasVercelPreview: process.env.VERCEL_ENV === "preview",
+      hasHostingerPreview: process.env.HOSTINGER_PREVIEW === "true",
+      hasAppEnvPreview: process.env.APP_ENV === "preview" || process.env.NEXT_PUBLIC_APP_ENV === "preview",
+      hasSaviskarPreview: process.env.SAVISKAR_PREVIEW === "true",
+    },
+    hostValidation: {
+      nextUrlHost,
+      isNextUrlInternal: isInternalOrLoopbackHost(nextUrlHost),
+      isNextUrlCanonical: isCanonicalProductionHost(nextUrlHost),
+      isNextUrlPreview: isPreviewHost(nextUrlHost),
+      hostHeader,
+      isHostHeaderCanonical: isCanonicalProductionHost(hostHeader),
+      isHostHeaderInternal: isInternalOrLoopbackHost(hostHeader),
+      isHostHeaderPreview: isPreviewHost(hostHeader),
+      forwardedHost,
+      isForwardedHostCanonical: isCanonicalProductionHost(forwardedHost),
+      isForwardedHostPreview: isPreviewHost(forwardedHost),
+      resolvedRequestHost: resolved,
+      isResolvedRequestHostCanonical: isCanonicalProductionHost(resolved),
+      siteUrlHost,
+      isSiteUrlCanonical: isCanonicalProductionHost(siteUrlHost),
+      isSiteUrlPreview: isPreviewHost(siteUrlHost) || siteUrlRaw.includes("preview") || siteUrlRaw.includes("hostinger"),
+    },
+  };
 }
 
 export function isSyntheticTestEmail(email?: string | null): boolean {

@@ -8,6 +8,7 @@ import {
   isProductionReadOnlyEnabled,
   isLiveBroadcastEnabled,
   getBroadcastOperationalMode,
+  getBroadcastDiagnostics,
 } from "@/lib/broadcast/supabase-admin";
 import {
   resolveGeneralBroadcastRecipients,
@@ -41,6 +42,10 @@ export async function GET(request: NextRequest) {
     const isProductionReadOnly = isProductionReadOnlyEnabled(request);
     const isLiveProduction = isLiveBroadcastEnabled(request);
     const mode = getBroadcastOperationalMode(request);
+    const diagnostics = getBroadcastDiagnostics(request);
+
+    // Safe server-side diagnostic log: booleans and host matching only, zero secrets or user data
+    console.info("[BROADCAST SERVER DIAGNOSTICS]", JSON.stringify(diagnostics));
 
     const searchParams = request.nextUrl.searchParams;
     const type = searchParams.get("type") || "general";
@@ -62,6 +67,7 @@ export async function GET(request: NextRequest) {
           eligibleCount,
           ineligibleCount,
           recipients: candidates,
+          diagnostics,
         });
       }
 
@@ -80,6 +86,7 @@ export async function GET(request: NextRequest) {
         validCount,
         invalidCount,
         recipients,
+        diagnostics,
       });
     }
 
@@ -113,6 +120,7 @@ export async function GET(request: NextRequest) {
         eligibleCount,
         ineligibleCount,
         recipients: candidates,
+        diagnostics,
       });
     }
 
@@ -136,6 +144,7 @@ export async function GET(request: NextRequest) {
       validCount,
       invalidCount,
       recipients,
+      diagnostics,
     });
   } catch (err: any) {
     console.error("[API BROADCAST RECIPIENTS ERROR]:", err);

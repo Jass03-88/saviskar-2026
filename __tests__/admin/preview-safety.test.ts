@@ -15,9 +15,13 @@ import {
   isPreviewDeployment,
   isProductionReadOnlyEnabled,
   getBroadcastOperationalMode,
+  getBroadcastDiagnostics,
   extractHostFromRequest,
   extractHostFromSiteUrl,
   isCanonicalProductionHost,
+  isInternalOrLoopbackHost,
+  isPreviewHost,
+  stripPort,
   CANONICAL_PRODUCTION_HOSTS,
   PRODUCTION_READONLY_ERROR,
 } from "@/lib/broadcast/supabase-admin";
@@ -915,6 +919,305 @@ describe("Saviskar 2026 — Fail-Closed Preview Deployment Safety Suite", () => 
       await expect(
         processNextBroadcastBatch(null as any, 10)
       ).rejects.toThrow(PRODUCTION_READONLY_ERROR);
+    });
+  });
+
+  // =========================================================================
+  // 7. Hostinger Reverse Proxy & Canonical Host Detection Suite
+  // =========================================================================
+  describe("7. Hostinger Reverse Proxy & Canonical Host Detection Suite", () => {
+    const PROD_CANONICAL_URL = "https://saviskar.co.in";
+    const PROD_CANONICAL_HOST = "saviskar.co.in";
+    const HOSTINGER_PREVIEW_HOST = "firebrick-caterpillar-749126.hostingersite.com";
+
+    it("1. Exact Hostinger production case: nextUrl.hostname is internal 'localhost', but Host header is 'saviskar.co.in' with SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED=true", () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in"; // Without https:// scheme as observed in Hostinger env
+      delete process.env.SAVISKAR_BROADCAST_LIVE_ENABLED;
+      delete process.env.VERCEL_ENV;
+      delete process.env.APP_ENV;
+      delete process.env.HOSTINGER_PREVIEW;
+      delete process.env.SAVISKAR_PREVIEW;
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      // In Node.js running behind Hostinger's reverse proxy, request.url/nextUrl is internal:
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/recipients", {
+        headers: {
+          host: "saviskar.co.in",
+          "x-forwarded-host": "saviskar.co.in",
+          "x-forwarded-proto": "https",
+        },
+      });
+
+      expect(req.nextUrl.hostname).toBe("localhost");
+      expect(isInternalOrLoopbackHost(req.nextUrl.hostname)).toBe(true);
+      expect(extractHostFromRequest(req)).toBe("saviskar.co.in");
+      expect(isCanonicalProductionHost(extractHostFromRequest(req))).toBe(true);
+
+      // Must authorize production read-only mode and NOT fail into preview
+      expect(isProductionReadOnlyEnabled(req)).toBe(true);
+      expect(isPreviewDeployment(req)).toBe(false);
+      expect(isLiveBroadcastEnabled(req)).toBe(false);
+      expect(getBroadcastOperationalMode(req)).toBe("production_readonly");
+    });
+
+    it("2. Exact Hostinger production case with 127.0.0.1 and port in Host header ('saviskar.co.in:443')", () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "https://saviskar.co.in";
+      delete process.env.SAVISKAR_BROADCAST_LIVE_ENABLED;
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      const req = new NextRequest("http://127.0.0.1:3000/api/admin/broadcast/recipients", {
+        headers: {
+          host: "saviskar.co.in:443",
+          "x-forwarded-host": "saviskar.co.in",
+        },
+      });
+
+      expect(extractHostFromRequest(req)).toBe("saviskar.co.in");
+      expect(isProductionReadOnlyEnabled(req)).toBe(true);
+      expect(isPreviewDeployment(req)).toBe(false);
+      expect(getBroadcastOperationalMode(req)).toBe("production_readonly");
+    });
+
+    it("3. Hostinger production live mode: nextUrl is 'localhost', Host is 'saviskar.co.in', SAVISKAR_BROADCAST_LIVE_ENABLED='true'", () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_LIVE_ENABLED = "true";
+      delete process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED;
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in";
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns", {
+        headers: {
+          host: "saviskar.co.in",
+          "x-forwarded-host": "saviskar.co.in",
+        },
+      });
+
+      expect(isLiveBroadcastEnabled(req)).toBe(true);
+      expect(isPreviewDeployment(req)).toBe(false);
+      expect(getBroadcastOperationalMode(req)).toBe("live_production");
+    });
+
+    it("4. Hostinger preview deployment: nextUrl is 'localhost', but Host is preview domain, fails closed to preview", () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in";
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/recipients", {
+        headers: {
+          host: HOSTINGER_PREVIEW_HOST,
+          "x-forwarded-host": HOSTINGER_PREVIEW_HOST,
+        },
+      });
+
+      expect(extractHostFromRequest(req)).toBe(HOSTINGER_PREVIEW_HOST);
+      expect(isCanonicalProductionHost(extractHostFromRequest(req))).toBe(false);
+      expect(isProductionReadOnlyEnabled(req)).toBe(false);
+      expect(isPreviewDeployment(req)).toBe(true);
+      expect(getBroadcastOperationalMode(req)).toBe("preview");
+    });
+
+    it("5. Hostinger preview spoofing attempt: nextUrl is 'localhost', Host is preview, attacker sends spoofed x-forwarded-host: saviskar.co.in", () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.SAVISKAR_BROADCAST_LIVE_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in";
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/recipients", {
+        headers: {
+          host: HOSTINGER_PREVIEW_HOST,
+          "x-forwarded-host": "saviskar.co.in", // Spoofed attempt!
+        },
+      });
+
+      // Preview detection must intercept and reject the spoofed header
+      expect(extractHostFromRequest(req)).toBe(HOSTINGER_PREVIEW_HOST);
+      expect(isCanonicalProductionHost(extractHostFromRequest(req))).toBe(false);
+      expect(isProductionReadOnlyEnabled(req)).toBe(false);
+      expect(isLiveBroadcastEnabled(req)).toBe(false);
+      expect(isPreviewDeployment(req)).toBe(true);
+      expect(getBroadcastOperationalMode(req)).toBe("preview");
+    });
+
+    it("6. Multi-proxy forwarded chain containing a preview host strictly fails closed", () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in";
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/recipients", {
+        headers: {
+          host: "saviskar.co.in",
+          "x-forwarded-host": `saviskar.co.in, ${HOSTINGER_PREVIEW_HOST}`,
+        },
+      });
+
+      expect(extractHostFromRequest(req)).toBe(HOSTINGER_PREVIEW_HOST);
+      expect(isProductionReadOnlyEnabled(req)).toBe(false);
+      expect(isPreviewDeployment(req)).toBe(true);
+      expect(getBroadcastOperationalMode(req)).toBe("preview");
+    });
+
+    it("7. Unknown external host spoofing: Host is 'unauthorized-site.com', attacker sends x-forwarded-host: saviskar.co.in", () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.SAVISKAR_BROADCAST_LIVE_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in";
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/recipients", {
+        headers: {
+          host: "unauthorized-site.com",
+          "x-forwarded-host": "saviskar.co.in",
+        },
+      });
+
+      // Mismatch between external host header and forwarded host prevents trusting forwarded host
+      expect(extractHostFromRequest(req)).toBe("unauthorized-site.com");
+      expect(isProductionReadOnlyEnabled(req)).toBe(false);
+      expect(isLiveBroadcastEnabled(req)).toBe(false);
+      expect(isPreviewDeployment(req)).toBe(true);
+    });
+
+    it("8. Safe server-side diagnostics: getBroadcastDiagnostics reports operational mode and host validation with zero secrets", () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in";
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/recipients", {
+        headers: {
+          host: "saviskar.co.in",
+          "x-forwarded-host": "saviskar.co.in",
+        },
+      });
+
+      const diag = getBroadcastDiagnostics(req);
+
+      expect(diag.operationalMode).toBe("production_readonly");
+      expect(diag.isPreview).toBe(false);
+      expect(diag.isProductionReadOnly).toBe(true);
+      expect(diag.isLiveProduction).toBe(false);
+      expect(diag.flags.productionReadOnlyEnabled).toBe(true);
+      expect(diag.flags.liveDispatchEnabled).toBe(false);
+      expect(diag.hostValidation.nextUrlHost).toBe("localhost");
+      expect(diag.hostValidation.isNextUrlInternal).toBe(true);
+      expect(diag.hostValidation.isHostHeaderCanonical).toBe(true);
+      expect(diag.hostValidation.isForwardedHostCanonical).toBe(true);
+      expect(diag.hostValidation.resolvedRequestHost).toBe("saviskar.co.in");
+      expect(diag.hostValidation.isResolvedRequestHostCanonical).toBe(true);
+
+      // Verify no sensitive credentials leaked
+      const stringified = JSON.stringify(diag);
+      expect(stringified).not.toContain("SUPABASE");
+      expect(stringified).not.toContain("RESEND");
+      expect(stringified).not.toContain("secret");
+      expect(stringified).not.toContain("key");
+      expect(stringified).not.toContain("cookie");
+    });
+
+    it("9. Full API Integration: GET /api/admin/broadcast/recipients returns real records on Hostinger production", async () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in";
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+      vi.spyOn(adminLib, "getHostedRegistrationReadClient").mockReturnValue({} as any);
+
+      const realParticipants = [
+        {
+          id: "real-reg-1",
+          fullName: "Real Participant",
+          email: "real.attendee@university.edu",
+          isValidEmail: true,
+          events: ["National Hackathon"],
+          paymentStatus: "SUCCESS",
+          checkInStatus: "CHECKED_IN",
+        },
+      ];
+      vi.spyOn(recipientResolverLib, "resolveGeneralBroadcastRecipients").mockResolvedValue(
+        realParticipants as any
+      );
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/recipients?type=general", {
+        headers: {
+          host: "saviskar.co.in",
+          "x-forwarded-host": "saviskar.co.in",
+        },
+      });
+
+      const res = await getRecipientsRoute(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      expect(json.mode).toBe("production_readonly");
+      expect(json.isProductionReadOnly).toBe(true);
+      expect(json.isPreviewMode).toBe(false);
+      expect(json.recipients[0].email).toBe("real.attendee@university.edu");
+      expect(json.diagnostics).toBeDefined();
+      expect(json.diagnostics.operationalMode).toBe("production_readonly");
+    });
+
+    it("10. Full API Integration: Campaign creation, test send, process batch, and retries are blocked with 403 on Hostinger production read-only", async () => {
+      (process.env as any).NODE_ENV = "production";
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      process.env.NEXT_PUBLIC_SITE_URL = "saviskar.co.in";
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(false);
+
+      const headers = {
+        host: "saviskar.co.in",
+        "x-forwarded-host": "saviskar.co.in",
+      };
+
+      // 1. Create campaign blocked
+      const createReq = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          title: "Blocked Campaign",
+          subject: "Blocked",
+          bodyHtml: "<p>Blocked</p>",
+          campaignType: "general",
+          selectedEmails: ["test@example.com"],
+        }),
+      });
+      const createRes = await postCampaignsRoute(createReq);
+      expect(createRes.status).toBe(403);
+      expect((await createRes.json()).code).toBe("PRODUCTION_READONLY_MODE_MUTATION_DENIED");
+
+      // 2. Test send blocked
+      const testSendReq = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns/c-1/test-send", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ testEmail: "test@example.com" }),
+      });
+      const testSendRes = await postTestSendRoute(testSendReq, { params: Promise.resolve({ id: "c-1" }) });
+      expect(testSendRes.status).toBe(403);
+      expect((await testSendRes.json()).code).toBe("PRODUCTION_READONLY_MODE_DISPATCH_DISABLED");
+
+      // 3. Process batch blocked
+      const batchReq = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns/c-1/process-batch", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ batchSize: 10 }),
+      });
+      const batchRes = await postProcessBatchRoute(batchReq, { params: Promise.resolve({ id: "c-1" }) });
+      expect(batchRes.status).toBe(403);
+      expect((await batchRes.json()).code).toBe("PRODUCTION_READONLY_MODE_PROCESSING_DISABLED");
+
+      // 4. Retry blocked
+      const retryReq = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns/c-1/retry", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ deliveryIds: ["del-1"] }),
+      });
+      const retryRes = await postRetryRoute(retryReq, { params: Promise.resolve({ id: "c-1" }) });
+      expect(retryRes.status).toBe(403);
+      expect((await retryRes.json()).code).toBe("PRODUCTION_READONLY_MODE_RETRY_DISABLED");
     });
   });
 });
