@@ -16,11 +16,13 @@ import {
 interface RegistrationAuthGateProps {
   initialEmail?: string;
   onAuthenticated: (email: string) => void;
+  isRegistrationLocked?: boolean;
 }
 
 export default function RegistrationAuthGate({
   initialEmail = "",
   onAuthenticated,
+  isRegistrationLocked = false,
 }: RegistrationAuthGateProps) {
   const [step, setStep] = useState<"email" | "otp" | "success">("email");
   const [email, setEmail] = useState(initialEmail);
@@ -55,6 +57,11 @@ export default function RegistrationAuthGate({
   const handleEmailSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setErrorMessage("");
+
+    if (isRegistrationLocked) {
+      setErrorMessage("Participant registration is temporarily paused by administration. Please check back shortly.");
+      return;
+    }
 
     const cleanEmail = email.trim().toLowerCase();
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -286,6 +293,21 @@ export default function RegistrationAuthGate({
           )}
         </AnimatePresence>
 
+        {/* Registration Locked Banner */}
+        {isRegistrationLocked && (
+          <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-200">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle size={16} className="text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <h4 className="font-semibold text-amber-200">Registration Temporarily Paused</h4>
+                <p className="mt-0.5 text-amber-300/80 leading-relaxed">
+                  Online participant registrations and onboarding are temporarily paused by administration. Please check back shortly.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* --------------------------------------------------------
             STEP 1: EMAIL ENTRY FORM
             -------------------------------------------------------- */}
@@ -307,7 +329,7 @@ export default function RegistrationAuthGate({
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@university.edu"
                   autoComplete="email"
-                  disabled={loading}
+                  disabled={loading || isRegistrationLocked}
                   className="w-full rounded-xl border border-white/10 bg-black/50 px-4 py-3.5 pl-11 text-sm text-white placeholder-zinc-500 transition-all focus:border-violet-400 focus:bg-black/80 focus:outline-none focus:ring-2 focus:ring-violet-400/40 disabled:opacity-50"
                 />
                 <Mail
@@ -319,7 +341,7 @@ export default function RegistrationAuthGate({
 
             <button
               type="submit"
-              disabled={loading || !email.trim()}
+              disabled={loading || !email.trim() || isRegistrationLocked}
               className="group relative flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-3.5 text-sm font-semibold text-white shadow-[0_0_25px_rgba(168,85,247,0.35)] transition-all hover:from-violet-500 hover:to-indigo-500 hover:scale-[1.01] active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50"
             >
               {loading ? (

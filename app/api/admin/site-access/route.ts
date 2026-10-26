@@ -7,6 +7,7 @@ import {
 } from "@/lib/supabase/server";
 import {
   getSiteAccess,
+  getSiteAccessState,
   clearSiteAccessCache,
   DEFAULT_SITE_ACCESS,
   SITE_PAGE_DEFINITIONS,
@@ -95,8 +96,11 @@ export async function PATCH(request: Request) {
       locks?: Partial<SiteAccessConfig>;
     };
 
-    const currentLocks = await getSiteAccess();
+    const currentState = await getSiteAccessState({ bypassCache: true });
+    const currentLocks = currentState.locks;
     const updatedLocks: SiteAccessConfig = { ...currentLocks };
+    let accommodationLockedAt = currentState.accommodationLockTimestamp;
+    let registrationLockedAt = currentState.registrationLockTimestamp;
 
     if (body.key && typeof body.enabled === "boolean") {
       const validKey = body.key as SitePageKey;
@@ -107,10 +111,64 @@ export async function PATCH(request: Request) {
         );
       }
       updatedLocks[validKey] = body.enabled;
+
+      if (validKey === "ACCOMMODATION_ENABLED") {
+        if (!body.enabled) {
+          // Lock transition: if previously unlocked or missing timestamp, record fresh timestamp
+          if (currentLocks.ACCOMMODATION_ENABLED !== false || !accommodationLockedAt) {
+            accommodationLockedAt = new Date().toISOString();
+          }
+        } else {
+          // Unlock transition: clear timestamp
+          accommodationLockedAt = null;
+        }
+      }
+
+      if (validKey === "REGISTRATIONS_ENABLED" || validKey === "REGISTRATION_ENABLED") {
+        updatedLocks.REGISTRATIONS_ENABLED = body.enabled;
+        updatedLocks.REGISTRATION_ENABLED = body.enabled;
+
+        if (!body.enabled) {
+          if (
+            (currentLocks.REGISTRATIONS_ENABLED !== false && currentLocks.REGISTRATION_ENABLED !== false) ||
+            !registrationLockedAt
+          ) {
+            registrationLockedAt = new Date().toISOString();
+          }
+        } else {
+          registrationLockedAt = null;
+        }
+      }
     } else if (body.locks && typeof body.locks === "object") {
       for (const [k, v] of Object.entries(body.locks)) {
         if (k in DEFAULT_SITE_ACCESS && typeof v === "boolean") {
           updatedLocks[k as SitePageKey] = v;
+        }
+      }
+
+      if (typeof body.locks.ACCOMMODATION_ENABLED === "boolean") {
+        if (!body.locks.ACCOMMODATION_ENABLED) {
+          if (currentLocks.ACCOMMODATION_ENABLED !== false || !accommodationLockedAt) {
+            accommodationLockedAt = new Date().toISOString();
+          }
+        } else {
+          accommodationLockedAt = null;
+        }
+      }
+
+      const regVal = body.locks.REGISTRATION_ENABLED ?? body.locks.REGISTRATIONS_ENABLED;
+      if (typeof regVal === "boolean") {
+        updatedLocks.REGISTRATIONS_ENABLED = regVal;
+        updatedLocks.REGISTRATION_ENABLED = regVal;
+        if (!regVal) {
+          if (
+            (currentLocks.REGISTRATIONS_ENABLED !== false && currentLocks.REGISTRATION_ENABLED !== false) ||
+            !registrationLockedAt
+          ) {
+            registrationLockedAt = new Date().toISOString();
+          }
+        } else {
+          registrationLockedAt = null;
         }
       }
     } else {
@@ -120,26 +178,44 @@ export async function PATCH(request: Request) {
       );
     }
 
-    // Persist to admin_audit_logs with designated target UUID
-    const { error: insertError } = await supabaseAdmin
-      .from("admin_audit_logs")
-      .insert({
-        admin_id: auth.user.id,
-        action_type: "SITE_PAGE_LOCKS_UPDATE",
-        target_id: SITE_ACCESS_AUDIT_TARGET_ID,
-        details: {
-          locks: updatedLocks,
-          changed_key: body.key || "multiple",
-          changed_value: typeof body.enabled === "boolean" ? body.enabled : undefined,
-          updated_by: auth.user.email,
-          updated_at: new Date().toISOString(),
-        },
-      });
+    const auditDetails = {
+      locks: updatedLocks,
+      lock_timestamps: {
+        ACCOMMODATION_ENABLED: accommodationLockedAt,
+        REGISTRATION_ENABLED: registrationLockedAt,
+        REGISTRATIONS_ENABLED: registrationLockedAt,
+      },
+      accommodation_locked_at: accommodationLockedAt,
+      registration_locked_at: registrationLockedAt,
+      changed_key: body.key || "multiple",
+      changed_value: typeof body.enabled === "boolean" ? body.enabled : undefined,
+      updated_by: auth.user.email,
+      updated_at: new Date().toISOString(),
+    };
 
-    if (insertError) {
-      console.error("Failed to persist site page lock in audit log:", insertError);
+    // Database-level Synchronization:
+    // Execute atomic RPC with exclusive advisory lock to eliminate races with booking creation.
+    // Fail closed: Never bypass the synchronization boundary with a direct insert, and never report
+    // success unless the atomic RPC successfully commits.
+    const { data: rpcResult, error: rpcError } = await supabaseAdmin.rpc("update_site_page_locks", {
+      p_admin_id: auth.user.id,
+      p_target_id: SITE_ACCESS_AUDIT_TARGET_ID,
+      p_details: auditDetails,
+    });
+
+    if (rpcError || !rpcResult?.success) {
+      console.error("Failed to persist site page lock via atomic RPC:", rpcError);
+      const isMissingRpc =
+        rpcError?.code === "PGRST202" ||
+        rpcError?.code === "42883" ||
+        rpcError?.message?.includes("does not exist");
+
       return NextResponse.json(
-        { error: "Failed to persist site lock configuration." },
+        {
+          error: isMissingRpc
+            ? "Atomic site page lock service is unavailable. Please verify database migrations."
+            : "Failed to persist site lock configuration.",
+        },
         { status: 500 }
       );
     }

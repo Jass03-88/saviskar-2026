@@ -33,6 +33,7 @@ import {
 } from "@/lib/payments/resume-token";
 import { getCanonicalPaymentBaseUrl } from "@/lib/payments/canonical-url";
 import { CHECKOUT_EXPIRATION_THRESHOLD_MS } from "@/lib/accommodation-expiration";
+import { getSiteAccessState, getSiteAccess } from "@/lib/config/site-access";
 
 function errorResponse(
   message: string,
@@ -249,6 +250,72 @@ export async function POST(
       403,
       "ORDER_ITEMS_MISMATCH"
     );
+  }
+
+  // Option A Accommodation Safeguard: Verify pre-lock creation & non-expiration
+  const hasAccommodationItem = orderItems.some(
+    (item) => item.participant_accommodation_id != null
+  );
+  const hasRegistrationItem = orderItems.some(
+    (item) => item.participant_event_id != null || item.participant_accommodation_id == null
+  );
+
+  if (hasRegistrationItem) {
+    const siteAccessState = await getSiteAccessState({ bypassCache: true });
+    if (!siteAccessState.locks.REGISTRATIONS_ENABLED || !siteAccessState.locks.REGISTRATION_ENABLED) {
+      const orderCreatedAt = new Date(paymentOrder.created_at || 0).getTime();
+      const lockTime = siteAccessState.registrationLockTimestamp
+        ? new Date(siteAccessState.registrationLockTimestamp).getTime()
+        : 0;
+
+      // Rule 1: Reject any registration order created after the lock became effective
+      if (lockTime > 0 && orderCreatedAt >= lockTime) {
+        return errorResponse(
+          "Participant registration is temporarily paused by administration. Please check back shortly.",
+          403,
+          "REGISTRATION_LOCKED"
+        );
+      }
+
+      // Rule 2: Reject if the registration order hold has expired
+      const orderAgeMs = Date.now() - orderCreatedAt;
+      if (orderAgeMs >= CHECKOUT_EXPIRATION_THRESHOLD_MS) {
+        return errorResponse(
+          "This registration order hold has expired and registration is currently paused by administration.",
+          403,
+          "REGISTRATION_LOCKED"
+        );
+      }
+    }
+  }
+
+  if (hasAccommodationItem) {
+    const siteAccessState = await getSiteAccessState({ bypassCache: true });
+    if (!siteAccessState.locks.ACCOMMODATION_ENABLED) {
+      const orderCreatedAt = new Date(paymentOrder.created_at || 0).getTime();
+      const lockTime = siteAccessState.accommodationLockTimestamp
+        ? new Date(siteAccessState.accommodationLockTimestamp).getTime()
+        : 0;
+
+      // Rule 1: Reject any accommodation order created after the lock became effective
+      if (lockTime > 0 && orderCreatedAt >= lockTime) {
+        return errorResponse(
+          "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.",
+          403,
+          "ACCOMMODATION_LOCKED"
+        );
+      }
+
+      // Rule 2: Reject if the pre-lock accommodation hold has expired
+      const orderAgeMs = Date.now() - orderCreatedAt;
+      if (orderAgeMs >= CHECKOUT_EXPIRATION_THRESHOLD_MS) {
+        return errorResponse(
+          "This accommodation booking hold has expired and accommodation is currently closed by administration.",
+          403,
+          "ACCOMMODATION_LOCKED"
+        );
+      }
+    }
   }
 
   // ─── Authorization Boundary (Session or Resume Token) ───
@@ -647,6 +714,28 @@ export async function POST(
     // Atomically transition via database RPC:
     // Locks participant events / accommodations and old order, checks concurrency,
     // marks old order 'failed', creates new 'pending' order, and copies order items atomically.
+    if (hasRegistrationItem) {
+      const retrySiteAccess = await getSiteAccess({ bypassCache: true });
+      if (!retrySiteAccess.REGISTRATIONS_ENABLED || !retrySiteAccess.REGISTRATION_ENABLED) {
+        return errorResponse(
+          "Participant registration is temporarily paused by administration. Registration retries are currently paused.",
+          403,
+          "REGISTRATION_LOCKED"
+        );
+      }
+    }
+
+    if (hasAccommodationItem) {
+      const retrySiteAccess = await getSiteAccess({ bypassCache: true });
+      if (!retrySiteAccess.ACCOMMODATION_ENABLED) {
+        return errorResponse(
+          "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Accommodation retries are currently paused.",
+          403,
+          "ACCOMMODATION_LOCKED"
+        );
+      }
+    }
+
     console.log(
       `Payment attempt ${paymentOrder.gateway_order_id} eligible for atomic retry (` +
       (isAbandonedDraft
