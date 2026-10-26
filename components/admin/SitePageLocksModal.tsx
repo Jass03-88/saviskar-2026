@@ -20,6 +20,7 @@ import {
   Users,
   Image as ImageIcon,
   CheckCircle2,
+  Bed,
 } from "lucide-react";
 import {
   DEFAULT_SITE_ACCESS,
@@ -47,13 +48,23 @@ const PAGE_CARDS: Array<{
 }> = [
   {
     key: "REGISTRATIONS_ENABLED",
-    name: "Registration Portal",
+    name: "Participant Registration Form",
     path: "/register",
     category: "Accreditation",
     moduleCode: "ACCREDITATION.SYS",
-    description: "Public event registration, squad checkout, pass issuance, and registration API.",
+    description: "Pauses complete participant registration, squad onboarding, delegate passes, and registration APIs.",
     icon: UserCheck,
     color: "violet",
+  },
+  {
+    key: "ACCOMMODATION_ENABLED",
+    name: "Campus Accommodation Booking",
+    path: "/register#accommodation",
+    category: "Campus Stay & Hospitality",
+    moduleCode: "HOSPITALITY.SYS",
+    description: "On-campus hostel accommodations, bed allocations, and accommodation checkout APIs.",
+    icon: Bed,
+    color: "emerald",
   },
   {
     key: "SCHEDULE_ENABLED",

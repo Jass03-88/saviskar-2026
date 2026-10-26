@@ -7,10 +7,12 @@ import {
   createPaymentResumeToken,
 } from "@/lib/payments/resume-token";
 import { getCanonicalPaymentBaseUrl } from "@/lib/payments/canonical-url";
+import { getSiteAccessState } from "@/lib/config/site-access";
+import { CHECKOUT_EXPIRATION_THRESHOLD_MS } from "@/lib/accommodation-expiration";
 
-function errorResponse(message: string, status: number) {
+function errorResponse(message: string, status: number, code?: string) {
   return NextResponse.json(
-    { success: false, error: message },
+    { success: false, error: message, ...(code ? { code } : {}) },
     {
       status,
       headers: { "Cache-Control": "no-store" },
@@ -207,7 +209,7 @@ export async function POST(request: NextRequest) {
     .select(`
       payment_order_id,
       participant_id,
-      payment_orders!inner(id, status, payer_participant_id, amount)
+      payment_orders!inner(id, status, payer_participant_id, amount, created_at)
     `)
     .eq("payment_orders.status", "pending")
     .limit(1);
@@ -244,6 +246,62 @@ export async function POST(request: NextRequest) {
       return errorResponse("Payment is already completed.", 400);
     }
 
+    // Option A: If recovering an event registration, verify pre-lock creation & non-expiration
+    if (participantEventId) {
+      const siteAccessState = await getSiteAccessState({ bypassCache: true });
+      if (!siteAccessState.locks.REGISTRATIONS_ENABLED || !siteAccessState.locks.REGISTRATION_ENABLED) {
+        const orderCreatedAt = new Date(paymentOrderData?.created_at || 0).getTime();
+        const lockTime = siteAccessState.registrationLockTimestamp
+          ? new Date(siteAccessState.registrationLockTimestamp).getTime()
+          : 0;
+
+        if (lockTime > 0 && orderCreatedAt >= lockTime) {
+          return errorResponse(
+            "Participant registration is temporarily paused by administration. Please check back shortly.",
+            403,
+            "REGISTRATION_LOCKED"
+          );
+        }
+
+        const orderAgeMs = Date.now() - orderCreatedAt;
+        if (orderAgeMs >= CHECKOUT_EXPIRATION_THRESHOLD_MS) {
+          return errorResponse(
+            "This registration payment hold has expired and registration is currently paused by administration.",
+            403,
+            "REGISTRATION_LOCKED"
+          );
+        }
+      }
+    }
+
+    // Option A: If recovering an accommodation, verify pre-lock creation & non-expiration
+    if (participantAccommodationId) {
+      const siteAccessState = await getSiteAccessState({ bypassCache: true });
+      if (!siteAccessState.locks.ACCOMMODATION_ENABLED) {
+        const orderCreatedAt = new Date(paymentOrderData?.created_at || 0).getTime();
+        const lockTime = siteAccessState.accommodationLockTimestamp
+          ? new Date(siteAccessState.accommodationLockTimestamp).getTime()
+          : 0;
+
+        if (lockTime > 0 && orderCreatedAt >= lockTime) {
+          return errorResponse(
+            "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.",
+            403,
+            "ACCOMMODATION_LOCKED"
+          );
+        }
+
+        const orderAgeMs = Date.now() - orderCreatedAt;
+        if (orderAgeMs >= CHECKOUT_EXPIRATION_THRESHOLD_MS) {
+          return errorResponse(
+            "This accommodation booking hold has expired and accommodation is currently closed by administration.",
+            403,
+            "ACCOMMODATION_LOCKED"
+          );
+        }
+      }
+    }
+
     const resolvedBaseUrl = getCanonicalPaymentBaseUrl();
     const participantPublicId = participantData.participant_id ?? "";
     const orderResumeToken = createPaymentResumeToken({
@@ -271,6 +329,28 @@ export async function POST(request: NextRequest) {
   }
 
   // ─── 5. Create New Payment Order (Session Authorized) ───
+  if (participantEventId) {
+    const siteAccessState = await getSiteAccessState({ bypassCache: true });
+    if (!siteAccessState.locks.REGISTRATIONS_ENABLED || !siteAccessState.locks.REGISTRATION_ENABLED) {
+      return errorResponse(
+        "Participant registration is temporarily paused by administration. Please check back shortly.",
+        403,
+        "REGISTRATION_LOCKED"
+      );
+    }
+  }
+
+  if (participantAccommodationId) {
+    const siteAccessState = await getSiteAccessState({ bypassCache: true });
+    if (!siteAccessState.locks.ACCOMMODATION_ENABLED) {
+      return errorResponse(
+        "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.",
+        403,
+        "ACCOMMODATION_LOCKED"
+      );
+    }
+  }
+
   const orderRef = `SVK-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
 
   const { data: newOrder, error: orderError } = await supabaseAdmin

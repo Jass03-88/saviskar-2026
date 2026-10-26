@@ -34,6 +34,7 @@ export interface AddAccommodationModalProps {
   participantName: string;
   existingStays: ExistingStay[];
   onProceedToPayment: (paymentOrderId: string, participantId?: string) => Promise<void>;
+  isAccommodationLocked?: boolean;
 }
 
 export default function AddAccommodationModal({
@@ -43,6 +44,7 @@ export default function AddAccommodationModal({
   participantName,
   existingStays,
   onProceedToPayment,
+  isAccommodationLocked = false,
 }: AddAccommodationModalProps) {
   const [mounted, setMounted] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -126,6 +128,11 @@ export default function AddAccommodationModal({
   }, [existingStays, startDate, endDate]);
 
   const handleSubmit = async () => {
+    if (isAccommodationLocked) {
+      setErrorMessage("Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.");
+      return;
+    }
+
     if (conflictMessage) {
       setErrorMessage(conflictMessage);
       return;
@@ -235,6 +242,21 @@ export default function AddAccommodationModal({
               className="flex-1 overflow-y-auto p-5 sm:p-6 md:p-8 space-y-6 overscroll-contain"
               data-lenis-prevent="true"
             >
+
+          {/* Accommodation Locked Banner */}
+          {isAccommodationLocked && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-200">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle size={16} className="shrink-0 text-amber-400 mt-0.5" />
+                <div>
+                  <h4 className="font-semibold text-amber-200">Campus Accommodation Booking Paused</h4>
+                  <p className="mt-0.5 text-amber-300/80 leading-relaxed">
+                    Hostel allocations are temporarily closed by administration. Event registrations remain open.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Existing Stays Reminder */}
           {existingStays.length > 0 && (
@@ -401,7 +423,7 @@ export default function AddAccommodationModal({
 
           <button
             type="button"
-            disabled={loading || Boolean(conflictMessage)}
+            disabled={loading || Boolean(conflictMessage) || isAccommodationLocked}
             onClick={handleSubmit}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-2.5 text-xs font-semibold text-white shadow-[0_0_20px_rgba(16,185,129,0.35)] transition-all hover:opacity-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-400"
           >

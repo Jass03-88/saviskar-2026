@@ -18,6 +18,7 @@ import { checkRateLimitAsync, getClientIp } from "@/lib/rate-limit";
 import { calculateStayDates, isValidAccommodationDate } from "@/lib/accommodation-dates";
 import { formatAccommodationOverlapError } from "@/lib/accommodation-expiration";
 import { getPaymentGateway } from "@/lib/payments";
+import { getSiteAccess } from "@/lib/config/site-access";
 
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -65,6 +66,23 @@ export async function POST(request: NextRequest) {
   const session = await getRegistrationSession();
   if (!session.authenticated || !session.email) {
     return errorResponse("Registration authentication required.", 401, "UNAUTHORIZED");
+  }
+
+  // 1b. Registration & Accommodation Access Gates
+  const siteAccess = await getSiteAccess({ bypassCache: true });
+  if (!siteAccess.REGISTRATIONS_ENABLED || !siteAccess.REGISTRATION_ENABLED) {
+    return errorResponse(
+      "Participant registration is temporarily paused by administration. Please check back shortly.",
+      403,
+      "REGISTRATION_LOCKED"
+    );
+  }
+  if (!siteAccess.ACCOMMODATION_ENABLED) {
+    return errorResponse(
+      "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.",
+      403,
+      "ACCOMMODATION_LOCKED"
+    );
   }
 
   const authenticatedEmail = session.email.toLowerCase().trim();
@@ -584,6 +602,17 @@ export async function POST(request: NextRequest) {
 
   if (rpcError) {
     console.error("Team accommodation booking RPC error:", rpcError);
+    if (
+      rpcError.code === "SVK12" ||
+      rpcError.message?.includes("ACCOMMODATION_LOCKED") ||
+      rpcError.message?.includes("Hostel allocations are temporarily closed")
+    ) {
+      return errorResponse(
+        "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.",
+        403,
+        "ACCOMMODATION_LOCKED"
+      );
+    }
     const formatted = formatAccommodationOverlapError(rpcError);
     return errorResponse(
       formatted.message || "Failed to create team accommodation order.",

@@ -61,15 +61,15 @@ export default async function RegisterPage({
   searchParams: Promise<{ from?: string }>;
 }) {
   const siteAccess = await getSiteAccess();
-  if (!siteAccess.REGISTRATIONS_ENABLED) {
+  if (!siteAccess.REGISTRATIONS_ENABLED || !siteAccess.REGISTRATION_ENABLED) {
     return (
       <TerminalPlaceholder
         moduleCode="ACCREDITATION.SYS"
         moduleName="Official Registration Portal"
         category="ACCREDITATION PROTOCOL"
-        classification="ACCESS RESTRICTED // PHASE 2 OPENING"
-        estimatedRelease="REGISTRATIONS OPENING SOON"
-        summary="Online registrations and digital accreditation passes for 50+ competitions across Technical, Non-Technical, Cultural, and AIvishkar realms at CGC University, Mohali will go live shortly. Explore the competitive realms and download rulebooks in the meantime."
+        classification="ACCESS RESTRICTED // REGISTRATION PAUSED"
+        estimatedRelease="TEMPORARILY PAUSED BY ADMINISTRATION"
+        summary="Participant registration is temporarily paused by the festival administration. Online event registrations and pass issuance are temporarily on hold. Please check back shortly or explore the competitive realms and download rulebooks in the meantime."
       />
     );
   }
@@ -161,6 +161,8 @@ export default async function RegisterPage({
           <RegistrationFlowManager
             initialAuthenticated={session.authenticated}
             initialEmail={session.email || ""}
+            isAccommodationLocked={!siteAccess.ACCOMMODATION_ENABLED}
+            isRegistrationLocked={!siteAccess.REGISTRATIONS_ENABLED || !siteAccess.REGISTRATION_ENABLED}
           />
         </Suspense>
       </div>

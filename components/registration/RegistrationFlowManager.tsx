@@ -8,11 +8,15 @@ import RegistrationForm from "./RegistrationForm";
 interface RegistrationFlowManagerProps {
   initialAuthenticated: boolean;
   initialEmail?: string;
+  isAccommodationLocked?: boolean;
+  isRegistrationLocked?: boolean;
 }
 
 export default function RegistrationFlowManager({
   initialAuthenticated,
   initialEmail = "",
+  isAccommodationLocked = false,
+  isRegistrationLocked = false,
 }: RegistrationFlowManagerProps) {
   const router = useRouter();
   const [isAuthenticated, setIsAuthenticated] = useState(initialAuthenticated);
@@ -41,6 +45,7 @@ export default function RegistrationFlowManager({
       <RegistrationAuthGate
         initialEmail={verifiedEmail}
         onAuthenticated={handleAuthenticated}
+        isRegistrationLocked={isRegistrationLocked}
       />
     );
   }
@@ -49,6 +54,8 @@ export default function RegistrationFlowManager({
     <RegistrationForm
       sessionEmail={verifiedEmail}
       onSignOut={handleSignOut}
+      isAccommodationLocked={isAccommodationLocked}
+      isRegistrationLocked={isRegistrationLocked}
     />
   );
 }
