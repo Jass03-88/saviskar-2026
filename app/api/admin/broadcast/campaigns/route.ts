@@ -6,7 +6,11 @@ import {
   getHostedRegistrationReadClient,
   isHybridDevelopmentModeActive,
   isSyntheticTestEmail,
+  isLiveBroadcastEnabled,
+  isPreviewDeployment,
+  getBroadcastOperationalMode,
   HYBRID_READONLY_ERROR,
+  PREVIEW_READONLY_ERROR,
 } from "@/lib/broadcast/supabase-admin";
 import {
   createGeneralBroadcastCampaign,
@@ -25,7 +29,9 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(): Promise<NextResponse>;
+export async function GET(request: Request): Promise<NextResponse>;
+export async function GET(request?: Request): Promise<NextResponse> {
   const auth = await requireMasterAdmin();
 
   if (auth.error) {
@@ -41,6 +47,21 @@ export async function GET() {
   }
 
   try {
+    const isPreview = isPreviewDeployment(request);
+    const mode = getBroadcastOperationalMode(request);
+
+    if (isPreview) {
+      return NextResponse.json({
+        campaigns: [],
+        mode: "preview",
+        isPreviewMode: true,
+        isLiveProduction: false,
+        isHybridMode: false,
+        schemaReady: false,
+        note: "Preview Mode: Campaign storage is unmounted to protect production database.",
+      });
+    }
+
     const storageClient = getBroadcastSupabaseAdmin();
     const { data: campaigns, error } = await storageClient
       .from("broadcast_campaigns")
@@ -101,6 +122,17 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const isPreview = isPreviewDeployment(request);
+    if (isPreview) {
+      return NextResponse.json(
+        {
+          error: "Campaign creation is disabled in Preview Mode. Preview deployments cannot write campaign records to the production database.",
+          code: "PREVIEW_MODE_READ_ONLY",
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const {
       title,

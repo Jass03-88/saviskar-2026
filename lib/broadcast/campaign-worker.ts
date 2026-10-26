@@ -12,8 +12,10 @@ import {
 } from "@/lib/certificates/generator";
 import {
   isHybridDevelopmentModeActive,
+  isPreviewDeployment,
   isSyntheticTestEmail,
   HYBRID_READONLY_ERROR,
+  PREVIEW_READONLY_ERROR,
   resolveCampaignCreatorIdentity,
 } from "./supabase-admin";
 
@@ -463,6 +465,11 @@ export async function processNextBroadcastBatch(
     : workerIdArg ?? `worker_${process.pid}_${Math.random().toString(36).substring(7)}`;
   const leaseSeconds = isOptions ? batchSizeOrOptions.leaseSeconds ?? 300 : leaseSecondsArg;
   const campaignId = isOptions ? batchSizeOrOptions.campaignId : campaignIdArg;
+
+  // Fail-closed guard: Batch worker processing is strictly forbidden in preview mode
+  if (isPreviewDeployment()) {
+    throw new Error(PREVIEW_READONLY_ERROR);
+  }
 
   // 1. Atomic claim via RPC (FOR UPDATE SKIP LOCKED)
   const rpcParams: Record<string, any> = {

@@ -131,6 +131,7 @@ export default function AdminBroadcastPage() {
   const [campaignSuccessMsg, setCampaignSuccessMsg] = useState<string | null>(null);
   const [campaignSubmitError, setCampaignSubmitError] = useState<string | null>(null);
   const [isHybridMode, setIsHybridMode] = useState(false);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [previewPdfLoading, setPreviewPdfLoading] = useState(false);
 
   // 1. Initial auth check
@@ -191,6 +192,11 @@ export default function AdminBroadcastPage() {
         if (typeof data.isHybridMode === "boolean") {
           setIsHybridMode(data.isHybridMode);
         }
+        if (typeof data.isPreviewMode === "boolean") {
+          setIsPreviewMode(data.isPreviewMode);
+        } else if (data.mode === "preview") {
+          setIsPreviewMode(true);
+        }
         // Failure F: Newly loaded recipients must start UNSELECTED
         setSelectedGeneralEmails(new Set());
       } else {
@@ -214,6 +220,11 @@ export default function AdminBroadcastPage() {
         setCertCandidates(data.recipients);
         if (typeof data.isHybridMode === "boolean") {
           setIsHybridMode(data.isHybridMode);
+        }
+        if (typeof data.isPreviewMode === "boolean") {
+          setIsPreviewMode(data.isPreviewMode);
+        } else if (data.mode === "preview") {
+          setIsPreviewMode(true);
         }
         // Start unselected for safety
         setSelectedCertKeys(new Set());
@@ -239,6 +250,11 @@ export default function AdminBroadcastPage() {
         setCampaigns(data.campaigns || []);
         if (typeof data.isHybridMode === "boolean") {
           setIsHybridMode(data.isHybridMode);
+        }
+        if (typeof data.isPreviewMode === "boolean") {
+          setIsPreviewMode(data.isPreviewMode);
+        } else if (data.mode === "preview") {
+          setIsPreviewMode(true);
         }
         if (data.schemaWarning) {
           setCampaignSchemaWarning(data.schemaWarning);
@@ -581,6 +597,21 @@ export default function AdminBroadcastPage() {
           </div>
         </header>
 
+        {/* PREVIEW MODE INDICATOR */}
+        {isPreviewMode && (
+          <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-5 py-3.5 text-xs text-amber-950 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+              <span className="font-semibold tracking-tight">
+                PREVIEW DEPLOYMENT — SAFE SYNTHETIC MODE (REAL DATA ACCESS &amp; DISPATCHES DISABLED)
+              </span>
+            </div>
+            <span className="self-start md:self-auto rounded-full border border-amber-500/20 bg-white/80 px-3 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900 shadow-xs">
+              Preview Read-Only
+            </span>
+          </div>
+        )}
+
         {/* HYBRID MODE INDICATOR */}
         {isHybridMode && (
           <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-2xl border border-black/15 bg-black/[0.03] px-5 py-3.5 text-xs font-mono text-black shadow-xs">
@@ -743,20 +774,7 @@ export default function AdminBroadcastPage() {
                   When unchecked, the campaign is enqueued safely in the database for review before manual dispatch via &ldquo;Process Queue&rdquo;.
                 </p>
               </div>
-              <div className="mb-3 rounded-2xl border border-black/10 bg-black/[0.02] p-3">
-                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-black/80 select-none">
-                  <input
-                    type="checkbox"
-                    checked={certDispatchImmediately}
-                    onChange={(e) => setCertDispatchImmediately(e.target.checked)}
-                    className="h-4 w-4 rounded border-black/20 text-black focus:ring-0 accent-black cursor-pointer"
-                  />
-                  <span>Begin dispatch immediately upon creation (sends first batch of up to 25 emails)</span>
-                </label>
-                <p className="mt-1 text-[11px] text-black/50 pl-6">
-                  When unchecked, certificates are generated and queued in the database. You can review certificates before manual dispatch via &ldquo;Process Queue&rdquo;.
-                </p>
-              </div>
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
                 <div className="text-xs text-black/50">
                   Dedicated Sender:{" "}
@@ -768,11 +786,15 @@ export default function AdminBroadcastPage() {
                 <button
                   type="button"
                   onClick={handleCreateGeneralCampaign}
-                  disabled={isSubmittingCampaign || selectedGeneralEmails.size === 0}
+                  disabled={isSubmittingCampaign || isPreviewMode || selectedGeneralEmails.size === 0}
                   className="flex items-center justify-center gap-2 rounded-full bg-black px-6 py-2.5 text-xs md:text-sm font-semibold text-white shadow-sm transition hover:scale-[1.01] hover:bg-neutral-800 disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <Send size={15} />
-                  <span>Enqueue Campaign ({selectedGeneralEmails.size} Recipients)</span>
+                  <span>
+                    {isPreviewMode
+                      ? "Enqueue Disabled (Preview Mode)"
+                      : `Enqueue Campaign (${selectedGeneralEmails.size} Recipients)`}
+                  </span>
                 </button>
               </div>
             </div>
@@ -1080,6 +1102,21 @@ export default function AdminBroadcastPage() {
                 </label>
               </div>
 
+              <div className="mb-3 rounded-2xl border border-black/10 bg-black/[0.02] p-3">
+                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-black/80 select-none">
+                  <input
+                    type="checkbox"
+                    checked={certDispatchImmediately}
+                    onChange={(e) => setCertDispatchImmediately(e.target.checked)}
+                    className="h-4 w-4 rounded border-black/20 text-black focus:ring-0 accent-black cursor-pointer"
+                  />
+                  <span>Begin dispatch immediately upon creation (sends first batch of up to 25 emails)</span>
+                </label>
+                <p className="mt-1 text-[11px] text-black/50 pl-6">
+                  When unchecked, certificates are generated and queued in the database. You can review certificates before manual dispatch via &ldquo;Process Queue&rdquo;.
+                </p>
+              </div>
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
                 <div className="text-xs text-black/50">
                   Eligible Selected:{" "}
@@ -1088,11 +1125,15 @@ export default function AdminBroadcastPage() {
                 <button
                   type="button"
                   onClick={handleCreateCertCampaign}
-                  disabled={isSubmittingCampaign || selectedCertKeys.size === 0}
+                  disabled={isSubmittingCampaign || isPreviewMode || selectedCertKeys.size === 0}
                   className="flex items-center justify-center gap-2 rounded-full bg-black px-6 py-2.5 text-xs md:text-sm font-semibold text-white shadow-sm transition hover:scale-[1.01] hover:bg-neutral-800 disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <Send size={15} />
-                  <span>Enqueue Certificate Campaign</span>
+                  <span>
+                    {isPreviewMode
+                      ? "Enqueue Disabled (Preview Mode)"
+                      : "Enqueue Certificate Campaign"}
+                  </span>
                 </button>
               </div>
             </div>
@@ -1487,11 +1528,12 @@ export default function AdminBroadcastPage() {
                           {camp.status !== "completed" ? (
                             <button
                               onClick={() => handleProcessBatch(camp.id)}
-                              disabled={isProcessingBatch}
+                              disabled={isProcessingBatch || isPreviewMode}
                               className="flex items-center gap-1.5 rounded-full bg-black px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-neutral-800 transition disabled:opacity-40"
+                              title={isPreviewMode ? "Queue processing is disabled in Preview Mode" : undefined}
                             >
                               <Send size={12} />
-                              <span>Process Queue</span>
+                              <span>{isPreviewMode ? "Queue Locked (Preview)" : "Process Queue"}</span>
                             </button>
                           ) : (
                             <span className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-800">

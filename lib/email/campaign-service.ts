@@ -2,6 +2,8 @@ import { Resend } from "resend";
 import {
   isHybridDevelopmentModeActive,
   isSyntheticTestEmail,
+  isLiveBroadcastEnabled,
+  isPreviewDeployment,
 } from "@/lib/broadcast/supabase-admin";
 
 export const DEFAULT_CAMPAIGN_SENDER =
@@ -87,6 +89,7 @@ export interface SendCampaignEmailOptions {
   attachments?: EmailAttachment[];
   idempotencyKey?: string;
   testMode?: boolean;
+  request?: Request | any;
 }
 
 export interface SendCampaignEmailResult {
@@ -123,6 +126,16 @@ export function clearMockCampaignDispatches(): void {
 export async function sendCampaignEmail(
   options: SendCampaignEmailOptions
 ): Promise<SendCampaignEmailResult> {
+  // Preview mode guard: strictly forbid any external dispatch in preview deployments
+  if (isPreviewDeployment(options.request)) {
+    return {
+      success: false,
+      error: "Campaign email dispatch is strictly disabled in Preview Mode.",
+      errorCode: "PREVIEW_DISPATCH_DISABLED",
+      isRetryable: false,
+    };
+  }
+
   const senderCheck = getCampaignEmailSender();
   if (!senderCheck.success || !senderCheck.from) {
     return {
@@ -141,6 +154,24 @@ export async function sendCampaignEmail(
       errorCode: "UNAPPROVED_HYBRID_RECIPIENT_DOMAIN",
       isRetryable: false,
     };
+  }
+
+  // Live broadcast activation guard: external dispatch requires explicit activation
+  if (!isLiveBroadcastEnabled(options.request)) {
+    const isLocalOrTestMock =
+      isHybridDevelopmentModeActive() ||
+      process.env.NODE_ENV === "test" ||
+      process.env.E2E_EMAIL_TRANSPORT === "mock" ||
+      process.env.E2E_EMAIL_TRANSPORT === "mailpit";
+
+    if (!isLocalOrTestMock) {
+      return {
+        success: false,
+        error: "Outbound campaign dispatch is blocked because live broadcast mode is not enabled in this deployment.",
+        errorCode: "LIVE_BROADCAST_DISABLED",
+        isRetryable: false,
+      };
+    }
   }
 
   const isCloudOrProd =

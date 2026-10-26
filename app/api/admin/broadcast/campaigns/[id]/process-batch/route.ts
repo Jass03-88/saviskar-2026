@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireMasterAdmin } from "@/lib/supabase/server";
-import { getBroadcastSupabaseAdmin } from "@/lib/broadcast/supabase-admin";
+import {
+  getBroadcastSupabaseAdmin,
+  isPreviewDeployment,
+} from "@/lib/broadcast/supabase-admin";
 import {
   processNextBroadcastBatch,
   updateCampaignProgressAndStatus,
@@ -28,6 +31,17 @@ export async function POST(
 
   const { id } = await context.params;
   try {
+    const isPreview = isPreviewDeployment(request);
+    if (isPreview) {
+      return NextResponse.json(
+        {
+          error: "Batch queue processing is disabled in Preview Mode.",
+          code: "PREVIEW_MODE_PROCESSING_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
     let batchSize = 10;
     try {
       const body = await request.json();

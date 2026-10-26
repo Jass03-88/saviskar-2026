@@ -5,6 +5,7 @@ import {
   getBroadcastSupabaseAdmin,
   isHybridDevelopmentModeActive,
   isSyntheticTestEmail,
+  isPreviewDeployment,
   HYBRID_READONLY_ERROR,
 } from "@/lib/broadcast/supabase-admin";
 
@@ -30,6 +31,17 @@ export async function POST(
 
   const { id } = await context.params;
   try {
+    const isPreview = isPreviewDeployment(request);
+    if (isPreview) {
+      return NextResponse.json(
+        {
+          error: "Campaign delivery retry is disabled in Preview Mode.",
+          code: "PREVIEW_MODE_RETRY_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const deliveryIds = Array.isArray(body?.deliveryIds)
       ? body.deliveryIds
