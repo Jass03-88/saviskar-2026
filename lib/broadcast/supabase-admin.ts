@@ -8,7 +8,14 @@ export const HYBRID_READONLY_ERROR =
 export const PREVIEW_READONLY_ERROR =
   "Preview deployment mode is active. Live participant rosters, campaign mutations, and email dispatches are disabled to protect production data and participant privacy.";
 
-export type BroadcastOperationalMode = "live_production" | "hybrid_development" | "preview";
+export const PRODUCTION_READONLY_ERROR =
+  "Production read-only mode is active. Real participant lists and campaign history are readable, but campaign creation, certificate issuance writes, queue processing, retries, and email dispatches are disabled.";
+
+export type BroadcastOperationalMode =
+  | "live_production"
+  | "production_readonly"
+  | "hybrid_development"
+  | "preview";
 
 export const CANONICAL_PRODUCTION_HOSTS: ReadonlySet<string> = new Set([
   "saviskar.co.in",
@@ -76,7 +83,7 @@ export function isCanonicalProductionHost(host: string | null): boolean {
  * Checks whether Live Broadcast Mode is explicitly enabled.
  * Strictly fails closed:
  * 1. Fails closed if any preview or non-production environment indicator is present.
- * 2. Requires deliberate explicit activation: SAVISKAR_BROADCAST_LIVE_ENABLED="true" or BROADCAST_LIVE_DISPATCH_ENABLED="true".
+ * 2. Requires deliberate explicit activation ONLY via SAVISKAR_BROADCAST_LIVE_ENABLED="true".
  * 3. Requires the actual request host (if present) to match the canonical production domain (saviskar.co.in).
  * 4. In production runtime, requires NEXT_PUBLIC_SITE_URL (if set) to match canonical production domain.
  * Missing or unknown configuration always defaults to false (Preview Mode).
@@ -93,8 +100,7 @@ export function isLiveBroadcastEnabled(req?: Request | any): boolean {
   }
 
   const isExplicitFlagTrue =
-    process.env.SAVISKAR_BROADCAST_LIVE_ENABLED === "true" ||
-    process.env.BROADCAST_LIVE_DISPATCH_ENABLED === "true";
+    process.env.SAVISKAR_BROADCAST_LIVE_ENABLED === "true";
 
   if (!isExplicitFlagTrue) {
     return false;
@@ -126,10 +132,90 @@ export function isLiveBroadcastEnabled(req?: Request | any): boolean {
   }
 
   if (process.env.NODE_ENV === "test") {
+    if (requestHost && !isCanonicalProductionHost(requestHost)) {
+      return false;
+    }
     return isExplicitFlagTrue;
   }
 
+  // In production runtime, must have verified canonical host:
+  if (requestHost && !isCanonicalProductionHost(requestHost)) {
+    return false;
+  }
+  if (!requestHost && (!siteUrlHost || !isCanonicalProductionHost(siteUrlHost))) {
+    return false;
+  }
+
   return process.env.NODE_ENV === "production" && isExplicitFlagTrue;
+}
+
+/**
+ * Checks whether Production Read-Only Mode is explicitly enabled:
+ * 1. Fails closed if any preview or non-production environment indicator is present.
+ * 2. Requires deliberate explicit activation: SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED="true".
+ * 3. Only permitted on the verified canonical production host (saviskar.co.in, www.saviskar.co.in).
+ * 4. Preview hosts must never enter this mode, even if they inherit production environment variables or send spoofed forwarded-host headers.
+ * 5. Does NOT grant permission to mutate data, issue certificates, or send emails (strictly read-only).
+ */
+export function isProductionReadOnlyEnabled(req?: Request | any): boolean {
+  if (
+    process.env.VERCEL_ENV === "preview" ||
+    process.env.APP_ENV === "preview" ||
+    process.env.NEXT_PUBLIC_APP_ENV === "preview" ||
+    process.env.SAVISKAR_PREVIEW === "true" ||
+    process.env.HOSTINGER_PREVIEW === "true"
+  ) {
+    return false;
+  }
+
+  const isFlagTrue =
+    process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED === "true";
+
+  if (!isFlagTrue) {
+    return false;
+  }
+
+  // Inspect actual request host if available
+  const requestHost = extractHostFromRequest(req);
+  if (requestHost) {
+    if (!isCanonicalProductionHost(requestHost)) {
+      return false;
+    }
+  }
+
+  // Inspect NEXT_PUBLIC_SITE_URL host
+  const siteUrlHost = extractHostFromSiteUrl();
+  if (siteUrlHost && !isCanonicalProductionHost(siteUrlHost)) {
+    return false;
+  }
+
+  const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "").toLowerCase();
+  if (
+    siteUrl.includes("preview") ||
+    siteUrl.includes("hostinger") ||
+    siteUrl.includes("vercel.app") ||
+    siteUrl.includes("ngrok") ||
+    siteUrl.includes("trycloudflare")
+  ) {
+    return false;
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    if (requestHost && !isCanonicalProductionHost(requestHost)) {
+      return false;
+    }
+    return isFlagTrue;
+  }
+
+  // In production runtime, must have verified canonical host:
+  if (requestHost && !isCanonicalProductionHost(requestHost)) {
+    return false;
+  }
+  if (!requestHost && (!siteUrlHost || !isCanonicalProductionHost(siteUrlHost))) {
+    return false;
+  }
+
+  return process.env.NODE_ENV === "production" && isFlagTrue;
 }
 
 /**
@@ -138,7 +224,7 @@ export function isLiveBroadcastEnabled(req?: Request | any): boolean {
  * 1. Forced into preview if any preview indicator is present.
  * 2. Forced into preview if the request host is not the canonical production domain (e.g. firebrick-caterpillar-749126.hostingersite.com).
  * 3. Forced into preview if NEXT_PUBLIC_SITE_URL is a preview domain.
- * 4. In production (NODE_ENV === "production"), defaults to preview unless Live Broadcast is explicitly enabled on canonical host.
+ * 4. In production (NODE_ENV === "production"), defaults to preview unless Live Broadcast or Production Read-Only is explicitly enabled on canonical host.
  * 5. In development (NODE_ENV === "development"), defaults to preview unless Docker Supabase is active (hybrid mode).
  */
 export function isPreviewDeployment(req?: Request | any): boolean {
@@ -163,7 +249,17 @@ export function isPreviewDeployment(req?: Request | any): boolean {
     return true;
   }
 
-  // In production runtime (e.g. Hostinger preview or live production):
+  // Live broadcast on canonical host is not preview
+  if (selfModule.isLiveBroadcastEnabled(req)) {
+    return false;
+  }
+
+  // Production read-only on canonical host is not preview
+  if (selfModule.isProductionReadOnlyEnabled(req)) {
+    return false;
+  }
+
+  // In production runtime (e.g. Hostinger preview or unactivated production):
   if (process.env.NODE_ENV === "production") {
     const requestHost = extractHostFromRequest(req);
     if (requestHost && !isCanonicalProductionHost(requestHost)) {
@@ -175,11 +271,7 @@ export function isPreviewDeployment(req?: Request | any): boolean {
       return true;
     }
 
-    if (!selfModule.isLiveBroadcastEnabled(req)) {
-      return true;
-    }
-
-    return false;
+    return true;
   }
 
   // In development runtime:
@@ -213,11 +305,13 @@ export function isPreviewDeployment(req?: Request | any): boolean {
 /**
  * Authoritatively resolves the active broadcast operational mode:
  * - "live_production": Production environment with explicit release activation flag on canonical host.
+ * - "production_readonly": Canonical production host with explicit read-only inspection flag enabled.
  * - "hybrid_development": Local development with Docker Supabase on port 54321.
  * - "preview": Cloud preview, staging, or unactivated deployment.
  */
 export function getBroadcastOperationalMode(req?: Request | any): BroadcastOperationalMode {
   if (selfModule.isLiveBroadcastEnabled(req)) return "live_production";
+  if (selfModule.isProductionReadOnlyEnabled(req)) return "production_readonly";
   if (selfModule.isHybridDevelopmentModeActive()) return "hybrid_development";
   return "preview";
 }

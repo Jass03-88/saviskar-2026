@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireMasterAdmin } from "@/lib/supabase/server";
 import {
   getBroadcastSupabaseAdmin,
+  isHybridDevelopmentModeActive,
+  isLiveBroadcastEnabled,
   isPreviewDeployment,
+  isProductionReadOnlyEnabled,
 } from "@/lib/broadcast/supabase-admin";
 import {
   processNextBroadcastBatch,
@@ -37,6 +40,27 @@ export async function POST(
         {
           error: "Batch queue processing is disabled in Preview Mode.",
           code: "PREVIEW_MODE_PROCESSING_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    const isReadOnly = isProductionReadOnlyEnabled(request);
+    if (isReadOnly) {
+      return NextResponse.json(
+        {
+          error: "Batch queue processing is disabled in Production Read-Only Mode.",
+          code: "PRODUCTION_READONLY_MODE_PROCESSING_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!isLiveBroadcastEnabled(request) && !isHybridDevelopmentModeActive()) {
+      return NextResponse.json(
+        {
+          error: "Batch queue processing is disabled because live broadcast mode is not enabled in this deployment.",
+          code: "LIVE_BROADCAST_DISABLED",
         },
         { status: 403 }
       );
