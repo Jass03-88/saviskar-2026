@@ -29,14 +29,32 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "motion", "three"],
   },
+  ...(process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_SUPABASE_URL
+    ? {
+        env: {
+          NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "",
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+        },
+      }
+    : {}),
   async headers() {
+    const isLocalSupabase =
+      process.env.NODE_ENV === "development" &&
+      Boolean(
+        process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("127.0.0.1:54321") ||
+        process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("localhost:54321")
+      );
+    const localConnectSrc = isLocalSupabase ? " http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*" : "";
+    const localImgSrc = isLocalSupabase ? " http://127.0.0.1:* http://localhost:*" : "";
+
     const cspHeader = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
-      "img-src 'self' data: blob: https://*.supabase.co https://img.youtube.com https://i.ytimg.com https://lh3.googleusercontent.com https://drive.google.com",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.resend.com",
+      `img-src 'self' data: blob: https://*.supabase.co https://img.youtube.com https://i.ytimg.com https://lh3.googleusercontent.com https://drive.google.com${localImgSrc}`,
+      `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.resend.com${localConnectSrc}`,
       "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com",
       "worker-src 'self' blob:",
       "object-src 'none'",

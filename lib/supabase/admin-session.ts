@@ -80,3 +80,60 @@ export function toAdminSessionCookieOptions<
   delete sessionOptions.expires;
   return sessionOptions;
 }
+
+/**
+ * Authoritatively determines whether the Master Admin MFA requirement can be safely bypassed
+ * for local development against the disposable local Supabase stack.
+ *
+ * Strict Security Invariants:
+ * 1. Fails closed (returns false) if NODE_ENV is "production", "test", or anything other than "development".
+ * 2. Fails closed if any cloud/hosting platform environment variable is set (VERCEL, NETLIFY, FLY_APP_NAME, RENDER).
+ * 3. Requires the intended local disposable Supabase stack endpoint: http://127.0.0.1:54321 or http://localhost:54321.
+ * 4. Rejects any non-HTTP protocol, non-standard port, or hosted Supabase domain.
+ */
+export function isLocalDevelopmentMfaBypassAllowed(): boolean {
+  // 1. Strict execution context: ONLY explicit local development
+  if (process.env.NODE_ENV !== "development") {
+    return false;
+  }
+
+  // 2. Reject any deployed cloud environment indicators
+  if (
+    process.env.VERCEL ||
+    process.env.VERCEL_ENV ||
+    process.env.NETLIFY ||
+    process.env.FLY_APP_NAME ||
+    process.env.RENDER
+  ) {
+    return false;
+  }
+
+  // 3. Inspect configured Supabase URL
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  if (!supabaseUrl) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(supabaseUrl);
+    // Protocol must strictly be plain HTTP
+    if (parsed.protocol !== "http:") {
+      return false;
+    }
+
+    // Hostname must strictly be 127.0.0.1 or localhost
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+      return false;
+    }
+
+    // Port must strictly be the designated local Supabase Kong gateway port (54321)
+    if (parsed.port !== "54321") {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}

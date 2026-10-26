@@ -1,6 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isAdminSessionExpired, toAdminSessionCookieOptions } from "./admin-session";
+import {
+  isAdminSessionExpired,
+  toAdminSessionCookieOptions,
+  isLocalDevelopmentMfaBypassAllowed,
+} from "./admin-session";
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -29,9 +33,19 @@ export async function updateSession(request: NextRequest) {
   );
 
   // getUser() validates the access token with Supabase Auth.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user = null;
+  try {
+    const {
+      data: { user: authUser },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (!userError && authUser) {
+      user = authUser;
+    }
+  } catch {
+    // If refresh token is missing, expired, or invalid, treat user as unauthenticated
+    user = null;
+  }
 
   const pathname = request.nextUrl.pathname;
   const isAdminPath =
@@ -109,7 +123,7 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
 
-  if (adminRow?.role === "master" && !isExemptPath) {
+  if (adminRow?.role === "master" && !isExemptPath && !isLocalDevelopmentMfaBypassAllowed()) {
     const { data: mfaData, error: mfaError } =
       await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
 
