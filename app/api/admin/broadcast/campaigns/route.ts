@@ -10,6 +10,7 @@ import {
   isPreviewDeployment,
   isProductionReadOnlyEnabled,
   getBroadcastOperationalMode,
+  getBroadcastDiagnostics,
   HYBRID_READONLY_ERROR,
   PREVIEW_READONLY_ERROR,
   PRODUCTION_READONLY_ERROR,
@@ -53,6 +54,9 @@ export async function GET(request?: Request): Promise<NextResponse> {
     const isProductionReadOnly = isProductionReadOnlyEnabled(request);
     const isLiveProduction = isLiveBroadcastEnabled(request);
     const mode = getBroadcastOperationalMode(request);
+    const diagnostics = getBroadcastDiagnostics(request);
+
+    console.info("[BROADCAST CAMPAIGNS DIAGNOSTICS]", JSON.stringify(diagnostics));
 
     if (isPreview) {
       return NextResponse.json({
@@ -64,6 +68,7 @@ export async function GET(request?: Request): Promise<NextResponse> {
         isHybridMode: false,
         schemaReady: false,
         note: "Preview Mode: Campaign storage is unmounted to protect production database.",
+        diagnostics,
       });
     }
 
@@ -97,6 +102,7 @@ export async function GET(request?: Request): Promise<NextResponse> {
           error: isMissingTable
             ? "Database table 'broadcast_campaigns' not found. Verify that migration 20261026000001_broadcast_and_certificates.sql is applied."
             : error.message || "Failed to load campaigns",
+          diagnostics,
         },
         { status: 500 }
       );
@@ -108,6 +114,7 @@ export async function GET(request?: Request): Promise<NextResponse> {
       isProductionReadOnly,
       isLiveProduction,
       isHybridMode: isHybridDevelopmentModeActive(),
+      diagnostics,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "Failed to load campaigns" }, { status: 500 });
