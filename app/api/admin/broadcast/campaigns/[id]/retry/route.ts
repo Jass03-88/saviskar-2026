@@ -4,8 +4,10 @@ import { requireMasterAdmin } from "@/lib/supabase/server";
 import {
   getBroadcastSupabaseAdmin,
   isHybridDevelopmentModeActive,
+  isLiveBroadcastEnabled,
   isSyntheticTestEmail,
   isPreviewDeployment,
+  isProductionReadOnlyEnabled,
   HYBRID_READONLY_ERROR,
 } from "@/lib/broadcast/supabase-admin";
 
@@ -37,6 +39,27 @@ export async function POST(
         {
           error: "Campaign delivery retry is disabled in Preview Mode.",
           code: "PREVIEW_MODE_RETRY_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    const isReadOnly = isProductionReadOnlyEnabled(request);
+    if (isReadOnly) {
+      return NextResponse.json(
+        {
+          error: "Campaign delivery retry is disabled in Production Read-Only Mode.",
+          code: "PRODUCTION_READONLY_MODE_RETRY_DISABLED",
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!isLiveBroadcastEnabled(request) && !isHybridDevelopmentModeActive()) {
+      return NextResponse.json(
+        {
+          error: "Campaign delivery retry is disabled because live broadcast mode is not enabled in this deployment.",
+          code: "LIVE_BROADCAST_DISABLED",
         },
         { status: 403 }
       );

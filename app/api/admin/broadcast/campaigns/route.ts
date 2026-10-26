@@ -8,9 +8,11 @@ import {
   isSyntheticTestEmail,
   isLiveBroadcastEnabled,
   isPreviewDeployment,
+  isProductionReadOnlyEnabled,
   getBroadcastOperationalMode,
   HYBRID_READONLY_ERROR,
   PREVIEW_READONLY_ERROR,
+  PRODUCTION_READONLY_ERROR,
 } from "@/lib/broadcast/supabase-admin";
 import {
   createGeneralBroadcastCampaign,
@@ -48,6 +50,8 @@ export async function GET(request?: Request): Promise<NextResponse> {
 
   try {
     const isPreview = isPreviewDeployment(request);
+    const isProductionReadOnly = isProductionReadOnlyEnabled(request);
+    const isLiveProduction = isLiveBroadcastEnabled(request);
     const mode = getBroadcastOperationalMode(request);
 
     if (isPreview) {
@@ -55,6 +59,7 @@ export async function GET(request?: Request): Promise<NextResponse> {
         campaigns: [],
         mode: "preview",
         isPreviewMode: true,
+        isProductionReadOnly: false,
         isLiveProduction: false,
         isHybridMode: false,
         schemaReady: false,
@@ -99,6 +104,9 @@ export async function GET(request?: Request): Promise<NextResponse> {
 
     return NextResponse.json({
       campaigns: campaigns || [],
+      mode,
+      isProductionReadOnly,
+      isLiveProduction,
       isHybridMode: isHybridDevelopmentModeActive(),
     });
   } catch (err: any) {
@@ -128,6 +136,27 @@ export async function POST(request: NextRequest) {
         {
           error: "Campaign creation is disabled in Preview Mode. Preview deployments cannot write campaign records to the production database.",
           code: "PREVIEW_MODE_READ_ONLY",
+        },
+        { status: 403 }
+      );
+    }
+
+    const isReadOnly = isProductionReadOnlyEnabled(request);
+    if (isReadOnly) {
+      return NextResponse.json(
+        {
+          error: "Campaign creation is disabled in Production Read-Only Mode. Database schema mutations and email dispatches are prevented.",
+          code: "PRODUCTION_READONLY_MODE_MUTATION_DENIED",
+        },
+        { status: 403 }
+      );
+    }
+
+    if (!isLiveBroadcastEnabled(request) && !isHybridDevelopmentModeActive()) {
+      return NextResponse.json(
+        {
+          error: "Campaign creation is disabled because live broadcast mode is not enabled in this deployment.",
+          code: "LIVE_BROADCAST_DISABLED",
         },
         { status: 403 }
       );

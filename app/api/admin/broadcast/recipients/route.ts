@@ -5,6 +5,8 @@ import {
   getBroadcastStorageClient,
   isHybridDevelopmentModeActive,
   isPreviewDeployment,
+  isProductionReadOnlyEnabled,
+  isLiveBroadcastEnabled,
   getBroadcastOperationalMode,
 } from "@/lib/broadcast/supabase-admin";
 import {
@@ -36,6 +38,8 @@ export async function GET(request: NextRequest) {
   try {
     const isHybridMode = isHybridDevelopmentModeActive();
     const isPreview = isPreviewDeployment(request);
+    const isProductionReadOnly = isProductionReadOnlyEnabled(request);
+    const isLiveProduction = isLiveBroadcastEnabled(request);
     const mode = getBroadcastOperationalMode(request);
 
     const searchParams = request.nextUrl.searchParams;
@@ -51,6 +55,7 @@ export async function GET(request: NextRequest) {
           type: "certificate",
           mode: "preview",
           isPreviewMode: true,
+          isProductionReadOnly: false,
           isLiveProduction: false,
           isHybridMode: false,
           total: candidates.length,
@@ -68,6 +73,7 @@ export async function GET(request: NextRequest) {
         type: "general",
         mode: "preview",
         isPreviewMode: true,
+        isProductionReadOnly: false,
         isLiveProduction: false,
         isHybridMode: false,
         total: recipients.length,
@@ -77,7 +83,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const registrationClient = isHybridMode
+    // In production read-only mode, hosted registration reads are strictly wrapped in createReadOnlySupabaseClient
+    const registrationClient = isProductionReadOnly
+      ? getHostedRegistrationReadClient()
+      : isHybridMode
       ? getHostedRegistrationReadClient()
       : getBroadcastStorageClient();
 
@@ -95,7 +104,11 @@ export async function GET(request: NextRequest) {
 
       return NextResponse.json({
         type: "certificate",
+        mode,
+        isProductionReadOnly,
+        isLiveProduction,
         isHybridMode,
+        isPreviewMode: false,
         total: candidates.length,
         eligibleCount,
         ineligibleCount,
@@ -114,7 +127,11 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       type: "general",
+      mode,
+      isProductionReadOnly,
+      isLiveProduction,
       isHybridMode,
+      isPreviewMode: false,
       total: recipients.length,
       validCount,
       invalidCount,

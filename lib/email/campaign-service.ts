@@ -4,6 +4,7 @@ import {
   isSyntheticTestEmail,
   isLiveBroadcastEnabled,
   isPreviewDeployment,
+  isProductionReadOnlyEnabled,
 } from "@/lib/broadcast/supabase-admin";
 
 export const DEFAULT_CAMPAIGN_SENDER =
@@ -132,6 +133,16 @@ export async function sendCampaignEmail(
       success: false,
       error: "Campaign email dispatch is strictly disabled in Preview Mode.",
       errorCode: "PREVIEW_DISPATCH_DISABLED",
+      isRetryable: false,
+    };
+  }
+
+  // Production read-only guard: strictly forbid any external dispatch in production read-only mode
+  if (isProductionReadOnlyEnabled(options.request)) {
+    return {
+      success: false,
+      error: "Campaign email dispatch is strictly disabled in Production Read-Only Mode.",
+      errorCode: "PRODUCTION_READONLY_DISPATCH_DISABLED",
       isRetryable: false,
     };
   }

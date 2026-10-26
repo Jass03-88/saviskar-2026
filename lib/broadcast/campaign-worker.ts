@@ -13,9 +13,11 @@ import {
 import {
   isHybridDevelopmentModeActive,
   isPreviewDeployment,
+  isProductionReadOnlyEnabled,
   isSyntheticTestEmail,
   HYBRID_READONLY_ERROR,
   PREVIEW_READONLY_ERROR,
+  PRODUCTION_READONLY_ERROR,
   resolveCampaignCreatorIdentity,
 } from "./supabase-admin";
 
@@ -71,6 +73,13 @@ export async function createGeneralBroadcastCampaign(
   supabaseAdmin: SupabaseClient,
   params: CreateGeneralCampaignParams
 ): Promise<{ campaignId: string; totalDeliveries: number }> {
+  if (isPreviewDeployment()) {
+    throw new Error(PREVIEW_READONLY_ERROR);
+  }
+  if (isProductionReadOnlyEnabled()) {
+    throw new Error(PRODUCTION_READONLY_ERROR);
+  }
+
   const cleanEmails = Array.from(
     new Set(params.selectedEmails.map((e) => e.trim().toLowerCase()).filter(Boolean))
   );
@@ -141,8 +150,15 @@ export async function createCertificateCampaign(
   params: CreateCertificateCampaignParams,
   eligibleCandidates: any[]
 ): Promise<{ campaignId: string; totalDeliveries: number; totalCertificates: number }> {
+  if (isPreviewDeployment()) {
+    throw new Error(PREVIEW_READONLY_ERROR);
+  }
+  if (isProductionReadOnlyEnabled()) {
+    throw new Error(PRODUCTION_READONLY_ERROR);
+  }
+
   const selectedKeySet = new Set(params.selectedItemKeys);
-  const selectedCandidates = eligibleCandidates.filter(
+  const selectedCandidates = (eligibleCandidates || []).filter(
     (c) => selectedKeySet.has(c.issueSourceKey) && c.certificateEligible
   );
 
@@ -466,9 +482,12 @@ export async function processNextBroadcastBatch(
   const leaseSeconds = isOptions ? batchSizeOrOptions.leaseSeconds ?? 300 : leaseSecondsArg;
   const campaignId = isOptions ? batchSizeOrOptions.campaignId : campaignIdArg;
 
-  // Fail-closed guard: Batch worker processing is strictly forbidden in preview mode
+  // Fail-closed guard: Batch worker processing is strictly forbidden in preview or read-only mode
   if (isPreviewDeployment()) {
     throw new Error(PREVIEW_READONLY_ERROR);
+  }
+  if (isProductionReadOnlyEnabled()) {
+    throw new Error(PRODUCTION_READONLY_ERROR);
   }
 
   // 1. Atomic claim via RPC (FOR UPDATE SKIP LOCKED)
