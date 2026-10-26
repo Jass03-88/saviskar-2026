@@ -1400,6 +1400,15 @@ export default function AdminPage() {
 
                   Audit Logs
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => router.push("/admin/broadcast")}
+                  className="flex items-center gap-2 rounded-full bg-black px-5 py-3 text-sm text-white transition hover:scale-[1.02]"
+                >
+                  <Mail size={15} />
+                  <span>Email Broadcast</span>
+                </button>
               </>
             )}
 
