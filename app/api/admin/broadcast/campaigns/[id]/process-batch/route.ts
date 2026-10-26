@@ -58,6 +58,12 @@ export async function POST(
     });
   } catch (err: any) {
     console.error("[PROCESS BATCH ERROR]:", err);
-    return NextResponse.json({ error: err?.message || "Batch processing failed" }, { status: 500 });
+    return NextResponse.json(
+      {
+        success: false,
+        error: err?.message || "Batch processing failed",
+      },
+      { status: 500 }
+    );
   }
 }

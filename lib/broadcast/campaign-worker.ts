@@ -481,7 +481,11 @@ export async function processNextBroadcastBatch(
 
   if (claimErr) {
     console.error("[CAMPAIGN WORKER] Claim error:", claimErr);
-    return { processedCount: 0, successCount: 0, failureCount: 0, details: [] };
+    const error = new Error(
+      claimErr.message || "Failed to claim broadcast deliveries from queue"
+    );
+    (error as any).code = claimErr.code;
+    throw error;
   }
 
   if (!claimedDeliveries || claimedDeliveries.length === 0) {

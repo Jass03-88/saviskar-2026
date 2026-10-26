@@ -32,6 +32,7 @@ import { GET as getRecipientsRoute } from "@/app/api/admin/broadcast/recipients/
 import { GET as getCampaignsRoute, POST as postCampaignsRoute } from "@/app/api/admin/broadcast/campaigns/route";
 import { POST as postTestSendRoute } from "@/app/api/admin/broadcast/campaigns/[id]/test-send/route";
 import { POST as postRetryRoute } from "@/app/api/admin/broadcast/campaigns/[id]/retry/route";
+import { POST as postProcessBatchRoute } from "@/app/api/admin/broadcast/campaigns/[id]/process-batch/route";
 import {
   SYNTHETIC_GENERAL_RECIPIENTS,
   SYNTHETIC_CERTIFICATE_CANDIDATES,
@@ -1529,6 +1530,262 @@ describe("Saviskar 2026 — Master Admin Email Broadcast & Participation Certifi
       expect(json.successCount).toBe(0);
       expect(json.failureCount).toBe(0);
       expect(campaignStatusSet).toBe("queued");
+    });
+
+    it("POST /api/admin/broadcast/campaigns/[id]/retry with resend_explicit handles delivery-row insertion failure and returns HTTP 500", async () => {
+      vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+        user: { id: "master-uuid", email: "admin@saviskar.test" },
+      } as any);
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(true);
+
+      const mockStorageClient = {
+        from: (table: string) => {
+          if (table === "broadcast_deliveries") {
+            return {
+              select: () => ({
+                in: () => Promise.resolve({ data: [{ id: "del-1", recipient_email: "synthetic.candidate@saviskar.test" }], error: null }),
+                eq: () => ({
+                  in: () =>
+                    Promise.resolve({
+                      data: [
+                        {
+                          id: "del-1",
+                          recipient_email: "synthetic.candidate@saviskar.test",
+                          recipient_name: "Candidate",
+                          channel: "general",
+                          part_number: 1,
+                          total_parts: 1,
+                          subject: "Test",
+                          body_html: "<p>Test</p>",
+                          body_text: "Test",
+                          broadcast_delivery_attachments: [],
+                        },
+                      ],
+                      error: null,
+                    }),
+                }),
+              }),
+              insert: () => Promise.resolve({ error: { message: "DB Delivery Insert Error" } }),
+            };
+          }
+          return {};
+        },
+      } as any;
+
+      vi.spyOn(adminLib, "getBroadcastSupabaseAdmin").mockReturnValue(mockStorageClient);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns/c-1/retry", {
+        method: "POST",
+        body: JSON.stringify({
+          deliveryIds: ["del-1"],
+          action: "resend_explicit",
+        }),
+      });
+
+      const res = await postRetryRoute(req, { params: Promise.resolve({ id: "c-1" }) });
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.success).toBeUndefined();
+      expect(json.error).toBe("DB Delivery Insert Error");
+    });
+
+    it("POST /api/admin/broadcast/campaigns/[id]/retry with resend_explicit compensates and deletes new delivery on attachment insertion failure", async () => {
+      vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+        user: { id: "master-uuid", email: "admin@saviskar.test" },
+      } as any);
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(true);
+
+      let compensatedDeleteCalled = false;
+      let insertedDeliveryIds: string[] = [];
+
+      const mockStorageClient = {
+        from: (table: string) => {
+          if (table === "broadcast_deliveries") {
+            return {
+              select: () => ({
+                in: () => Promise.resolve({ data: [{ id: "del-cert-1", recipient_email: "synthetic.candidate@saviskar.test" }], error: null }),
+                eq: () => ({
+                  in: () => Promise.resolve({
+                    data: [
+                      {
+                        id: "del-cert-1",
+                        recipient_email: "synthetic.candidate@saviskar.test",
+                        recipient_name: "Candidate",
+                        channel: "individual",
+                        part_number: 1,
+                        total_parts: 1,
+                        subject: "Cert",
+                        body_html: "<p>Cert</p>",
+                        body_text: "Cert",
+                        broadcast_delivery_attachments: [
+                          { certificate_id: "cert-uuid-1", filename: "cert.pdf", size_bytes: 1024 },
+                        ],
+                      },
+                    ],
+                    error: null,
+                  }),
+                }),
+              }),
+              insert: (deliveries: any[]) => {
+                insertedDeliveryIds = deliveries.map((d) => d.id);
+                return Promise.resolve({ error: null });
+              },
+              delete: () => ({
+                in: (col: string, ids: string[]) => {
+                  compensatedDeleteCalled = true;
+                  expect(ids).toEqual(insertedDeliveryIds);
+                  return Promise.resolve({ error: null });
+                },
+              }),
+            };
+          }
+          if (table === "broadcast_delivery_attachments") {
+            return {
+              insert: () => Promise.resolve({ error: { message: "Attachment Disk Full Error" } }),
+            };
+          }
+          return {};
+        },
+      } as any;
+
+      vi.spyOn(adminLib, "getBroadcastSupabaseAdmin").mockReturnValue(mockStorageClient);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns/c-1/retry", {
+        method: "POST",
+        body: JSON.stringify({
+          deliveryIds: ["del-cert-1"],
+          action: "resend_explicit",
+        }),
+      });
+
+      const res = await postRetryRoute(req, { params: Promise.resolve({ id: "c-1" }) });
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.success).toBeUndefined();
+      expect(json.error).toBe("Attachment Disk Full Error");
+      expect(compensatedDeleteCalled).toBe(true);
+    });
+
+    it("POST /api/admin/broadcast/campaigns/[id]/retry with resend_explicit compensates if campaign total query or update fails", async () => {
+      vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+        user: { id: "master-uuid", email: "admin@saviskar.test" },
+      } as any);
+      vi.spyOn(adminLib, "isHybridDevelopmentModeActive").mockReturnValue(true);
+
+      let compensatedDeleteCalled = false;
+
+      const mockStorageClient = {
+        from: (table: string) => {
+          if (table === "broadcast_deliveries") {
+            return {
+              select: () => ({
+                in: () => Promise.resolve({ data: [{ id: "del-1", recipient_email: "synthetic.candidate@saviskar.test" }], error: null }),
+                eq: () => ({
+                  in: () =>
+                    Promise.resolve({
+                      data: [
+                        {
+                          id: "del-1",
+                          recipient_email: "synthetic.candidate@saviskar.test",
+                          recipient_name: "Candidate",
+                          channel: "general",
+                          part_number: 1,
+                          total_parts: 1,
+                          subject: "Test",
+                          body_html: "<p>Test</p>",
+                          body_text: "Test",
+                          broadcast_delivery_attachments: [],
+                        },
+                      ],
+                      error: null,
+                    }),
+                }),
+              }),
+              insert: () => Promise.resolve({ error: null }),
+              delete: () => ({
+                in: () => {
+                  compensatedDeleteCalled = true;
+                  return Promise.resolve({ error: null });
+                },
+              }),
+            };
+          }
+          if (table === "broadcast_campaigns") {
+            return {
+              select: () => ({
+                eq: () => ({
+                  single: () => Promise.resolve({ data: null, error: { message: "Campaign Query Failure" } }),
+                }),
+              }),
+            };
+          }
+          return {};
+        },
+      } as any;
+
+      vi.spyOn(adminLib, "getBroadcastSupabaseAdmin").mockReturnValue(mockStorageClient);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns/c-1/retry", {
+        method: "POST",
+        body: JSON.stringify({
+          deliveryIds: ["del-1"],
+          action: "resend_explicit",
+        }),
+      });
+
+      const res = await postRetryRoute(req, { params: Promise.resolve({ id: "c-1" }) });
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.success).toBeUndefined();
+      expect(json.error).toBe("Campaign Query Failure");
+      expect(compensatedDeleteCalled).toBe(true);
+    });
+
+    it("POST /api/admin/broadcast/campaigns/[id]/process-batch propagates queue-claim failure without falsely reporting success or finalizing status", async () => {
+      vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+        user: { id: "master-uuid", email: "admin@saviskar.test" },
+      } as any);
+
+      let campaignStatusUpdateCalled = false;
+
+      const mockStorageClient = {
+        rpc: (fn: string) => {
+          if (fn === "claim_broadcast_deliveries") {
+            return Promise.resolve({
+              data: null,
+              error: { code: "57014", message: "canceling statement due to statement timeout" },
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        },
+        from: (table: string) => {
+          if (table === "broadcast_campaigns") {
+            return {
+              update: () => {
+                campaignStatusUpdateCalled = true;
+                return { eq: () => Promise.resolve({ error: null }) };
+              },
+            };
+          }
+          return {
+            select: () => ({ eq: () => Promise.resolve({ data: [], error: null }) }),
+          };
+        },
+      } as any;
+
+      vi.spyOn(adminLib, "getBroadcastSupabaseAdmin").mockReturnValue(mockStorageClient);
+
+      const req = new NextRequest("http://localhost:3000/api/admin/broadcast/campaigns/c-1/process-batch", {
+        method: "POST",
+        body: JSON.stringify({ batchSize: 10 }),
+      });
+
+      const res = await postProcessBatchRoute(req, { params: Promise.resolve({ id: "c-1" }) });
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.success).toBe(false);
+      expect(json.error).toContain("statement timeout");
+      expect(campaignStatusUpdateCalled).toBe(false); // Status was NOT finalized or touched on claim failure
     });
   });
 
