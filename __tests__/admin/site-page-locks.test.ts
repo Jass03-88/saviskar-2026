@@ -15,8 +15,9 @@ describe("Dynamic Site Access Engine", () => {
     vi.restoreAllMocks();
   });
 
-  it("contains all 8 required site section keys in DEFAULT_SITE_ACCESS", () => {
+  it("contains all 9 required site section keys in DEFAULT_SITE_ACCESS", () => {
     const requiredKeys = [
+      "ACCOMMODATION_ENABLED",
       "REGISTRATIONS_ENABLED",
       "SCHEDULE_ENABLED",
       "SPONSORS_ENABLED",
@@ -37,6 +38,7 @@ describe("Dynamic Site Access Engine", () => {
   it("returns fallback defaults if database query errors or returns empty", async () => {
     const access = await getSiteAccess();
     expect(access).toBeDefined();
+    expect(access.ACCOMMODATION_ENABLED).toBe(true);
     expect(access.REGISTRATIONS_ENABLED).toBe(true);
     expect(access.STARNIGHT_ENABLED).toBe(true);
     expect(access.EVENT_DETAILS_ENABLED).toBe(true);

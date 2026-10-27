@@ -45,6 +45,7 @@ export interface TeamAccommodationModalProps {
   eventName: string;
   members: TeamMemberForModal[];
   onProceedToPayment: (paymentOrderId: string, participantId?: string) => Promise<void>;
+  isAccommodationLocked?: boolean;
 }
 
 interface MemberBookingSelection {
@@ -62,6 +63,7 @@ export default function TeamAccommodationModal({
   eventName,
   members,
   onProceedToPayment,
+  isAccommodationLocked = false,
 }: TeamAccommodationModalProps) {
   const [mounted, setMounted] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -304,6 +306,11 @@ export default function TeamAccommodationModal({
   }, [calculatedItems]);
 
   const handleSubmit = async () => {
+    if (isAccommodationLocked) {
+      setErrorMessage("Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.");
+      return;
+    }
+
     if (calculatedItems.length === 0) {
       setErrorMessage("Please select at least one team member for accommodation.");
       return;
@@ -425,11 +432,26 @@ export default function TeamAccommodationModal({
               data-lenis-prevent="true"
             >
 
-          {/* Error Banner */}
+            {/* Error Banner */}
           {errorMessage && (
             <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-950/30 p-3.5 text-xs text-red-300">
               <AlertCircle size={16} className="shrink-0 text-red-400" />
               <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {/* Accommodation Locked Banner */}
+          {isAccommodationLocked && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-200">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle size={16} className="shrink-0 text-amber-400 mt-0.5" />
+                <div>
+                  <h4 className="font-semibold text-amber-200">Campus Accommodation Booking Paused</h4>
+                  <p className="mt-0.5 text-amber-300/80 leading-relaxed">
+                    Hostel allocations are temporarily closed by administration. Event registrations remain open.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -718,7 +740,7 @@ export default function TeamAccommodationModal({
 
               <button
                 type="button"
-                disabled={loading || calculatedItems.length === 0 || hasAnyConflict}
+                disabled={loading || calculatedItems.length === 0 || hasAnyConflict || isAccommodationLocked}
                 onClick={handleSubmit}
                 className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-[0_0_25px_rgba(168,85,247,0.35)] transition-all hover:opacity-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer focus:outline-none focus:ring-2 focus:ring-violet-400"
               >

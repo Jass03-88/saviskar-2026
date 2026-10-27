@@ -167,11 +167,12 @@ export async function POST(
   // =====================================================
   // 0. ACCESS GATE
   // =====================================================
-  const siteAccess = await getSiteAccess();
-  if (!siteAccess.REGISTRATIONS_ENABLED) {
+  const siteAccess = await getSiteAccess({ bypassCache: true });
+  if (!siteAccess.REGISTRATIONS_ENABLED || !siteAccess.REGISTRATION_ENABLED) {
     return errorResponse(
-      "Online registrations are currently restricted by administration.",
-      403
+      "Participant registration is temporarily paused by administration. Please check back shortly.",
+      403,
+      "REGISTRATION_LOCKED"
     );
   }
 
@@ -474,6 +475,15 @@ export async function POST(
     return errorResponse(
       "Please select at least one event or accommodation.",
       400
+    );
+  }
+
+  // Enforce Accommodation Access Lock
+  if (!siteAccess.ACCOMMODATION_ENABLED && rawAccommodations.length > 0) {
+    return errorResponse(
+      "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.",
+      403,
+      "ACCOMMODATION_LOCKED"
     );
   }
 
@@ -916,6 +926,28 @@ export async function POST(
     if (code === "SVK11") {
       const formatted = formatAccommodationOverlapError(rpcError);
       return errorResponse(formatted.message || message, 400, formatted.code);
+    }
+    if (
+      code === "SVK12" ||
+      message.includes("ACCOMMODATION_LOCKED") ||
+      message.includes("Hostel allocations are temporarily closed")
+    ) {
+      return errorResponse(
+        "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open.",
+        403,
+        "ACCOMMODATION_LOCKED"
+      );
+    }
+    if (
+      code === "SVK13" ||
+      message.includes("REGISTRATION_LOCKED") ||
+      message.includes("Participant registration is temporarily paused")
+    ) {
+      return errorResponse(
+        "Participant registration is temporarily paused by administration. Please check back shortly.",
+        403,
+        "REGISTRATION_LOCKED"
+      );
     }
     if (code === "SVK07" || code === "SVK08" || code === "SVK09" || code === "SVK10") {
       return errorResponse(message, 400, "TEAM_SIZE_ERROR");

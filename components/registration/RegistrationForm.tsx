@@ -15,6 +15,7 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRight,
   AlertCircle,
+  AlertTriangle,
   Check,
   ChevronDown,
   Plus,
@@ -341,11 +342,15 @@ class ValidationError extends Error {
 interface RegistrationFormProps {
   sessionEmail?: string;
   onSignOut?: () => void;
+  isAccommodationLocked?: boolean;
+  isRegistrationLocked?: boolean;
 }
 
 export default function RegistrationForm({
   sessionEmail = "",
   onSignOut,
+  isAccommodationLocked = false,
+  isRegistrationLocked = false,
 }: RegistrationFormProps = {}) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -369,6 +374,18 @@ export default function RegistrationForm({
   const [mainAccommodationDate, setMainAccommodationDate] = useState<"2026-10-27" | "2026-10-28" | "2026-10-29" | "2026-10-30" | "2026-10-31">("2026-10-28");
   const [mainExtraDays, setMainExtraDays] = useState<"none" | "before_27" | "after_30" | "both">("none");
   const [mainIdCardStoragePath, setMainIdCardStoragePath] = useState("");
+
+  useEffect(() => {
+    if (isAccommodationLocked) {
+      setMainAccommodationSlug("");
+      setFacultyState((prev) => {
+        if (prev.accommodationPlanSlug) {
+          return { ...prev, accommodationPlanSlug: "" };
+        }
+        return prev;
+      });
+    }
+  }, [isAccommodationLocked]);
 
   const [facultyEnabled, setFacultyEnabled] = useState(false);
   const [facultyState, setFacultyState] = useState({
@@ -1370,15 +1387,26 @@ export default function RegistrationForm({
     setErrorMessage("");
 
     try {
+      if (isRegistrationLocked) {
+        throw new ValidationError(
+          "Participant registration is temporarily paused by administration. Please check back shortly."
+        );
+      }
+
       const form = event.currentTarget;
       const formData = new FormData(form);
 
-      const mainAccSlug = String(
-        formData.get("accommodationPlanSlug") ?? ""
-      ).trim();
-      const hasFacultyAcc = facultyEnabled && Boolean(facultyState.accommodationPlanSlug);
+      const mainAccSlug = isAccommodationLocked
+        ? ""
+        : String(formData.get("accommodationPlanSlug") ?? "").trim();
+      const hasFacultyAcc = !isAccommodationLocked && facultyEnabled && Boolean(facultyState.accommodationPlanSlug);
 
       if (selectedEventIds.length === 0 && !mainAccSlug && !hasFacultyAcc) {
+        if (isAccommodationLocked) {
+          throw new ValidationError(
+            "Campus Accommodation Booking Paused — Hostel allocations are temporarily closed by administration. Event registrations remain open."
+          );
+        }
         throw new ValidationError(
           "Please select at least one competition or accommodation before continuing."
         );
@@ -1414,7 +1442,7 @@ export default function RegistrationForm({
 
       const accommodationsPayload: Array<{ email: string; planSlug: string; selectedDate?: string; extraDays?: string }> = [];
 
-      if (mainAccSlug) {
+      if (!isAccommodationLocked && mainAccSlug) {
         const resolved = resolveAccommodationSelection(mainAccSlug, mainAccommodationDate, mainExtraDays);
         accommodationsPayload.push({
           email,
@@ -1435,7 +1463,7 @@ export default function RegistrationForm({
         if (facultyState.email.trim().toLowerCase() === email.trim().toLowerCase()) {
           throw new ValidationError("Faculty In-Charge email cannot be the same as the participant email.");
         }
-        if (facultyState.accommodationPlanSlug) {
+        if (!isAccommodationLocked && facultyState.accommodationPlanSlug) {
           const resolved = resolveAccommodationSelection(
             facultyState.accommodationPlanSlug,
             facultyState.accommodationDate,
@@ -3921,7 +3949,21 @@ export default function RegistrationForm({
                                 />
                               </div>
 
-                              {accommodationPlans.length > 0 && (
+                              {isAccommodationLocked ? (
+                                <div className="mt-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 backdrop-blur-md">
+                                  <div className="flex items-start gap-3">
+                                    <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                                    <div>
+                                      <h4 className="text-sm font-medium text-amber-200">
+                                        Campus Accommodation Booking Paused
+                                      </h4>
+                                      <p className="mt-1 text-xs text-amber-300/80 leading-relaxed">
+                                        Hostel allocations are temporarily closed by administration. Event registrations remain open.
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : accommodationPlans.length > 0 && (
                                 <div className="mt-6">
                                   <Field label="Accommodation (Optional)">
                                     <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
@@ -5107,7 +5149,21 @@ export default function RegistrationForm({
                   />
                 </div>
 
-                {accommodationPlans.length > 0 && (
+                {isAccommodationLocked ? (
+                  <div className="mt-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 backdrop-blur-md">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-sm font-medium text-amber-200">
+                          Campus Accommodation Booking Paused
+                        </h4>
+                        <p className="mt-1 text-xs text-amber-300/80 leading-relaxed">
+                          Hostel allocations are temporarily closed by administration. Event registrations remain open.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : accommodationPlans.length > 0 && (
                   <div>
                     <Field label="Accommodation (Optional)">
                                     <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
@@ -5632,7 +5688,21 @@ export default function RegistrationForm({
                         />
                       </div>
 
-                      {accommodationPlans.length > 0 && (
+                      {isAccommodationLocked ? (
+                        <div className="mt-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 backdrop-blur-md">
+                          <div className="flex items-start gap-3">
+                            <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                            <div>
+                              <h4 className="text-sm font-medium text-amber-200">
+                                Campus Accommodation Booking Paused
+                              </h4>
+                              <p className="mt-1 text-xs text-amber-300/80 leading-relaxed">
+                                Hostel allocations are temporarily closed by administration. Event registrations remain open.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : accommodationPlans.length > 0 && (
                         <div className="mt-6">
                           <Field label="Accommodation (Optional)">
                                 <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
@@ -6367,6 +6437,8 @@ export default function RegistrationForm({
                 const found = participantLookupEvents.find((e) => e.participantEventId === ev.participantEventId);
                 if (found) handlePaymentRecovery(found);
               }}
+              isAccommodationLocked={isAccommodationLocked}
+              isRegistrationLocked={isRegistrationLocked}
             />
           )}
 
@@ -6389,6 +6461,7 @@ export default function RegistrationForm({
                 accommodations: m.accommodations,
               }))}
               onProceedToPayment={handleModalPayment}
+              isAccommodationLocked={isAccommodationLocked}
             />
           )}
 
@@ -6409,6 +6482,7 @@ export default function RegistrationForm({
                 status: a.status,
               }))}
               onProceedToPayment={handleModalPayment}
+              isAccommodationLocked={isAccommodationLocked}
             />
           )}
         </div>

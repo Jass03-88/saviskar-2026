@@ -18,6 +18,7 @@ import {
   AlertCircle,
   ArrowRight,
   ExternalLink,
+  Lock,
 } from "lucide-react";
 
 export interface DetailPanelEvent {
@@ -90,6 +91,8 @@ export interface RegistrationDetailPanelProps {
   onOpenAddAccommodation: () => void;
   onOpenTeamAccommodation: () => void;
   onPaymentRecovery?: (event: DetailPanelEvent) => void;
+  isAccommodationLocked?: boolean;
+  isRegistrationLocked?: boolean;
 }
 
 export default function RegistrationDetailPanel({
@@ -102,6 +105,8 @@ export default function RegistrationDetailPanel({
   onOpenAddAccommodation,
   onOpenTeamAccommodation,
   onPaymentRecovery,
+  isAccommodationLocked = false,
+  isRegistrationLocked = false,
 }: RegistrationDetailPanelProps) {
   const [mounted, setMounted] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -285,14 +290,21 @@ export default function RegistrationDetailPanel({
               </div>
 
               {isPending && onPaymentRecovery && (event.paymentAmount || 0) > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onPaymentRecovery(event)}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-1.5 text-xs font-semibold text-black transition-all hover:bg-amber-100 shadow-[0_0_15px_rgba(251,191,36,0.2)] cursor-pointer"
-                >
-                  <span>Pay Now (₹{event.paymentAmount})</span>
-                  <ArrowRight size={13} />
-                </button>
+                isRegistrationLocked ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-1.5 text-xs font-semibold text-amber-300">
+                    <Lock size={13} />
+                    <span>Registration Checkout Paused</span>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onPaymentRecovery(event)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-1.5 text-xs font-semibold text-black transition-all hover:bg-amber-100 shadow-[0_0_15px_rgba(251,191,36,0.2)] cursor-pointer"
+                  >
+                    <span>Pay Now (₹{event.paymentAmount})</span>
+                    <ArrowRight size={13} />
+                  </button>
+                )
               )}
             </div>
           </div>
@@ -309,14 +321,21 @@ export default function RegistrationDetailPanel({
                 </div>
 
                 {isLeader && (
-                  <button
-                    type="button"
-                    onClick={onOpenTeamAccommodation}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/40 bg-violet-600/30 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-600/50 hover:text-white transition-all cursor-pointer shadow-[0_0_15px_rgba(168,85,247,0.2)]"
-                  >
-                    <Bed size={13} />
-                    <span>Manage Team Accommodation</span>
-                  </button>
+                  isAccommodationLocked ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300">
+                      <Lock size={13} />
+                      <span>Hostel Allocations Paused</span>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onOpenTeamAccommodation}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/40 bg-violet-600/30 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-600/50 hover:text-white transition-all cursor-pointer shadow-[0_0_15px_rgba(168,85,247,0.2)]"
+                    >
+                      <Bed size={13} />
+                      <span>Manage Team Accommodation</span>
+                    </button>
+                  )
                 )}
               </div>
 
@@ -386,14 +405,21 @@ export default function RegistrationDetailPanel({
                 </span>
               </div>
 
-              <button
-                type="button"
-                onClick={onOpenAddAccommodation}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-600/30 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-600/50 hover:text-white transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.2)]"
-              >
-                <Plus size={13} />
-                <span>Add Accommodation</span>
-              </button>
+              {isAccommodationLocked ? (
+                <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300">
+                  <Lock size={13} />
+                  <span>Hostel Allocations Paused</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onOpenAddAccommodation}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-600/30 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-600/50 hover:text-white transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                >
+                  <Plus size={13} />
+                  <span>Add Accommodation</span>
+                </button>
+              )}
             </div>
 
             {accommodations.length > 0 ? (
@@ -454,7 +480,9 @@ export default function RegistrationDetailPanel({
               <div className="rounded-xl border border-white/5 bg-white/[0.015] p-4 text-center text-xs text-white/40">
                 <p>No accommodation booked for your profile.</p>
                 <p className="mt-1 text-white/30">
-                  Campus stay is optional. Click &quot;Add Accommodation&quot; above to book a stay.
+                  {isAccommodationLocked
+                    ? "Campus hostel allocations are temporarily closed by administration."
+                    : "Campus stay is optional. Click \"Add Accommodation\" above to book a stay."}
                 </p>
               </div>
             )}

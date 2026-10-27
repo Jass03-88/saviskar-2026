@@ -25,6 +25,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Access Gate: reject OTP issuance if participant registration is locked
+    const { getSiteAccess } = await import("@/lib/config/site-access");
+    const siteAccess = await getSiteAccess({ bypassCache: true });
+    if (!siteAccess.REGISTRATIONS_ENABLED || !siteAccess.REGISTRATION_ENABLED) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Participant registration is temporarily paused by administration. Please check back shortly.",
+          code: "REGISTRATION_LOCKED",
+        },
+        { status: 403, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
     // Pre-flight session infrastructure verification:
     // Do not issue an OTP to the user if the server cannot verify it or sign a session.
     try {
