@@ -11,8 +11,7 @@ export const DEFAULT_SITE_ACCESS = {
   REGISTRATION_ENABLED: true,
 
   // Festival schedule and campus map (/schedule)
-  SCHEDULE_ENABLED:
-    process.env.NEXT_PUBLIC_ENABLE_SCHEDULE === "true",
+  SCHEDULE_ENABLED: true,
 
   // Sponsors & partners showcase (/sponsors)
   SPONSORS_ENABLED: true,

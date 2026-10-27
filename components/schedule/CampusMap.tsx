@@ -328,9 +328,9 @@ export default function CampusMap({ onSelectEvent, externalEvents }: CampusMapPr
             Strict User Rule: "DONOT WRITE ANYTHING OVER IMAGE USE HTML OR ANY LANGUAGE TO GIVE NAMES AND OTHER ELEMNTS OVER THE IMAGE."
             This image is 100% clean with NO baked text.
           */}
-          <div className="relative w-full max-w-[1400px] aspect-[1024/692] shadow-2xl">
+          <div className="relative w-full max-w-[1400px] aspect-[1024/708] shadow-2xl">
             <Image
-              src="/images/map/cgc-campus-map.webp"
+              src="/images/map/cgc-campus-map-2026.webp"
               alt="CGC University Mohali Campus Map"
               fill
               priority

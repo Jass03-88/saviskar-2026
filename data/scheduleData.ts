@@ -47,9 +47,9 @@ export const CAMPUS_VENUES: CampusVenue[] = [
     buildingCode: "B-01",
     tagline: "Executive Conclaves, Syndicate Halls & VIP Receptions",
     category: "general",
-    coordinates: { x: 47.0, y: 36.5 },
+    coordinates: { x: 60.0, y: 42.0 },
     capacity: "1,500+ Capacity",
-    description: "The prominent central academic wing of CGC University Mohali. Hosts executive inaugurations, syndicate paper presentations, administrative conclaves, and VIP dignitary receptions.",
+    description: "The prominent north-quad academic wing of CGC University Mohali facing the central fountains. Hosts executive inaugurations, syndicate paper presentations, administrative conclaves, and VIP dignitary receptions.",
     facilities: ["Main Syndicate Hall", "VIP Conclave Chamber", "Accreditation Desk", "High-Speed Wi-Fi Zone"],
     accentColor: "amber",
     glowColor: "rgba(245, 158, 11, 0.45)",
@@ -58,13 +58,13 @@ export const CAMPUS_VENUES: CampusVenue[] = [
   {
     id: "block-2",
     name: "Block 2 — Main Auditorium & Tech Arena",
-    shortName: "Block 2 (Auditorium)",
+    shortName: "Block 2",
     buildingCode: "B-02",
     tagline: "Main Auditorium, Cultural Stage & RoboWars Arena",
     category: "cultural",
-    coordinates: { x: 20.5, y: 44.0 },
+    coordinates: { x: 44.5, y: 47.0 },
     capacity: "1,200+ Capacity",
-    description: "State-of-the-art auditorium and engineering arena located between Ivory Hall and Block 1. Centerstage for Mr & Ms Saviskar, Nachda Punjab, Footloose Western Dance, and the RoboWars combat cage.",
+    description: "State-of-the-art auditorium and engineering arena overlooking the concert stadium. Centerstage for Mr & Ms Saviskar, Nachda Punjab, Footloose Western Dance, and the RoboWars combat cage.",
     facilities: ["Air-Conditioned Main Auditorium", "RoboWars Combat Cage", "Green Rooms & Make-up Bay", "Acoustic Surround PA"],
     accentColor: "rose",
     glowColor: "rgba(244, 63, 94, 0.45)",
@@ -75,11 +75,11 @@ export const CAMPUS_VENUES: CampusVenue[] = [
     name: "Ivory Hall (Girls Hostel)",
     shortName: "Ivory Hall",
     buildingCode: "IVORY",
-    tagline: "Residential Commons & Floodlit Basketball Court",
+    tagline: "Residential Commons & Western Student Living",
     category: "cultural",
-    coordinates: { x: 12.0, y: 56.5 },
+    coordinates: { x: 38.0, y: 55.0 },
     capacity: "800+ Residents",
-    description: "Premier campus residential hostel pavilion on the western quad. Features outdoor floodlit basketball courts hosting Spin & Dance along with student residential commons.",
+    description: "Premier campus residential hostel pavilion situated on the western quad directly in front of Block 2. Features floodlit student commons and residential facilities.",
     facilities: ["Floodlit Basketball Court", "Student Activity Lounge", "First-Aid Response Desk", "24/7 Security Command"],
     accentColor: "fuchsia",
     glowColor: "rgba(217, 70, 239, 0.45)",
@@ -92,9 +92,9 @@ export const CAMPUS_VENUES: CampusVenue[] = [
     buildingCode: "B-03",
     tagline: "Open Mic, Short Film Contests & Digital Media Labs",
     category: "non-technical",
-    coordinates: { x: 27.5, y: 65.5 },
+    coordinates: { x: 47.0, y: 60.0 },
     capacity: "800+ Students",
-    description: "Multi-storey academic block with red-brick accents. Dedicated 6th-floor studios host Open Mic, The Opinion Exchange, Visual Storytelling Challenge, and LAN gaming tournaments.",
+    description: "Academic block positioned between Ivory Hall and Block 4 facing the central parking concourse. Dedicated 6th-floor studios host Open Mic, The Opinion Exchange, and media events.",
     facilities: ["6th Floor Studio Theater", "Digital Media Suite", "LAN Tournament Stage", "1 Gbps Dedicated Fiber"],
     accentColor: "cyan",
     glowColor: "rgba(6, 182, 212, 0.45)",
@@ -103,13 +103,13 @@ export const CAMPUS_VENUES: CampusVenue[] = [
   {
     id: "block-4",
     name: "Block 4 — Main Academic & Convention Block",
-    shortName: "Block 4 (Convention)",
+    shortName: "Block 4",
     buildingCode: "B-04",
     tagline: "Convention Hall, Sur Sagar, Gully War & Talent Showcase",
     category: "cultural",
-    coordinates: { x: 45.0, y: 72.5 },
+    coordinates: { x: 59.5, y: 67.0 },
     capacity: "1,500+ Seated",
-    description: "The grand frontage architectural pavilion of CGC Jhanjeri. Equipped with a high-capacity Convention Hall hosting Sur Sagar, Gully War, and Saviskar Got Talent.",
+    description: "The grand frontage architectural pavilion of CGC University Mohali facing the front parking. Equipped with a high-capacity Convention Hall hosting Sur Sagar, Gully War, and Saviskar Got Talent.",
     facilities: ["Convention Hall Stage", "Concert Line-Array PA", "VIP Reception Suite", "High-Resolution Display Wall"],
     accentColor: "violet",
     glowColor: "rgba(168, 85, 247, 0.5)",
@@ -122,9 +122,9 @@ export const CAMPUS_VENUES: CampusVenue[] = [
     buildingCode: "B-05",
     tagline: "Corporate Conclaves, The Case Mystique & Management",
     category: "non-technical",
-    coordinates: { x: 59.0, y: 63.5 },
+    coordinates: { x: 67.5, y: 60.0 },
     capacity: "1,000+ Visitors",
-    description: "Modern business and management hub featuring tiered seminar halls. Home to The Case Mystique, corporate case-study presentations, and venture pitch panels.",
+    description: "Modern business and management hub positioned behind Block 4 along the eastern side of the central promenade. Home to The Case Mystique, corporate case presentations, and diagnostic challenges.",
     facilities: ["Tiered Seminar Hall", "Venture Pitch Stage", "Corporate Boardrooms", "Interactive Audio-Visual System"],
     accentColor: "violet",
     glowColor: "rgba(139, 92, 246, 0.45)",
@@ -133,13 +133,13 @@ export const CAMPUS_VENUES: CampusVenue[] = [
   {
     id: "block-6",
     name: "Block 6 — Advanced Computing Labs (401/501)",
-    shortName: "Block 6 Labs",
+    shortName: "Block 6",
     buildingCode: "B-06",
     tagline: "Code Circuit, Web-Dev Sprint & IT Computer Centers",
     category: "technical",
-    coordinates: { x: 70.0, y: 53.5 },
+    coordinates: { x: 74.5, y: 55.0 },
     capacity: "600+ Workstations",
-    description: "Comprehensive computing infrastructure housing Lab 401, Lab 404, Lab 501, and Lab 504. Hosts Code Circuit, Web-Dev Sprint, AI challenges, and 24-hour hackathon coding tracks.",
+    description: "Comprehensive computing infrastructure located to the right of Block 5 behind the CGC billboard. Hosts Code Circuit, Web-Dev Sprint, AI challenges, and 24-hour hackathons.",
     facilities: ["Labs 401 & 404 (High-Spec PCs)", "Labs 501 & 504 (Full-Stack Dev)", "Dedicated Cloud Server Access", "24/7 Hacker Lounge"],
     accentColor: "cyan",
     glowColor: "rgba(6, 182, 212, 0.45)",
@@ -148,13 +148,13 @@ export const CAMPUS_VENUES: CampusVenue[] = [
   {
     id: "block-7",
     name: "Block 7 — Research Towers & Moot Court",
-    shortName: "Block 7 (Research)",
+    shortName: "Block 7",
     buildingCode: "B-07",
     tagline: "Research Towers, Moot Court, Ad-Mad & Brand Battle",
     category: "technical",
-    coordinates: { x: 71.0, y: 22.0 },
+    coordinates: { x: 82.5, y: 39.5 },
     capacity: "600+ Delegates",
-    description: "Advanced multi-storey academic and research tower. Features dedicated Moot Court chambers, medical diagnostic research labs, and seminar halls hosting Ad-Mad Show and Brand Battle.",
+    description: "Advanced academic building on the eastern periphery beyond Rosewood and Einstein hostels. Features dedicated Moot Court chambers, research laboratories, and seminar halls.",
     facilities: ["Official Moot Court Chamber", "Seminar Hall", "Medical Diagnostic Labs", "Research Presentation Screens"],
     accentColor: "emerald",
     glowColor: "rgba(16, 185, 129, 0.45)",
@@ -163,17 +163,77 @@ export const CAMPUS_VENUES: CampusVenue[] = [
   {
     id: "rosewood-hall",
     name: "Rosewood Hall (Girls Hostel)",
-    shortName: "Rosewood Hall",
+    shortName: "Rosewood",
     buildingCode: "ROSEWOOD",
     tagline: "Campus Student Commons & Residential Complex",
     category: "general",
-    coordinates: { x: 67.5, y: 34.0 },
+    coordinates: { x: 72.5, y: 41.0 },
     capacity: "1,000+ Residents",
-    description: "Prominent residential hostel located between Block 1 and Block 7. Features tranquil student commons, landscaped courtyards, and campus residence facilities.",
+    description: "Prominent residential hostel located between Block 1 and Einstein Hostel. Features student commons, landscaped garden walks, and campus residence facilities.",
     facilities: ["Hostel Reception", "Green Courtyards", "Student Reading Lounge", "First-Aid Response Point"],
     accentColor: "amber",
     glowColor: "rgba(245, 158, 11, 0.4)",
     pinBadge: "ROSEWOOD // RESIDENCE",
+  },
+  {
+    id: "tagore-hall",
+    name: "Tagore Hall (Boys Hostel)",
+    shortName: "Tagore Hall",
+    buildingCode: "TAGORE",
+    tagline: "Residential High-Rise & North Quad Commons",
+    category: "general",
+    coordinates: { x: 43.0, y: 28.0 },
+    capacity: "900+ Residents",
+    description: "Tall multi-storey boys residential tower situated on the northern perimeter behind the academic complex.",
+    facilities: ["Hostel Reception", "Recreation Lounge", "Wi-Fi Common Hall", "24/7 Warden Post"],
+    accentColor: "amber",
+    glowColor: "rgba(245, 158, 11, 0.4)",
+    pinBadge: "TAGORE // RESIDENCE",
+  },
+  {
+    id: "hostel-d",
+    name: "Hostel D (Boys Hostel)",
+    shortName: "Hostel D",
+    buildingCode: "HOSTEL-D",
+    tagline: "Central Residential Complex & Student Courts",
+    category: "general",
+    coordinates: { x: 62.0, y: 32.0 },
+    capacity: "750+ Residents",
+    description: "Central residential hostel pavilion situated directly north of Block 1 with immediate access to sports courts and student mess halls.",
+    facilities: ["Student Dining Mess", "Courtyard Sports Area", "Security Desk", "First-Aid Station"],
+    accentColor: "rose",
+    glowColor: "rgba(244, 63, 94, 0.4)",
+    pinBadge: "HOSTEL D // RESIDENCE",
+  },
+  {
+    id: "einstein-hall",
+    name: "Einstein Hostel (Einstien)",
+    shortName: "Einstien",
+    buildingCode: "EINSTEIN",
+    tagline: "High-Rise Residential Complex & Sports Quad",
+    category: "general",
+    coordinates: { x: 74.0, y: 34.0 },
+    capacity: "1,200+ Residents",
+    description: "High-density residential student complex on the north-eastern ridge, featuring modern hostel rooms and adjoining Chanakya Hall.",
+    facilities: ["Reading Rooms", "Sports Grounds", "Convenience Mart", "24/7 Security"],
+    accentColor: "cyan",
+    glowColor: "rgba(6, 182, 212, 0.4)",
+    pinBadge: "EINSTEIN // RESIDENCE",
+  },
+  {
+    id: "chanakya-hall",
+    name: "Chanakya Hall (Hostel)",
+    shortName: "Chanakya Hall",
+    buildingCode: "CHANAKYA",
+    tagline: "Perimeter Student Residence & Transit Route",
+    category: "general",
+    coordinates: { x: 81.5, y: 28.0 },
+    capacity: "600+ Residents",
+    description: "Perimeter residential block situated on the north-east boundary along the curving outer campus perimeter road.",
+    facilities: ["Hostel Reception", "Green Courtyards", "Baggage Point", "Transit Exit"],
+    accentColor: "violet",
+    glowColor: "rgba(168, 85, 247, 0.4)",
+    pinBadge: "CHANAKYA // RESIDENCE",
   },
   {
     id: "concert-arena",
@@ -182,9 +242,9 @@ export const CAMPUS_VENUES: CampusVenue[] = [
     buildingCode: "ARENA",
     tagline: "Star Nights, Live Headliners & Clash of Chords",
     category: "starnight",
-    coordinates: { x: 42.0, y: 19.5 },
+    coordinates: { x: 16.5, y: 48.0 },
     capacity: "35,000+ Spectators",
-    description: "Colossal open-air festival ground situated directly behind Block 2 and Ivory Hall. Host to electrifying midnight Star Night concerts, Clash of Chords band battles, and massive festival crowds.",
+    description: "Colossal open-air festival ground situated on the expansive western lawn. Host to electrifying midnight Star Night concerts, Clash of Chords band battles, and massive festival crowds.",
     facilities: ["Main Festival Concert Stage", "Meyer Sound Line-Array Towers", "Laser & Pyrotechnic Rigging", "VIP Delegate Enclosure"],
     accentColor: "fuchsia",
     glowColor: "rgba(217, 70, 239, 0.5)",
@@ -193,32 +253,17 @@ export const CAMPUS_VENUES: CampusVenue[] = [
   {
     id: "central-lawn",
     name: "Central Promenade & Amphitheatre (OAT)",
-    shortName: "Central Lawn (OAT)",
+    shortName: "Central Lawn",
     buildingCode: "OAT",
     tagline: "Open Air Theater, Street Natak & Live Art Corridors",
     category: "cultural",
-    coordinates: { x: 37.0, y: 52.0 },
+    coordinates: { x: 53.0, y: 49.5 },
     capacity: "3,500+ Attendees",
-    description: "The vibrant green heart of campus surrounded by fountains and landscaped gardens. Centerstage for street theatre (Nukkad Natak), Canvas Art, Doodle Art, Face Painting, and Chill N Grill.",
+    description: "The vibrant green heart of campus surrounded by fountains and landscaped gardens between Block 1, Block 2, and Block 5. Centerstage for street theatre (Nukkad Natak), Canvas Art, and Doodle Art.",
     facilities: ["360° Amphitheatre Seating", "Paved Street Natak Arena", "Illuminated Fountain Plaza", "Fine Arts Canvas Corridor"],
     accentColor: "emerald",
     glowColor: "rgba(16, 185, 129, 0.45)",
     pinBadge: "OAT // STREET PLAY",
-  },
-  {
-    id: "transit-hub",
-    name: "Main Entrance & Arrival Hub",
-    shortName: "Arrival Hub",
-    buildingCode: "GATE-01",
-    tagline: "Fast-Track Entry, QR Passes & Helpdesk",
-    category: "general",
-    coordinates: { x: 21.5, y: 89.0 },
-    capacity: "10,000+ Daily Footfall",
-    description: "The official gate of entry for all participating university teams. Features automated QR digital pass scanning, wristband exchange desks, bus transit pickups, and tourist assistance.",
-    facilities: ["Automated Turnstile QR Gates", "Helpdesk & Baggage Cloakroom", "Inter-State Bus Shuttle Terminal", "Ambulance & Security Command Post"],
-    accentColor: "cyan",
-    glowColor: "rgba(6, 182, 212, 0.4)",
-    pinBadge: "ARRIVAL // CHECK-IN",
   },
 ];
 
@@ -525,6 +570,10 @@ export function resolveVenueId(
   const c = (category || "").toLowerCase().trim();
 
   // 1. Direct venue string matching
+  if (v.includes("tagore")) return "tagore-hall";
+  if (v.includes("hostel d") || v.includes("hostel-d")) return "hostel-d";
+  if (v.includes("einstein") || v.includes("einstien")) return "einstein-hall";
+  if (v.includes("chanakya")) return "chanakya-hall";
   if (v.includes("block 1") || v.includes("block-1") || v.includes("b-01") || v.includes("b1")) return "block-1";
   if (v.includes("block 2") || v.includes("block-2") || v.includes("b-02") || v.includes("b2") || v.includes("auditorium")) return "block-2";
   if (v.includes("block 3") || v.includes("block-3") || v.includes("b-03") || v.includes("b3")) return "block-3";
@@ -536,7 +585,7 @@ export function resolveVenueId(
   if (v.includes("rosewood")) return "rosewood-hall";
   if (v.includes("applebee") || v.includes("stadium") || v.includes("arena") || v.includes("concert")) return "concert-arena";
   if (v.includes("oat") || v.includes("lawn") || v.includes("promenade") || v.includes("amphitheatre")) return "central-lawn";
-  if (v.includes("gate") || v.includes("transit") || v.includes("arrival")) return "transit-hub";
+  if (v.includes("gate") || v.includes("transit") || v.includes("arrival")) return "block-1";
 
   // 2. Legacy venue ID aliases
   if (v === "block-1-admin") return "block-1";
@@ -597,19 +646,21 @@ export function resolveVenueId(
 }
 
 /**
- * Format raw database time (e.g. "12:00:00" or "03:02:00") into user-friendly "12:00 PM".
+ * Format raw database time (e.g. "12:00:00", "14:00:00", or "10:00:00") into user-friendly "12:00 PM",
+ * exactly matching the formatting used across event display pages.
  */
-export function formatDatabaseTime(timeStr: string | null | undefined, fallback = "10:00 AM"): string {
+export function formatDatabaseTime(timeStr: string | null | undefined, fallback = "Time TBA"): string {
   if (!timeStr) return fallback;
-  if (timeStr.includes("AM") || timeStr.includes("PM")) return timeStr;
+  const trimmed = timeStr.trim();
+  if (!trimmed || trimmed === "null" || trimmed === "undefined") return fallback;
+  if (trimmed.includes("AM") || trimmed.includes("PM")) return trimmed;
 
-  const parts = timeStr.split(":");
+  const parts = trimmed.split(":");
   if (parts.length >= 2) {
     const hour = parseInt(parts[0], 10);
     const minute = parts[1];
     if (!isNaN(hour)) {
-      // Fest competitions between 1:00 and 7:00 are PM (afternoon/evening), not 3:00 AM
-      const isPm = hour >= 12 || (hour >= 1 && hour <= 7);
+      const isPm = hour >= 12;
       const ampm = isPm ? "PM" : "AM";
       const displayHour = hour % 12 || 12;
       return `${displayHour.toString().padStart(2, "0")}:${minute} ${ampm}`;
@@ -638,20 +689,18 @@ export function mapDbEventToScheduleEvent(
   const venueId = resolveVenueId(dbEvent.venue, dbEvent.name, dbEvent.category);
   const matchedVenue = CAMPUS_VENUES.find((v) => v.id === venueId);
 
-  // Time & slot computation
-  let startTime = "10:00 AM";
-  let endTime = "01:00 PM";
-  let timeSlot = "Morning";
+  // Time & slot computation from live database record
+  let startTime = "Time TBA";
+  let endTime = "";
+  let timeSlot = "Schedule TBA";
 
-  if (dbEvent.start_time) {
-    startTime = formatDatabaseTime(dbEvent.start_time, "10:00 AM");
+  if (dbEvent.start_time && dbEvent.start_time.trim().length > 0) {
+    startTime = formatDatabaseTime(dbEvent.start_time, "Time TBA");
     const parts = dbEvent.start_time.split(":");
     if (parts.length >= 2) {
-      let hour = parseInt(parts[0], 10);
+      const hour = parseInt(parts[0], 10);
       const min = parts[1];
       if (!isNaN(hour)) {
-        if (hour >= 1 && hour <= 7) hour += 12; // Normalize 3 PM -> 15:00
-
         if (hour < 12) timeSlot = "Morning";
         else if (hour < 17) timeSlot = "Afternoon";
         else if (hour < 21) timeSlot = "Evening";
@@ -680,14 +729,22 @@ export function mapDbEventToScheduleEvent(
     (s) => s.slug === dbEvent.slug || s.name.toLowerCase() === dbEvent.name.toLowerCase()
   );
 
+  const displayVenue = dbEvent.venue && dbEvent.venue.trim().length > 0
+    ? dbEvent.venue
+    : (matchedVenue?.name || "CGC University, Mohali");
+
+  const roomDisplay = dbEvent.venue && dbEvent.venue.trim().length > 0
+    ? dbEvent.venue
+    : (matchedVenue?.shortName || "CGC Campus");
+
   return {
     id: dbEvent.id,
     slug: dbEvent.slug,
     name: dbEvent.name,
     category: cat,
     venueId,
-    venueName: dbEvent.venue && dbEvent.venue !== "TBD" ? dbEvent.venue : (matchedVenue?.name || "CGC Campus"),
-    room: dbEvent.venue && dbEvent.venue !== "TBD" ? dbEvent.venue : matchedVenue?.shortName,
+    venueName: displayVenue,
+    room: roomDisplay,
     day: isDay2 ? 2 : 1,
     date: dbEvent.event_date || (isDay2 ? "2026-10-29" : "2026-10-28"),
     startTime,

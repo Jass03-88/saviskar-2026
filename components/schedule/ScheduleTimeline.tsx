@@ -69,10 +69,15 @@ function categoryMeta(category: string | null) {
 
 function formatTime(value: string | null) {
   if (!value) return "TIME TBA";
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "null" || trimmed === "undefined") return "TIME TBA";
+  if (trimmed.includes("AM") || trimmed.includes("PM")) return trimmed.toUpperCase();
 
-  const [hourText, minuteText] = value.slice(0, 5).split(":");
+  const [hourText, minuteText] = trimmed.slice(0, 5).split(":");
   const hour = Number(hourText);
   const minute = minuteText ?? "00";
+
+  if (isNaN(hour)) return "TIME TBA";
 
   const suffix = hour >= 12 ? "PM" : "AM";
   const displayHour = hour % 12 || 12;
@@ -81,27 +86,37 @@ function formatTime(value: string | null) {
 }
 
 function formatDate(value: string | null) {
-  if (!value) return "DATE TBA";
+  if (!value || value === "tba") return "DATE TBA";
 
-  return new Date(`${value}T00:00:00`)
-    .toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-    })
-    .toUpperCase();
+  try {
+    const d = new Date(`${value}T00:00:00`);
+    if (isNaN(d.getTime())) return "DATE TBA";
+    return d
+      .toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+      })
+      .toUpperCase();
+  } catch {
+    return "DATE TBA";
+  }
 }
 
 function dayLabel(value: string | null) {
-  if (!value) return "DATE TBA";
+  if (!value || value === "tba") return "Date To Be Announced";
 
-  return new Date(`${value}T00:00:00`).toLocaleDateString(
-    "en-IN",
-    {
+  try {
+    const d = new Date(`${value}T00:00:00`);
+    if (isNaN(d.getTime())) return "Date To Be Announced";
+    return d.toLocaleDateString("en-IN", {
       weekday: "long",
       day: "numeric",
       month: "long",
-    }
-  );
+      year: "numeric",
+    });
+  } catch {
+    return "Date To Be Announced";
+  }
 }
 
 function EventCard({
@@ -172,7 +187,7 @@ function EventCard({
     >
       {/* TIME */}
       <div className="hidden pt-8 text-right md:block">
-        <p className="text-[10px] uppercase tracking-[0.25em] text-black/35">
+        <p className="font-mono text-xs uppercase tracking-[0.2em] text-violet-300/80">
           {formatTime(event.start_time)}
         </p>
       </div>
@@ -350,12 +365,10 @@ function EventCard({
                   {formatDate(event.event_date)}
                 </span>
 
-                {event.venue && (
-                  <span className="flex items-center gap-2">
-                    <MapPin size={12} />
-                    {event.venue}
-                  </span>
-                )}
+                <span className="flex items-center gap-2 text-zinc-300">
+                  <MapPin size={12} className="text-violet-400 shrink-0" />
+                  <span>{event.venue || "CGC University, Mohali"}</span>
+                </span>
               </div>
             </div>
 
@@ -596,9 +609,15 @@ export default function ScheduleTimeline({
           return dateA.localeCompare(dateB);
         }
 
-        return (a.start_time ?? "99:99").localeCompare(
-          b.start_time ?? "99:99"
-        );
+        // Put events with confirmed start_time first in chronological order
+        if (a.start_time && !b.start_time) return -1;
+        if (!a.start_time && b.start_time) return 1;
+        if (a.start_time && b.start_time) {
+          const diff = a.start_time.localeCompare(b.start_time);
+          if (diff !== 0) return diff;
+        }
+
+        return (a.name || "").localeCompare(b.name || "");
       })
       .forEach((event) => {
         const key = event.event_date ?? "tba";
@@ -613,6 +632,13 @@ export default function ScheduleTimeline({
   }, [events]);
 
   const [activeDay, setActiveDay] = useState(0);
+
+  const getDayTabTitle = (dateKey: string, idx: number) => {
+    if (dateKey === "2026-10-28") return "DAY 01 (28 OCT)";
+    if (dateKey === "2026-10-29") return "DAY 02 (29 OCT)";
+    if (dateKey === "tba" || !dateKey) return "DATES TBA";
+    return `DAY ${String(idx + 1).padStart(2, "0")}`;
+  };
 
   return (
     <div className="relative">
@@ -632,6 +658,7 @@ export default function ScheduleTimeline({
           className="
             liquid-glass
             flex
+            flex-wrap
             rounded-full
             border
             border-white/15
@@ -672,7 +699,7 @@ export default function ScheduleTimeline({
                 }
               `}
             >
-              DAY {String(index + 1).padStart(2, "0")}
+              {getDayTabTitle(date, index)}
             </button>
           ))}
         </div>

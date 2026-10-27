@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import TerminalPlaceholder from "@/components/ui/TerminalPlaceholder";
 import { getSiteAccess } from "@/lib/config/site-access";
 import ScheduleView from "@/components/schedule/ScheduleView";
+import { supabase } from "@/lib/supabase";
+
+export const revalidate = 60;
 
 export const metadata: Metadata = {
   title: "Festival Schedule & Campus Radar | CGC Saviskar 2026 — CGC University Mohali",
@@ -38,5 +41,15 @@ export default async function SchedulePage() {
     );
   }
 
-  return <ScheduleView />;
+  // Fetch all active event timings and venues from the events table in DB as fetched in event display
+  const { data: dbEvents } = await supabase
+    .from("events")
+    .select(
+      "id, slug, name, category, description, event_date, start_time, venue, active, registration_open"
+    )
+    .eq("active", true)
+    .order("event_date", { ascending: true })
+    .order("start_time", { ascending: true });
+
+  return <ScheduleView initialEvents={dbEvents ?? []} />;
 }

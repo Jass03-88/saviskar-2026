@@ -25,7 +25,9 @@ import {
   ScheduleEvent,
   CAMPUS_VENUES,
   FESTIVAL_SCHEDULE,
+  mapDbEventToScheduleEvent,
 } from "@/data/scheduleData";
+import { supabase } from "@/lib/supabase";
 import "./ThomsoMap.css";
 
 interface ThomsoReplicaMapProps {
@@ -39,12 +41,35 @@ export default function ThomsoReplicaMap({
   externalEvents,
   initialVenueId = null,
 }: ThomsoReplicaMapProps) {
-  // Use passed events or fallback to festival schedule
-  const allEvents = useMemo(() => {
-    return externalEvents && externalEvents.length > 0
-      ? externalEvents
-      : FESTIVAL_SCHEDULE;
+  const [internalEvents, setInternalEvents] = useState<ScheduleEvent[]>([]);
+
+  useEffect(() => {
+    if (externalEvents && externalEvents.length > 0) return;
+    async function fetchLiveMapEvents() {
+      try {
+        const { data, error } = await supabase
+          .from("events")
+          .select("id, slug, name, category, description, event_date, start_time, venue, active, registration_open")
+          .eq("active", true)
+          .order("event_date", { ascending: true })
+          .order("start_time", { ascending: true });
+
+        if (!error && data && data.length > 0) {
+          setInternalEvents(data.map((d) => mapDbEventToScheduleEvent(d as any)));
+        }
+      } catch (err) {
+        console.error("Error fetching map events:", err);
+      }
+    }
+    fetchLiveMapEvents();
   }, [externalEvents]);
+
+  // Use passed events, or internally fetched events, or fallback to festival schedule
+  const allEvents = useMemo(() => {
+    if (externalEvents && externalEvents.length > 0) return externalEvents;
+    if (internalEvents.length > 0) return internalEvents;
+    return FESTIVAL_SCHEDULE;
+  }, [externalEvents, internalEvents]);
 
   // Active / Selected venue state
   const [activeVenue, setActiveVenue] = useState<CampusVenue | null>(() => {
@@ -495,6 +520,9 @@ export default function ThomsoReplicaMap({
                           <span className="rail__dot" aria-hidden="true" />
                           <span className="rail__kind">{ev.category}</span>
                           <span className="rail__day">Day {ev.day}</span>
+                          {ev.startTime && ev.startTime !== "Time TBA" && (
+                            <span className="ml-auto font-mono text-[9px] text-violet-300 font-semibold">{ev.startTime}</span>
+                          )}
                         </span>
                         <span className="rail__title">{ev.name}</span>
                         <span className="rail__where">{ev.venueName}</span>
@@ -529,6 +557,9 @@ export default function ThomsoReplicaMap({
                           <span className="rail__dot" aria-hidden="true" />
                           <span className="rail__kind">{ev.category}</span>
                           <span className="rail__day">Day {ev.day}</span>
+                          {ev.startTime && ev.startTime !== "Time TBA" && (
+                            <span className="ml-auto font-mono text-[9px] text-violet-300 font-semibold">{ev.startTime}</span>
+                          )}
                         </span>
                         <span className="rail__title">{ev.name}</span>
                         <span className="rail__where">{ev.venueName}</span>
@@ -570,10 +601,10 @@ export default function ThomsoReplicaMap({
                 The image below is 100% clean with ZERO baked text.
               */}
               <Image
-                src="/images/map/cgc-campus-map.webp"
+                src="/images/map/cgc-campus-map-2026.webp"
                 alt="CGC University Mohali Campus Grounds"
                 width={1024}
-                height={692}
+                height={708}
                 priority
                 className="camp__film"
                 unoptimized

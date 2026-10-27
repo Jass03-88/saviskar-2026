@@ -36,9 +36,21 @@ type Event = {
   registration_open: boolean;
 };
 
-export default function ScheduleView() {
-  const [events, setEvents] = useState<Event[]>([]);
-  const [loading, setLoading] = useState(true);
+interface ScheduleViewProps {
+  initialEvents?: Event[];
+}
+
+export default function ScheduleView({ initialEvents }: ScheduleViewProps = {}) {
+  const [events, setEvents] = useState<Event[]>(() => {
+    if (initialEvents && initialEvents.length > 0) {
+      return initialEvents.map((ev) => ({
+        ...ev,
+        venue: ev.venue && ev.venue.trim() !== "" ? ev.venue : "CGC University, Mohali",
+      }));
+    }
+    return [];
+  });
+  const [loading, setLoading] = useState<boolean>(!initialEvents || initialEvents.length === 0);
   const [viewMode, setViewMode] = useState<"map" | "timeline">("map");
 
   // Check URL query on mount for direct timeline link
@@ -64,6 +76,32 @@ export default function ScheduleView() {
           .order("start_time", { ascending: true });
 
         if (error || !data || data.length === 0) {
+          if (!initialEvents || initialEvents.length === 0) {
+            const mappedFallback: Event[] = FESTIVAL_SCHEDULE.map((s) => ({
+              id: s.id,
+              slug: s.slug,
+              name: s.name,
+              category: s.category,
+              description: s.description,
+              event_date: s.date,
+              start_time: s.startTime,
+              venue: s.venueName || "CGC University, Mohali",
+              active: true,
+              registration_open: s.registrationOpen,
+            }));
+            setEvents(mappedFallback);
+          }
+        } else {
+          // Normalize venue and preserve exact database timings as fetched in event display
+          const normalizedEvents: Event[] = (data as Event[]).map((ev) => ({
+            ...ev,
+            venue: ev.venue && ev.venue.trim() !== "" ? ev.venue : "CGC University, Mohali",
+          }));
+          setEvents(normalizedEvents);
+        }
+      } catch (err) {
+        console.error("Error loading schedule events from DB:", err);
+        if (!initialEvents || initialEvents.length === 0) {
           const mappedFallback: Event[] = FESTIVAL_SCHEDULE.map((s) => ({
             id: s.id,
             slug: s.slug,
@@ -72,44 +110,19 @@ export default function ScheduleView() {
             description: s.description,
             event_date: s.date,
             start_time: s.startTime,
-            venue: s.venueName,
+            venue: s.venueName || "CGC University, Mohali",
             active: true,
             registration_open: s.registrationOpen,
           }));
           setEvents(mappedFallback);
-        } else {
-          // Normalize venue display for events so null/TBD venues resolve to proper pavilion names
-          const enrichedEvents: Event[] = (data as Event[]).map((ev) => {
-            const vId = resolveVenueId(ev.venue, ev.name, ev.category);
-            const matchedVenue = CAMPUS_VENUES.find((v) => v.id === vId);
-            return {
-              ...ev,
-              venue: ev.venue && ev.venue !== "TBD" ? ev.venue : (matchedVenue?.name || "CGC Campus"),
-            };
-          });
-          setEvents(enrichedEvents);
         }
-      } catch {
-        const mappedFallback: Event[] = FESTIVAL_SCHEDULE.map((s) => ({
-          id: s.id,
-          slug: s.slug,
-          name: s.name,
-          category: s.category,
-          description: s.description,
-          event_date: s.date,
-          start_time: s.startTime,
-          venue: s.venueName,
-          active: true,
-          registration_open: s.registrationOpen,
-        }));
-        setEvents(mappedFallback);
       } finally {
         setLoading(false);
       }
     }
 
     loadSchedule();
-  }, []);
+  }, [initialEvents]);
 
   // Compute live mapped ScheduleEvents from backend database rows
   const mappedScheduleEvents = useMemo<ScheduleEvent[]>(() => {
