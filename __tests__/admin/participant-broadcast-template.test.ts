@@ -19,6 +19,8 @@ import {
 import {
   generateDeliveryIdempotencyKey,
   createGeneralBroadcastCampaign,
+  createCertificateCampaign,
+  BROADCAST_DELIVERY_INSERT_CHUNK_SIZE,
 } from "@/lib/broadcast/campaign-worker";
 import { getCampaignEmailSender } from "@/lib/email/campaign-service";
 import { CANONICAL_SENDER_EMAIL } from "@/lib/email-sender";
@@ -486,11 +488,20 @@ describe("Saviskar 2K26 — Participant Verification Broadcast Email Invariants"
               };
             }
             if (table === "broadcast_deliveries") {
-              insertedDeliveries = Array.isArray(payload) ? payload : [payload];
-              return Promise.resolve({ data: insertedDeliveries, error: null });
+              const chunk = Array.isArray(payload) ? payload : [payload];
+              insertedDeliveries.push(...chunk);
+              return Promise.resolve({ data: chunk, error: null });
             }
             return Promise.resolve({ data: null, error: null });
           },
+          update: (payload: any) => ({
+            eq: (col: string, val: string) => {
+              if (table === "broadcast_campaigns" && col === "id") {
+                Object.assign(insertedCampaign, payload);
+              }
+              return Promise.resolve({ error: null });
+            },
+          }),
         }),
       } as any;
 
@@ -742,6 +753,557 @@ describe("Saviskar 2K26 — Participant Verification Broadcast Email Invariants"
 
         expect(showGeneralConfirmModal).toBe(false);
         expect(fetchSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    // =========================================================================
+    // REQUIREMENT 12: Bounded Batching & Statement Timeout Recovery
+    // =========================================================================
+    describe("12. Bounded Delivery Enqueue Batching & Statement Timeout Invariants", () => {
+      it("exports verified chunk size of 100 deliveries per insertion", () => {
+        expect(BROADCAST_DELIVERY_INSERT_CHUNK_SIZE).toBe(100);
+      });
+
+      it("enqueues large audience across multiple bounded chunks", async () => {
+        let createdCampaign: any = null;
+        const insertedBatches: any[][] = [];
+
+        const mockSupabase = {
+          from: (table: string) => {
+            if (table === "broadcast_campaigns") {
+              return {
+                insert: (payload: any) => {
+                  createdCampaign = { id: "camp-chunk-001", ...payload };
+                  return {
+                    select: () => ({
+                      single: () => Promise.resolve({ data: createdCampaign, error: null }),
+                    }),
+                  };
+                },
+              };
+            }
+            if (table === "broadcast_deliveries") {
+              return {
+                insert: (chunk: any[]) => {
+                  insertedBatches.push(chunk);
+                  return Promise.resolve({ data: chunk, error: null });
+                },
+              };
+            }
+            return {
+              insert: () => Promise.resolve({ data: null, error: null }),
+            };
+          },
+        } as any;
+
+        // Generate 250 test emails (will split into 100, 100, 50)
+        const emails = Array.from({ length: 250 }, (_, i) => `user_${i}@example.com`);
+
+        const result = await createGeneralBroadcastCampaign(
+          mockSupabase,
+          {
+            title: "Large Campaign",
+            subject: "Large Subject",
+            bodyHtml: "<p>Large body</p>",
+            bodyText: "Large body",
+            selectedEmails: emails,
+            adminId: "admin-42",
+            adminEmail: "admin@saviskar.co.in",
+          },
+          { chunkSize: 100 }
+        );
+
+        expect(result.campaignId).toBe("camp-chunk-001");
+        expect(result.totalDeliveries).toBe(250);
+        expect(insertedBatches.length).toBe(3);
+        expect(insertedBatches[0].length).toBe(100);
+        expect(insertedBatches[1].length).toBe(100);
+        expect(insertedBatches[2].length).toBe(50);
+
+        // Every delivery row has an idempotency key
+        const allDeliveries = insertedBatches.flat();
+        expect(allDeliveries.length).toBe(250);
+        for (const delivery of allDeliveries) {
+          expect(delivery.campaign_id).toBe("camp-chunk-001");
+          expect(delivery.status).toBe("queued");
+          expect(delivery.idempotency_key).toMatch(/^idemp_camp-chunk-001_user_\d+@example\.com_general_p1$/);
+        }
+      });
+
+      it("safely rolls back campaign header when the very first batch fails", async () => {
+        let deletedCampaignId: string | null = null;
+
+        const mockSupabase = {
+          from: (table: string) => {
+            if (table === "broadcast_campaigns") {
+              return {
+                insert: (payload: any) => ({
+                  select: () => ({
+                    single: () => Promise.resolve({ data: { id: "camp-fail-first-001", ...payload }, error: null }),
+                  }),
+                }),
+                delete: () => ({
+                  eq: (col: string, val: string) => {
+                    if (col === "id") deletedCampaignId = val;
+                    return Promise.resolve({ error: null });
+                  },
+                }),
+              };
+            }
+            if (table === "broadcast_deliveries") {
+              return {
+                insert: (_chunk: any[]) => {
+                  return Promise.resolve({
+                    error: {
+                      message: "canceling statement due to statement timeout",
+                      code: "57014",
+                    },
+                  });
+                },
+              };
+            }
+            return {
+              insert: () => Promise.resolve({ error: null }),
+            };
+          },
+        } as any;
+
+        await expect(
+          createGeneralBroadcastCampaign(
+            mockSupabase,
+            {
+              title: "First Batch Timeout",
+              subject: "Subject",
+              bodyHtml: "<p>Body</p>",
+              selectedEmails: ["user1@test.com", "user2@test.com"],
+              adminId: "admin-42",
+              adminEmail: "admin@saviskar.co.in",
+            },
+            { chunkSize: 100 }
+          )
+        ).rejects.toThrow("Failed to enqueue broadcast deliveries: canceling statement due to statement timeout");
+
+        expect(deletedCampaignId).toBe("camp-fail-first-001");
+      });
+
+      it("safely rolls back campaign header when a later batch fails after earlier batches succeeded", async () => {
+        let deletedCampaignId: string | null = null;
+        let batchCount = 0;
+
+        const mockSupabase = {
+          from: (table: string) => {
+            if (table === "broadcast_campaigns") {
+              return {
+                insert: (payload: any) => ({
+                  select: () => ({
+                    single: () => Promise.resolve({ data: { id: "camp-timeout-002", ...payload }, error: null }),
+                  }),
+                }),
+                delete: () => ({
+                  eq: (col: string, val: string) => {
+                    if (col === "id") deletedCampaignId = val;
+                    return Promise.resolve({ error: null });
+                  },
+                }),
+              };
+            }
+            if (table === "broadcast_deliveries") {
+              return {
+                insert: (_chunk: any[]) => {
+                  batchCount++;
+                  if (batchCount === 2) {
+                    // Simulate PostgreSQL statement timeout error on 2nd chunk
+                    return Promise.resolve({
+                      error: {
+                        message: "canceling statement due to statement timeout",
+                        code: "57014",
+                      },
+                    });
+                  }
+                  return Promise.resolve({ error: null });
+                },
+              };
+            }
+            return {
+              insert: () => Promise.resolve({ error: null }),
+            };
+          },
+        } as any;
+
+        const emails = Array.from({ length: 200 }, (_, i) => `timeout_${i}@example.com`);
+
+        await expect(
+          createGeneralBroadcastCampaign(
+            mockSupabase,
+            {
+              title: "Timeout Campaign",
+              subject: "Timeout Subject",
+              bodyHtml: "<p>Body</p>",
+              selectedEmails: emails,
+              adminId: "admin-42",
+              adminEmail: "admin@saviskar.co.in",
+            },
+            { chunkSize: 100 }
+          )
+        ).rejects.toThrow("Failed to enqueue broadcast deliveries: canceling statement due to statement timeout");
+
+        // Verifies the compensating rollback deleted the campaign header (cascading all chunk deliveries)
+        expect(deletedCampaignId).toBe("camp-timeout-002");
+        expect(batchCount).toBe(2);
+      });
+
+      it("handles campaign cleanup failure gracefully without masking the original enqueue error and marks campaign failed", async () => {
+        let fallbackUpdatedStatus: string | null = null;
+
+        const mockSupabase = {
+          from: (table: string) => {
+            if (table === "broadcast_campaigns") {
+              return {
+                insert: (payload: any) => ({
+                  select: () => ({
+                    single: () => Promise.resolve({ data: { id: "camp-cleanup-fail-003", ...payload }, error: null }),
+                  }),
+                }),
+                delete: () => ({
+                  eq: (_col: string, _val: string) => {
+                    // Simulate database failure during cleanup deletion
+                    return Promise.resolve({ error: { message: "DB foreign key lock timeout on cleanup" } });
+                  },
+                }),
+                update: (payload: any) => ({
+                  eq: (_col: string, _val: string) => {
+                    fallbackUpdatedStatus = payload.status;
+                    return Promise.resolve({ error: null });
+                  },
+                }),
+              };
+            }
+            if (table === "broadcast_deliveries") {
+              return {
+                insert: (_chunk: any[]) => {
+                  return Promise.resolve({
+                    error: {
+                      message: "canceling statement due to statement timeout",
+                      code: "57014",
+                    },
+                  });
+                },
+              };
+            }
+            return {
+              insert: () => Promise.resolve({ error: null }),
+            };
+          },
+        } as any;
+
+        await expect(
+          createGeneralBroadcastCampaign(
+            mockSupabase,
+            {
+              title: "Cleanup Fail Campaign",
+              subject: "Subject",
+              bodyHtml: "<p>Body</p>",
+              selectedEmails: ["user@test.com"],
+              adminId: "admin-42",
+              adminEmail: "admin@saviskar.co.in",
+            },
+            { chunkSize: 100 }
+          )
+        ).rejects.toThrow("Failed to enqueue broadcast deliveries: canceling statement due to statement timeout");
+
+        // Verifies fallback marked status as "failed" so it can never be accidentally processed
+        expect(fallbackUpdatedStatus).toBe("failed");
+      });
+
+      it("guarantees deterministic idempotency keys for duplicate prevention and safe retries", () => {
+        const key1 = generateDeliveryIdempotencyKey("camp-retry-001", "student@cgc.edu.in", "general");
+        const key2 = generateDeliveryIdempotencyKey("camp-retry-001", "student@cgc.edu.in", "general");
+        expect(key1).toBe("idemp_camp-retry-001_student@cgc.edu.in_general_p1");
+        expect(key1).toBe(key2);
+
+        // Different campaign produces distinct key
+        const keyOtherCamp = generateDeliveryIdempotencyKey("camp-retry-002", "student@cgc.edu.in", "general");
+        expect(keyOtherCamp).not.toBe(key1);
+      });
+
+      it("ensures incomplete campaign is deleted and not dispatchable if enqueueing fails", async () => {
+        let deletedCampaign = false;
+
+        const mockSupabase = {
+          from: (table: string) => {
+            if (table === "broadcast_campaigns") {
+              return {
+                insert: (payload: any) => {
+                  return {
+                    select: () => ({
+                      single: () => Promise.resolve({ data: { id: "camp-incomplete-004", ...payload }, error: null }),
+                    }),
+                  };
+                },
+                delete: () => ({
+                  eq: () => {
+                    deletedCampaign = true;
+                    return Promise.resolve({ error: null });
+                  },
+                }),
+              };
+            }
+            if (table === "broadcast_deliveries") {
+              return {
+                insert: () => {
+                  return Promise.resolve({
+                    error: { message: "canceling statement due to statement timeout" },
+                  });
+                },
+              };
+            }
+            return {
+              insert: () => Promise.resolve({ error: null }),
+            };
+          },
+        } as any;
+
+        await expect(
+          createGeneralBroadcastCampaign(
+            mockSupabase,
+            {
+              title: "Incomplete Campaign",
+              subject: "Subject",
+              bodyHtml: "<p>Body</p>",
+              selectedEmails: ["test@example.com"],
+              adminId: "admin-42",
+              adminEmail: "admin@saviskar.co.in",
+            }
+          )
+        ).rejects.toThrow("Failed to enqueue broadcast deliveries: canceling statement due to statement timeout");
+
+        // The campaign was rolled back and deleted, cascading away any deliveries
+        expect(deletedCampaign).toBe(true);
+      });
+
+      it("verifies certificate campaigns execute chunked insertions for both deliveries and attachments", async () => {
+        let createdCampId: string | null = null;
+        const insertedDeliveryBatches: any[][] = [];
+        const insertedAttachmentBatches: any[][] = [];
+
+        const mockSupabase = {
+          from: (table: string) => {
+            if (table === "broadcast_campaigns") {
+              return {
+                insert: (payload: any) => {
+                  createdCampId = "camp-cert-chunk-005";
+                  return {
+                    select: () => ({
+                      single: () => Promise.resolve({ data: { id: createdCampId, ...payload }, error: null }),
+                    }),
+                  };
+                },
+                update: () => ({
+                  eq: () => Promise.resolve({ error: null }),
+                }),
+                delete: () => ({
+                  eq: () => Promise.resolve({ error: null }),
+                }),
+              };
+            }
+            if (table === "participation_certificates") {
+              return {
+                select: () => ({
+                  eq: () => ({
+                    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                  }),
+                }),
+                insert: (payload: any) => ({
+                  select: () => ({
+                    single: () =>
+                      Promise.resolve({
+                        data: { id: "cert-uuid-001", certificate_number: payload.certificate_number },
+                        error: null,
+                      }),
+                  }),
+                }),
+              };
+            }
+            if (table === "broadcast_deliveries") {
+              return {
+                insert: (chunk: any[]) => {
+                  insertedDeliveryBatches.push(chunk);
+                  return Promise.resolve({ error: null });
+                },
+              };
+            }
+            if (table === "broadcast_delivery_attachments") {
+              return {
+                insert: (chunk: any[]) => {
+                  insertedAttachmentBatches.push(chunk);
+                  return Promise.resolve({ error: null });
+                },
+              };
+            }
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: { id: "mock-id" }, error: null }),
+                }),
+              }),
+              insert: () => Promise.resolve({ error: null }),
+            };
+          },
+        } as any;
+
+        const candidates = [
+          {
+            issueSourceKey: "src_1",
+            participantEventId: "pe_1",
+            recipientName: "Alice Sharma",
+            recipientEmail: "alice@example.com",
+            eventName: "Coding Hackathon",
+            certificateEligible: true,
+            isValidEmail: true,
+            isTeam: false,
+          },
+          {
+            issueSourceKey: "src_2",
+            participantEventId: "pe_2",
+            recipientName: "Bob Singh",
+            recipientEmail: "bob@example.com",
+            eventName: "Robotics Race",
+            certificateEligible: true,
+            isValidEmail: true,
+            isTeam: false,
+          },
+        ];
+
+        const result = await createCertificateCampaign(
+          mockSupabase,
+          {
+            title: "Certificate Batch",
+            subject: "Your Certificate",
+            bodyHtml: "<p>Congrats</p>",
+            selectedItemKeys: ["src_1", "src_2"],
+            sendIndividual: true,
+            sendTeamBackup: false,
+            adminId: "admin-42",
+            adminEmail: "admin@saviskar.co.in",
+          },
+          candidates,
+          { chunkSize: 1 } // Chunk size 1 forces 2 chunks for 2 candidates
+        );
+
+        expect(result.campaignId).toBe("camp-cert-chunk-005");
+        expect(result.totalDeliveries).toBe(2);
+        expect(result.totalCertificates).toBe(2);
+        expect(insertedDeliveryBatches.length).toBe(2);
+        expect(insertedAttachmentBatches.length).toBe(2);
+      });
+
+      it("safely rolls back certificate campaign when delivery chunk insert fails and marks failed if cleanup fails", async () => {
+        let deletedCampaignId: string | null = null;
+        let fallbackStatus: string | null = null;
+
+        const mockSupabase = {
+          from: (table: string) => {
+            if (table === "broadcast_campaigns") {
+              return {
+                insert: (payload: any) => ({
+                  select: () => ({
+                    single: () => Promise.resolve({ data: { id: "camp-cert-fail-006", ...payload }, error: null }),
+                  }),
+                }),
+                delete: () => ({
+                  eq: (_col: string, val: string) => {
+                    deletedCampaignId = val;
+                    // Simulate cleanup delete error
+                    return Promise.resolve({ error: { message: "Foreign key delete constraint lock" } });
+                  },
+                }),
+                update: (payload: any) => ({
+                  eq: () => {
+                    fallbackStatus = payload.status;
+                    return Promise.resolve({ error: null });
+                  },
+                }),
+              };
+            }
+            if (table === "participation_certificates") {
+              return {
+                select: () => ({
+                  eq: () => ({
+                    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+                  }),
+                }),
+                insert: (payload: any) => ({
+                  select: () => ({
+                    single: () =>
+                      Promise.resolve({
+                        data: { id: "cert-fail-uuid", certificate_number: payload.certificate_number },
+                        error: null,
+                      }),
+                  }),
+                }),
+              };
+            }
+            if (table === "broadcast_deliveries") {
+              return {
+                insert: () => {
+                  return Promise.resolve({
+                    error: { message: "canceling statement due to statement timeout", code: "57014" },
+                  });
+                },
+              };
+            }
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: { id: "mock-id" }, error: null }),
+                }),
+              }),
+              insert: () => Promise.resolve({ error: null }),
+            };
+          },
+        } as any;
+
+        const candidates = [
+          {
+            issueSourceKey: "src_fail_1",
+            participantEventId: "pe_fail_1",
+            recipientName: "Charlie Brown",
+            recipientEmail: "charlie@example.com",
+            eventName: "Coding Hackathon",
+            certificateEligible: true,
+            isValidEmail: true,
+            isTeam: false,
+          },
+        ];
+
+        await expect(
+          createCertificateCampaign(
+            mockSupabase,
+            {
+              title: "Failing Certificate Batch",
+              subject: "Your Certificate",
+              bodyHtml: "<p>Congrats</p>",
+              selectedItemKeys: ["src_fail_1"],
+              sendIndividual: true,
+              sendTeamBackup: false,
+              adminId: "admin-42",
+              adminEmail: "admin@saviskar.co.in",
+            },
+            candidates,
+            { chunkSize: 100 }
+          )
+        ).rejects.toThrow("Failed to enqueue certificate deliveries: canceling statement due to statement timeout");
+
+        // Verifies rollback deletion was attempted on campaign header
+        expect(deletedCampaignId).toBe("camp-cert-fail-006");
+        // Verifies cleanup error fallback marked status as failed
+        expect(fallbackStatus).toBe("failed");
+      });
+
+      it("verifies campaigns route configures 60s maxDuration for bulk enqueueing", () => {
+        const routePath = path.resolve(process.cwd(), "app/api/admin/broadcast/campaigns/route.ts");
+        const routeCode = fs.readFileSync(routePath, "utf-8");
+        expect(routeCode).toContain("export const maxDuration = 60;");
       });
     });
   });
