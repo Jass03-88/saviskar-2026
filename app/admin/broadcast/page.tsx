@@ -20,6 +20,12 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import {
+  PARTICIPANT_BROADCAST_SUBJECT,
+  PARTICIPANT_BROADCAST_CAMPAIGN_TITLE,
+  renderParticipantVerificationBroadcastHtml,
+  renderParticipantVerificationBroadcastText,
+} from "@/lib/broadcast/participant-broadcast-template";
 
 interface GeneralRecipient {
   normalizedEmail: string;
@@ -85,13 +91,14 @@ export default function AdminBroadcastPage() {
   const [activeTab, setActiveTab] = useState<"general" | "certificate" | "history">("general");
 
   // General Broadcast state
-  const [generalTitle, setGeneralTitle] = useState("");
+  const [generalTitle, setGeneralTitle] = useState(PARTICIPANT_BROADCAST_CAMPAIGN_TITLE);
   const [generalDispatchImmediately, setGeneralDispatchImmediately] = useState(false);
   const [certDispatchImmediately, setCertDispatchImmediately] = useState(false);
-  const [generalSubject, setGeneralSubject] = useState("");
-  const [generalBodyHtml, setGeneralBodyHtml] = useState(
-    `<p>Dear Saviskar Participant,</p>\n<p>We are delighted to share key updates regarding Saviskar 2026.</p>\n<p>Best regards,<br/>Department of Student Affairs<br/>CGC University, Mohali</p>`
+  const [generalSubject, setGeneralSubject] = useState(PARTICIPANT_BROADCAST_SUBJECT);
+  const [generalBodyHtml, setGeneralBodyHtml] = useState(() =>
+    renderParticipantVerificationBroadcastHtml()
   );
+  const [showGeneralEmailPreview, setShowGeneralEmailPreview] = useState(false);
   const [generalRecipients, setGeneralRecipients] = useState<GeneralRecipient[]>([]);
   const [selectedGeneralEmails, setSelectedGeneralEmails] = useState<Set<string>>(new Set());
   const [generalSearch, setGeneralSearch] = useState("");
@@ -361,6 +368,12 @@ export default function AdminBroadcastPage() {
       return;
     }
 
+    const bodyText =
+      generalTitle === PARTICIPANT_BROADCAST_CAMPAIGN_TITLE &&
+      generalBodyHtml === renderParticipantVerificationBroadcastHtml()
+        ? renderParticipantVerificationBroadcastText()
+        : generalBodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
     setIsSubmittingCampaign(true);
     setCampaignSuccessMsg(null);
     setCampaignSubmitError(null);
@@ -372,6 +385,7 @@ export default function AdminBroadcastPage() {
           title: generalTitle,
           subject: generalSubject,
           bodyHtml: generalBodyHtml,
+          bodyText,
           campaignType: "general",
           selectedEmails: Array.from(selectedGeneralEmails),
           dispatchImmediately: generalDispatchImmediately,
@@ -780,15 +794,67 @@ export default function AdminBroadcastPage() {
               </div>
 
               <div className="mb-4">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-black/60 mb-2">
-                  Message Content (HTML Supported)
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-black/60">
+                    Message Content (HTML Supported)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGeneralTitle(PARTICIPANT_BROADCAST_CAMPAIGN_TITLE);
+                        setGeneralSubject(PARTICIPANT_BROADCAST_SUBJECT);
+                        setGeneralBodyHtml(renderParticipantVerificationBroadcastHtml());
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-black/10 bg-black/[0.03] px-3 py-1 text-[11px] font-semibold text-black/70 hover:bg-black/[0.08] hover:text-black transition"
+                      title="Reset to official SAVISKAR 2K26 black & white document verification template"
+                    >
+                      <RefreshCw size={11} />
+                      <span>Reset to Branded Template</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowGeneralEmailPreview(!showGeneralEmailPreview)}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                        showGeneralEmailPreview
+                          ? "border-black bg-black text-white"
+                          : "border-black/10 bg-white text-black/70 hover:bg-black/[0.04] hover:text-black"
+                      }`}
+                    >
+                      <Eye size={12} />
+                      <span>{showGeneralEmailPreview ? "Hide Preview" : "Preview Branded Email"}</span>
+                    </button>
+                  </div>
+                </div>
                 <textarea
                   rows={6}
                   value={generalBodyHtml}
                   onChange={(e) => setGeneralBodyHtml(e.target.value)}
                   className="w-full rounded-2xl border border-black/10 bg-black/[0.02] p-4 font-mono text-xs text-black placeholder:text-black/35 focus:border-black focus:bg-white focus:outline-none transition leading-relaxed"
                 />
+
+                {showGeneralEmailPreview && (
+                  <div className="mt-4 overflow-hidden rounded-2xl border border-black/15 bg-neutral-100 p-4 shadow-inner">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white px-4 py-2.5 text-xs border border-black/10">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-black">Subject:</span>
+                        <span className="text-black/70 font-mono text-[11px]">{generalSubject}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-black/50 text-[11px]">
+                        <span>Sender:</span>
+                        <code className="rounded bg-black/[0.04] px-1.5 py-0.5 font-mono text-black/70 border border-black/5">
+                          Saviskar Updates &lt;broadcast@updates.saviskar.co.in&gt;
+                        </code>
+                      </div>
+                    </div>
+                    <iframe
+                      title="Branded Email Preview"
+                      srcDoc={generalBodyHtml}
+                      className="h-[520px] w-full rounded-xl border border-black/10 bg-white shadow-xs"
+                      sandbox="allow-same-origin"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="mb-3 rounded-2xl border border-black/10 bg-black/[0.02] p-3">
