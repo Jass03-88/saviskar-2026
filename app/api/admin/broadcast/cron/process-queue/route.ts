@@ -105,7 +105,18 @@ async function handleCronExecution(request: NextRequest) {
     });
   }
 
-  // 4. Parse optional execution parameters with strict bounding
+  // 4. Authenticated health / readiness check probe for GET requests
+  // GET requests authenticate and verify operational guards but never trigger queue processing or dispatch emails.
+  if (request.method === "GET") {
+    return NextResponse.json({
+      success: true,
+      status: "ready",
+      message: "Cron scheduler endpoint is healthy and authenticated. Send POST to process queue.",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // 5. Parse optional execution parameters with strict bounding
   let timeBudgetMs = 20000; // 20s default budget
   let batchSize = 10;
   let throttleMs = 100;

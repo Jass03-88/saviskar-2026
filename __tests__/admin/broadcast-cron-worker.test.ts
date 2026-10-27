@@ -120,8 +120,45 @@ describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency S
         host: "saviskar.co.in",
       });
       const res = await getCronRoute(req);
-      // In production with mock client, it authorizes and enters processing
-      expect(res.status).not.toBe(401);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.status).toBe("ready");
+    });
+
+    it("10e. Authenticated GET readiness probe returns 200 without processing queue", async () => {
+      const req = makeCronRequest("GET", {
+        authorization: `Bearer ${TEST_CRON_SECRET}`,
+        host: "saviskar.co.in",
+      });
+      const res = await getCronRoute(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.status).toBe("ready");
+      expect(json.message).toMatch(/healthy and authenticated/i);
+      expect(getMockCampaignDispatches().length).toBe(0);
+    });
+
+    it("10f. GET request without authorization header is rejected with HTTP 401", async () => {
+      const req = makeCronRequest("GET", {
+        host: "saviskar.co.in",
+      });
+      const res = await getCronRoute(req);
+      expect(res.status).toBe(401);
+      const json = await res.json();
+      expect(json.error).toMatch(/unauthorized/i);
+    });
+
+    it("10g. GET request with invalid secret is rejected with HTTP 401", async () => {
+      const req = makeCronRequest("GET", {
+        authorization: "Bearer wrong-secret-token-12345",
+        host: "saviskar.co.in",
+      });
+      const res = await getCronRoute(req);
+      expect(res.status).toBe(401);
+      const json = await res.json();
+      expect(json.error).toMatch(/unauthorized/i);
     });
 
     it("11a. Preview safety: Rejects request with HTTP 403 when host is preview domain", async () => {

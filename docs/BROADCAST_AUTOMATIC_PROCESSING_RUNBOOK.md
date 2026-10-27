@@ -97,8 +97,26 @@ If you need to immediately halt email dispatching:
 
 ## 6. Verifying Scheduler Invocations & Monitoring
 
-### Manual Health Check
-You can test the endpoint manually using curl from an authorized terminal:
+### Readiness & Health Check Probe (GET)
+To verify endpoint connectivity, authentication, and operational guards without triggering queue execution or email dispatches:
+
+```bash
+curl -i https://saviskar.co.in/api/admin/broadcast/cron/process-queue \
+  -H "Authorization: Bearer YOUR_BROADCAST_CRON_SECRET"
+```
+
+**Expected Response (HTTP 200):**
+```json
+{
+  "success": true,
+  "status": "ready",
+  "message": "Cron scheduler endpoint is healthy and authenticated. Send POST to process queue.",
+  "timestamp": "2026-10-27T22:00:00.000Z"
+}
+```
+
+### Manual Queue Processing Trigger (POST)
+You can test queue processing manually using curl from an authorized terminal:
 
 ```bash
 curl -i -X POST https://saviskar.co.in/api/admin/broadcast/cron/process-queue \
