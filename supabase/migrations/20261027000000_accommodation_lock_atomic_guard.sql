@@ -1,31 +1,30 @@
 -- ============================================================
--- SAVISKAR 2026 — REGISTRATION RPC RESILIENCE & MEMBER COLLEGE FIX
--- Migration: 20261021010000_fix_registration_member_college_and_rpc_resilience.sql
--- Status: DRAFT / LOCAL ONLY — DO NOT APPLY TO PRODUCTION WITHOUT EXPLICIT APPROVAL
+-- SAVISKAR 2026 — SITE PAGE LOCK & ATOMIC ACCESS CONTROL GUARDS
+-- Migration: 20261027000000_accommodation_lock_atomic_guard.sql
+-- Status: IN REVIEW / PENDING DEPLOYMENT VALIDATION (PR #27)
 -- ============================================================
 -- 1. Updates register_participant_events RPC:
---    - Fixes team member college fallback:
---        coalesce(nullif(trim(v_member->>'college'), ''), v_existing_participant.college, nullif(trim(p_college), ''))
---      Prevents Postgres 23502 NOT NULL violation when new participants register teams.
---    - Fixes faculty college fallback:
---        coalesce(nullif(trim(p_faculty->>'college'), ''), v_existing_participant.college, nullif(trim(p_college), ''))
---    - Fixes key naming parity for team members and event headers:
---        * Accepts both camelCase (idCardStoragePath) and snake_case (id_card_storage_path)
---        * Accepts both camelCase (isTeamHead) and snake_case (is_team_head)
---    - Corrects error code for team member validation from SVK11 (accommodation) to SVK06.
---    - Preserves explicit qualification on ALL participant inserts:
---        RETURNING participants.id, participants.participant_id
---      Eliminates PostgreSQL 42702 ambiguity errors against RETURNS TABLE output parameters.
---    - Preserves participant ID compatibility:
---        Accepts blank, whitespace-padded, or lowercase participant IDs, matching upper(trim(p.participant_id)).
---    - Preserves established accommodation paid-overlap behavior:
---        * Fully covered team members are gracefully skipped (continue) to prevent double charging.
---        * Partial overlaps for team members reject with SVK11.
---        * Primary participant overlaps (full or partial) reject with SVK11.
---        * Preserves advisory locks, in-RPC hold expiration, and polymorphic payment orders.
---    - Hardens duplicate event detection:
---        * Active duplicates return 'already_registered' with valid participant_id.
---        * Previously cancelled events reject with clean SVK05 rather than hitting 23505 unique constraint.
+--    - Section 1A: Atomic Registration Access Lock Verification
+--        * Coordinates via shared advisory lock: hashtext('site_page_locks:REGISTRATION_ENABLED')
+--        * Inspects authoritative admin_audit_logs SITE_PAGE_LOCKS_UPDATE state
+--        * Defensive JSONB comparison prevents cast errors on malformed payloads
+--        * Raises clean SVK13 when online event registrations are paused by administration
+--    - Section 1B: Atomic Accommodation Access Lock Verification
+--        * Coordinates via shared advisory lock: hashtext('site_page_locks:ACCOMMODATION_ENABLED')
+--        * Inspects authoritative admin_audit_logs SITE_PAGE_LOCKS_UPDATE state
+--        * Defensive JSONB comparison prevents cast errors on malformed payloads
+--        * Raises clean SVK12 when hostel accommodations are paused by administration
+--    - Preserves established registration RPC resilience & data integrity:
+--        * Member and faculty college fallbacks preventing 23502 NOT NULL violations
+--        * Dual casing compatibility (camelCase and snake_case)
+--        * Explicit table qualification (RETURNING participants.id, participants.participant_id)
+--          preventing PostgreSQL 42702 ambiguity errors against RETURNS TABLE output parameters
+--        * Pessimistic row locking, advisory locking, and in-RPC hold expiration
+--        * Graceful skipping of fully covered team members to prevent double-charging
+-- 2. Creates partial index on admin_audit_logs:
+--    - idx_admin_audit_logs_site_page_locks for instant lock state lookups
+-- 3. Creates update_site_page_locks RPC:
+--    - Atomic transaction boundary for admin lock transitions
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION "public"."register_participant_events"(
@@ -155,6 +154,39 @@ begin
     end if;
 
     -- =====================================================
+    -- 1A. Atomic Registration Access Lock Verification
+    -- =====================================================
+    if p_events is not null and jsonb_typeof(p_events) = 'array' and jsonb_array_length(p_events) > 0 then
+        declare
+            v_reg_locked boolean := false;
+            v_latest_locks jsonb;
+        begin
+            -- Acquire shared advisory lock on the synchronization boundary to coordinate with admin lock mutations
+            perform pg_advisory_xact_lock_shared(hashtext('site_page_locks:REGISTRATION_ENABLED'));
+
+            select details->'locks'
+            into v_latest_locks
+            from public.admin_audit_logs
+            where action_type = 'SITE_PAGE_LOCKS_UPDATE'
+            order by created_at desc
+            limit 1;
+
+            if v_latest_locks is not null and (
+                v_latest_locks->'REGISTRATION_ENABLED' = 'false'::jsonb or
+                v_latest_locks->'REGISTRATIONS_ENABLED' = 'false'::jsonb or
+                lower(trim(coalesce(v_latest_locks->>'REGISTRATION_ENABLED', ''))) in ('false', '0') or
+                lower(trim(coalesce(v_latest_locks->>'REGISTRATIONS_ENABLED', ''))) in ('false', '0')
+            ) then
+                v_reg_locked := true;
+            end if;
+
+            if v_reg_locked then
+                raise exception 'Participant registration is temporarily paused by administration. Please check back shortly.' using errcode = 'SVK13';
+            end if;
+        end;
+    end if;
+
+    -- =====================================================
     -- 1B. Atomic Accommodation Access Lock Verification
     -- =====================================================
     if p_accommodations is not null and jsonb_typeof(p_accommodations) = 'array' and jsonb_array_length(p_accommodations) > 0 then
@@ -172,7 +204,10 @@ begin
             order by created_at desc
             limit 1;
 
-            if v_latest_locks is not null and (v_latest_locks->>'ACCOMMODATION_ENABLED')::boolean = false then
+            if v_latest_locks is not null and (
+                v_latest_locks->'ACCOMMODATION_ENABLED' = 'false'::jsonb or
+                lower(trim(coalesce(v_latest_locks->>'ACCOMMODATION_ENABLED', ''))) in ('false', '0')
+            ) then
                 v_acc_locked := true;
             end if;
 

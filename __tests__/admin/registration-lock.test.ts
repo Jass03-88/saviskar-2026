@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as fs from "fs";
+import * as path from "path";
 import { NextRequest } from "next/server";
 import {
   DEFAULT_SITE_ACCESS,
@@ -604,5 +606,183 @@ describe("Phase 2: Temporary Registration-Form Lock Architecture", () => {
     expect([200, 201]).toContain(res.status);
     expect(data.success).toBe(true);
     expect(data.participantId).toBe("SVK26-OPEN");
+  });
+
+  // 15. Direct database RPC SVK13 rejection maps cleanly to 403 REGISTRATION_LOCKED
+  it("15. Direct register_participant_events RPC rejection with SVK13 maps to 403 REGISTRATION_LOCKED", async () => {
+    __setTestSiteAccess({ REGISTRATION_ENABLED: true, REGISTRATIONS_ENABLED: true });
+
+    vi.spyOn(authSessionLib, "getRegistrationSession").mockResolvedValue({
+      authenticated: true,
+      email: "directrpc@test.edu",
+    } as any);
+
+    const eventUuid = "b2c3d4e5-f6a1-4b2c-8d3e-4f5a6b7c8d9e";
+
+    mockRpcHandler = async (name) => {
+      if (name === "register_participant_events") {
+        return {
+          data: null,
+          error: {
+            code: "SVK13",
+            message: "Participant registration is temporarily paused by administration. Please check back shortly.",
+          },
+        };
+      }
+      return { data: null, error: null };
+    };
+
+    const req = new NextRequest("http://localhost:3000/api/register", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Direct RPC Participant",
+        college: "CGC Jhanjeri",
+        email: "directrpc@test.edu",
+        phone: "9876543211",
+        idCardStoragePath: "directrpc@test.edu/id.jpg",
+        events: [
+          {
+            eventId: eventUuid,
+            team: null,
+            isTeamHead: false,
+            members: [],
+          },
+        ],
+        accommodations: [],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await postRegister(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error).toBe("Participant registration is temporarily paused by administration. Please check back shortly.");
+    expect(data.code).toBe("REGISTRATION_LOCKED");
+  });
+
+  // 16. In-flight payment recovery does NOT invoke register_participant_events when registration is locked
+  it("16. In-flight payment recovery does not call register_participant_events and succeeds", async () => {
+    const lockTime = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    __setTestSiteAccess({ REGISTRATION_ENABLED: false, REGISTRATIONS_ENABLED: false }, null, lockTime);
+
+    let rpcCalled = false;
+    mockRpcHandler = async (name) => {
+      if (name === "register_participant_events") {
+        rpcCalled = true;
+      }
+      return { data: null, error: null };
+    };
+
+    const orderTime = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const eventUuid = "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d";
+
+    mockFromHandler = (table: string) => {
+      if (table === "participants") {
+        return makeQueryChain({
+          id: "p-uuid-inflight",
+          participant_id: "SVK26-INFLIGHT",
+          email: "inflight@test.edu",
+        });
+      }
+      if (table === "participant_events") {
+        return makeQueryChain({
+          id: "pe-inflight-1",
+          payment_status: "pending",
+          event_id: eventUuid,
+          payment_amount: 300,
+          participants: {
+            id: "p-uuid-inflight",
+            participant_id: "SVK26-INFLIGHT",
+            email: "inflight@test.edu",
+          },
+          events: {
+            payment_type: "paid",
+          },
+        });
+      }
+      if (table === "payment_order_items") {
+        return makeQueryChain({
+          payment_order_id: "po-inflight-1",
+          participant_id: "p-uuid-inflight",
+          payment_orders: {
+            id: "po-inflight-1",
+            status: "pending",
+            payer_participant_id: "p-uuid-inflight",
+            amount: 300,
+            created_at: orderTime,
+          },
+        });
+      }
+      return makeQueryChain(null);
+    };
+
+    const resumeToken = createPaymentResumeToken({
+      paymentOrderId: "po-inflight-1",
+      participantId: "SVK26-INFLIGHT",
+      payerParticipantUuid: "p-uuid-inflight",
+    });
+
+    const req = new NextRequest("http://localhost:3000/api/payments/recover", {
+      method: "POST",
+      body: JSON.stringify({
+        participantId: "SVK26-INFLIGHT",
+        participantEventId: "pe-inflight-1",
+        resumeToken,
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await postPaymentRecover(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(rpcCalled).toBe(false);
+  });
+
+  // 17. PR #27 Migration Invariants & Advisory Locking verification
+  it("17. Verifies PR #27 SQL migration invariants and defensive checks", () => {
+    const mig0Path = path.resolve(__dirname, "../../supabase/migrations/20261027000000_accommodation_lock_atomic_guard.sql");
+    const mig1Path = path.resolve(__dirname, "../../supabase/migrations/20261027010000_registration_lock_atomic_guard.sql");
+
+    expect(fs.existsSync(mig0Path)).toBe(true);
+    expect(fs.existsSync(mig1Path)).toBe(true);
+
+    const mig0Content = fs.readFileSync(mig0Path, "utf8");
+    const mig1Content = fs.readFileSync(mig1Path, "utf8");
+
+    // Migration 0 Invariants
+    expect(mig0Content).toContain("Migration: 20261027000000_accommodation_lock_atomic_guard.sql");
+    expect(mig0Content).not.toContain("20261021010000_fix_registration_member_college_and_rpc_resilience.sql");
+    expect(mig0Content).not.toContain("Status: DRAFT / LOCAL ONLY");
+    expect(mig0Content).toContain("Status: IN REVIEW / PENDING DEPLOYMENT VALIDATION (PR #27)");
+
+    // Section 1A registration lock check
+    expect(mig0Content).toContain("Section 1A: Atomic Registration Access Lock Verification");
+    expect(mig0Content).toContain("perform pg_advisory_xact_lock_shared(hashtext('site_page_locks:REGISTRATION_ENABLED'));");
+    expect(mig0Content).toContain("errcode = 'SVK13'");
+
+    // Section 1B accommodation lock check
+    expect(mig0Content).toContain("Section 1B: Atomic Accommodation Access Lock Verification");
+    expect(mig0Content).toContain("perform pg_advisory_xact_lock_shared(hashtext('site_page_locks:ACCOMMODATION_ENABLED'));");
+    expect(mig0Content).toContain("errcode = 'SVK12'");
+
+    // Defensive JSONB checks (no unsafe ::boolean casts)
+    expect(mig0Content).toContain("'ACCOMMODATION_ENABLED' = 'false'::jsonb");
+    expect(mig0Content).toContain("'REGISTRATION_ENABLED' = 'false'::jsonb");
+    expect(mig0Content).not.toContain("(v_latest_locks->>'ACCOMMODATION_ENABLED')::boolean = false");
+
+    // Index creation
+    expect(mig0Content).toContain('CREATE INDEX IF NOT EXISTS "idx_admin_audit_logs_site_page_locks"');
+
+    // Migration 1 Invariants
+    expect(mig1Content).toContain("Migration: 20261027010000_registration_lock_atomic_guard.sql");
+    expect(mig1Content).toContain("Status: IN REVIEW / PENDING DEPLOYMENT VALIDATION (PR #27)");
+    expect(mig1Content).toContain("perform pg_advisory_xact_lock(hashtext('site_page_locks:ACCOMMODATION_ENABLED'));");
+    expect(mig1Content).toContain("perform pg_advisory_xact_lock(hashtext('site_page_locks:REGISTRATION_ENABLED'));");
+
+    // Duplicate index removed from Migration 1
+    expect(mig1Content).not.toContain('CREATE INDEX IF NOT EXISTS "idx_admin_audit_logs_site_page_locks"');
   });
 });
