@@ -50,7 +50,69 @@ function isCronAuthorized(request: NextRequest): boolean {
   return crypto.timingSafeEqual(providedBuf, configuredBuf);
 }
 
-async function handleCronExecution(request: NextRequest) {
+/**
+ * GET: Safe, authenticated readiness and health check probe.
+ * Authenticates the secret token and reports operational status without
+ * mutating database records, acquiring leases, claiming deliveries, or sending emails.
+ *
+ * When live broadcast sending is disabled (SAVISKAR_BROADCAST_LIVE_ENABLED=false/unset),
+ * returns HTTP 200 with status: "standby" to confirm endpoint & auth health.
+ * When live broadcast sending is enabled, returns HTTP 200 with status: "ready".
+ */
+export async function GET(request: NextRequest) {
+  // 1. Authenticate scheduler request
+  if (!isCronAuthorized(request)) {
+    return NextResponse.json(
+      { error: "Unauthorized: Invalid or missing cron secret." },
+      { status: 401 }
+    );
+  }
+
+  // 2. Evaluate operational flags for diagnostic reporting
+  const isLive = isLiveBroadcastEnabled(request) || isHybridDevelopmentModeActive();
+  const isPreview = isPreviewDeployment(request);
+  const isReadOnly = isProductionReadOnlyEnabled(request);
+  const isEmergencyStopped = isBroadcastEmergencyStopActive();
+
+  let status: "ready" | "standby" | "emergency_stopped" = "ready";
+  let message =
+    "Cron scheduler endpoint is healthy and authenticated. Ready to process queue via POST.";
+
+  if (isEmergencyStopped) {
+    status = "emergency_stopped";
+    message =
+      "Cron scheduler endpoint is healthy and authenticated, but background processing is halted by emergency stop (SAVISKAR_BROADCAST_EMERGENCY_STOP=true).";
+  } else if (!isLive) {
+    status = "standby";
+    message =
+      "Cron scheduler endpoint is healthy and authenticated. Live broadcast sending is disabled (standby). POST queue processing will be rejected until enabled.";
+  } else if (isPreview) {
+    status = "standby";
+    message =
+      "Cron scheduler endpoint is healthy and authenticated. Queue processing is disabled in Preview Mode.";
+  } else if (isReadOnly) {
+    status = "standby";
+    message =
+      "Cron scheduler endpoint is healthy and authenticated. Queue processing is disabled in Production Read-Only Mode.";
+  }
+
+  return NextResponse.json({
+    success: true,
+    status,
+    authenticated: true,
+    liveBroadcastEnabled: isLive && !isPreview && !isReadOnly,
+    emergencyStopActive: isEmergencyStopped,
+    message,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * POST: Scheduled queue processing execution handler.
+ * Strictly enforces all fail-closed operational guards (preview, read-only, live broadcast,
+ * emergency stop) before acquiring worker leases or dispatching deliveries.
+ */
+export async function POST(request: NextRequest) {
   // 1. Authenticate scheduler request
   if (!isCronAuthorized(request)) {
     return NextResponse.json(
@@ -105,18 +167,7 @@ async function handleCronExecution(request: NextRequest) {
     });
   }
 
-  // 4. Authenticated health / readiness check probe for GET requests
-  // GET requests authenticate and verify operational guards but never trigger queue processing or dispatch emails.
-  if (request.method === "GET") {
-    return NextResponse.json({
-      success: true,
-      status: "ready",
-      message: "Cron scheduler endpoint is healthy and authenticated. Send POST to process queue.",
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  // 5. Parse optional execution parameters with strict bounding
+  // 4. Parse optional execution parameters with strict bounding
   let timeBudgetMs = 20000; // 20s default budget
   let batchSize = 10;
   let throttleMs = 100;
@@ -137,21 +188,19 @@ async function handleCronExecution(request: NextRequest) {
       throttleMs = Math.max(0, Math.min(Number(throttleParam), 1000));
     }
 
-    if (request.method === "POST") {
-      try {
-        const body = await request.json();
-        if (typeof body?.timeBudgetMs === "number") {
-          timeBudgetMs = Math.max(5000, Math.min(body.timeBudgetMs, 25000));
-        }
-        if (typeof body?.batchSize === "number") {
-          batchSize = Math.max(1, Math.min(body.batchSize, 25));
-        }
-        if (typeof body?.throttleMs === "number") {
-          throttleMs = Math.max(0, Math.min(body.throttleMs, 1000));
-        }
-      } catch {
-        // Body is optional
+    try {
+      const body = await request.json();
+      if (typeof body?.timeBudgetMs === "number") {
+        timeBudgetMs = Math.max(5000, Math.min(body.timeBudgetMs, 25000));
       }
+      if (typeof body?.batchSize === "number") {
+        batchSize = Math.max(1, Math.min(body.batchSize, 25));
+      }
+      if (typeof body?.throttleMs === "number") {
+        throttleMs = Math.max(0, Math.min(body.throttleMs, 1000));
+      }
+    } catch {
+      // Body is optional
     }
   } catch {
     // Ignore URL/JSON parsing fallback to defaults
@@ -180,12 +229,4 @@ async function handleCronExecution(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-export async function POST(request: NextRequest) {
-  return handleCronExecution(request);
-}
-
-export async function GET(request: NextRequest) {
-  return handleCronExecution(request);
 }

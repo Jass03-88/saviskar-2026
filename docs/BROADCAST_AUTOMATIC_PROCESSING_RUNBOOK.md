@@ -98,22 +98,45 @@ If you need to immediately halt email dispatching:
 ## 6. Verifying Scheduler Invocations & Monitoring
 
 ### Readiness & Health Check Probe (GET)
-To verify endpoint connectivity, authentication, and operational guards without triggering queue execution or email dispatches:
+To safely verify endpoint connectivity, cron token authentication, and operational status without triggering queue execution, database mutations, lease acquisition, or email dispatches:
 
 ```bash
 curl -i https://saviskar.co.in/api/admin/broadcast/cron/process-queue \
   -H "Authorization: Bearer YOUR_BROADCAST_CRON_SECRET"
 ```
 
-**Expected Response (HTTP 200):**
-```json
-{
-  "success": true,
-  "status": "ready",
-  "message": "Cron scheduler endpoint is healthy and authenticated. Send POST to process queue.",
-  "timestamp": "2026-10-27T22:00:00.000Z"
-}
-```
+**Expected Responses (HTTP 200):**
+- **When live sending is disabled (standby / safe preflight state):**
+  ```json
+  {
+    "success": true,
+    "status": "standby",
+    "authenticated": true,
+    "liveBroadcastEnabled": false,
+    "emergencyStopActive": false,
+    "message": "Cron scheduler endpoint is healthy and authenticated. Live broadcast sending is disabled (standby). POST queue processing will be rejected until enabled.",
+    "timestamp": "2026-10-28T02:00:00.000Z"
+  }
+  ```
+- **When live sending is enabled (`SAVISKAR_BROADCAST_LIVE_ENABLED=true`):**
+  ```json
+  {
+    "success": true,
+    "status": "ready",
+    "authenticated": true,
+    "liveBroadcastEnabled": true,
+    "emergencyStopActive": false,
+    "message": "Cron scheduler endpoint is healthy and authenticated. Ready to process queue via POST.",
+    "timestamp": "2026-10-28T02:00:00.000Z"
+  }
+  ```
+- **When unauthorized (missing or invalid token):**
+  ```json
+  {
+    "error": "Unauthorized: Invalid or missing cron secret."
+  }
+  ```
+  *(HTTP 401)*
 
 ### Manual Queue Processing Trigger (POST)
 You can test queue processing manually using curl from an authorized terminal:

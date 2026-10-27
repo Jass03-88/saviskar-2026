@@ -19,6 +19,9 @@ import {
   clearMockCampaignDispatches,
   getMockCampaignDispatches,
 } from "@/lib/email/campaign-service";
+import * as campaignWorker from "@/lib/broadcast/campaign-worker";
+import * as campaignService from "@/lib/email/campaign-service";
+import * as supabaseAdmin from "@/lib/broadcast/supabase-admin";
 
 describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency Suite", () => {
   const ORIGINAL_ENV = process.env;
@@ -123,10 +126,12 @@ describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency S
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
+      expect(json.authenticated).toBe(true);
       expect(json.status).toBe("ready");
     });
 
-    it("10e. Authenticated GET readiness probe returns 200 without processing queue", async () => {
+    it("10e. Authenticated GET readiness probe with live sending enabled returns status ready without processing queue", async () => {
+      process.env.SAVISKAR_BROADCAST_LIVE_ENABLED = "true";
       const req = makeCronRequest("GET", {
         authorization: `Bearer ${TEST_CRON_SECRET}`,
         host: "saviskar.co.in",
@@ -136,11 +141,43 @@ describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency S
       const json = await res.json();
       expect(json.success).toBe(true);
       expect(json.status).toBe("ready");
+      expect(json.liveBroadcastEnabled).toBe(true);
       expect(json.message).toMatch(/healthy and authenticated/i);
       expect(getMockCampaignDispatches().length).toBe(0);
     });
 
-    it("10f. GET request without authorization header is rejected with HTTP 401", async () => {
+    it("10f. Authenticated GET with live sending disabled returns HTTP 200 and standby status", async () => {
+      process.env.SAVISKAR_BROADCAST_LIVE_ENABLED = "false";
+      const req = makeCronRequest("GET", {
+        authorization: `Bearer ${TEST_CRON_SECRET}`,
+        host: "saviskar.co.in",
+      });
+      const res = await getCronRoute(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.status).toBe("standby");
+      expect(json.liveBroadcastEnabled).toBe(false);
+      expect(json.message).toMatch(/standby/i);
+      expect(getMockCampaignDispatches().length).toBe(0);
+    });
+
+    it("10g. Authenticated GET with live sending unset returns HTTP 200 and standby status", async () => {
+      delete process.env.SAVISKAR_BROADCAST_LIVE_ENABLED;
+      const req = makeCronRequest("GET", {
+        authorization: `Bearer ${TEST_CRON_SECRET}`,
+        host: "saviskar.co.in",
+      });
+      const res = await getCronRoute(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.status).toBe("standby");
+      expect(json.liveBroadcastEnabled).toBe(false);
+      expect(getMockCampaignDispatches().length).toBe(0);
+    });
+
+    it("10h. GET request without authorization header is rejected with HTTP 401", async () => {
       const req = makeCronRequest("GET", {
         host: "saviskar.co.in",
       });
@@ -150,7 +187,7 @@ describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency S
       expect(json.error).toMatch(/unauthorized/i);
     });
 
-    it("10g. GET request with invalid secret is rejected with HTTP 401", async () => {
+    it("10i. GET request with invalid secret is rejected with HTTP 401", async () => {
       const req = makeCronRequest("GET", {
         authorization: "Bearer wrong-secret-token-12345",
         host: "saviskar.co.in",
@@ -161,7 +198,59 @@ describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency S
       expect(json.error).toMatch(/unauthorized/i);
     });
 
-    it("11a. Preview safety: Rejects request with HTTP 403 when host is preview domain", async () => {
+    it("10j. Authenticated GET has zero side effects: acquires no worker lease, claims no deliveries, invokes no email dispatch, and calls no queue processing logic", async () => {
+      process.env.SAVISKAR_BROADCAST_LIVE_ENABLED = "false";
+
+      const processActiveQueueSpy = vi.spyOn(campaignWorker, "processActiveBroadcastQueue");
+      const processNextBatchSpy = vi.spyOn(campaignWorker, "processNextBroadcastBatch");
+      const acquireWorkerLeaseSpy = vi.spyOn(campaignWorker, "acquireBroadcastWorkerLease");
+      const releaseWorkerLeaseSpy = vi.spyOn(campaignWorker, "releaseBroadcastWorkerLease");
+      const acquireMemLeaseSpy = vi.spyOn(campaignWorker, "acquireMemoryLease");
+      const releaseMemLeaseSpy = vi.spyOn(campaignWorker, "releaseMemoryLease");
+      const sendEmailSpy = vi.spyOn(campaignService, "sendCampaignEmail");
+      const getSupabaseAdminSpy = vi.spyOn(supabaseAdmin, "getBroadcastSupabaseAdmin");
+
+      const req = makeCronRequest("GET", {
+        authorization: `Bearer ${TEST_CRON_SECRET}`,
+        host: "saviskar.co.in",
+      });
+      const res = await getCronRoute(req);
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.status).toBe("standby");
+      expect(json.authenticated).toBe(true);
+      expect(json.liveBroadcastEnabled).toBe(false);
+      expect(json.message).toMatch(/standby/i);
+
+      // Verify zero worker/queue execution functions were called
+      expect(processActiveQueueSpy).not.toHaveBeenCalled();
+      expect(processNextBatchSpy).not.toHaveBeenCalled();
+      expect(acquireWorkerLeaseSpy).not.toHaveBeenCalled();
+      expect(releaseWorkerLeaseSpy).not.toHaveBeenCalled();
+      expect(acquireMemLeaseSpy).not.toHaveBeenCalled();
+      expect(releaseMemLeaseSpy).not.toHaveBeenCalled();
+
+      // Verify zero database client instances or queries/mutations occurred
+      expect(getSupabaseAdminSpy).not.toHaveBeenCalled();
+
+      // Verify zero emails dispatched
+      expect(sendEmailSpy).not.toHaveBeenCalled();
+      expect(getMockCampaignDispatches().length).toBe(0);
+    });
+
+    it("10k. POST with live sending disabled remains blocked with HTTP 403", async () => {
+      process.env.SAVISKAR_BROADCAST_LIVE_ENABLED = "false";
+      const req = makeCronRequest("POST");
+      const res = await postCronRoute(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(["LIVE_BROADCAST_DISABLED", "PREVIEW_MODE_PROCESSING_DISABLED"]).toContain(json.code);
+      expect(getMockCampaignDispatches().length).toBe(0);
+    });
+
+    it("11a. Preview safety: Rejects POST with HTTP 403 when host is preview domain", async () => {
       const req = makeCronRequest("POST", {
         authorization: `Bearer ${TEST_CRON_SECRET}`,
         host: "firebrick-caterpillar-749126.hostingersite.com",
@@ -174,7 +263,23 @@ describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency S
       expect(json.code).toBe("PREVIEW_MODE_PROCESSING_DISABLED");
     });
 
-    it("11b. Production read-only safety: Rejects with HTTP 403 when production read-only is enabled", async () => {
+    it("11b. Preview safety: GET on preview domain returns HTTP 200 with standby status without dispatching", async () => {
+      const req = makeCronRequest("GET", {
+        authorization: `Bearer ${TEST_CRON_SECRET}`,
+        host: "firebrick-caterpillar-749126.hostingersite.com",
+        "x-forwarded-host": "firebrick-caterpillar-749126.hostingersite.com",
+      }, undefined, "https://firebrick-caterpillar-749126.hostingersite.com/api/admin/broadcast/cron/process-queue");
+
+      const res = await getCronRoute(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.status).toBe("standby");
+      expect(json.liveBroadcastEnabled).toBe(false);
+      expect(getMockCampaignDispatches().length).toBe(0);
+    });
+
+    it("11c. Production read-only safety: Rejects POST with HTTP 403 when production read-only is enabled", async () => {
       process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
       const req = makeCronRequest("POST");
       const res = await postCronRoute(req);
@@ -183,7 +288,33 @@ describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency S
       expect(json.code).toBe("PRODUCTION_READONLY_MODE_PROCESSING_DISABLED");
     });
 
-    it("12. Emergency stop safety: Halts immediately and returns status emergency_stopped", async () => {
+    it("11d. Production read-only safety: GET returns HTTP 200 with standby status", async () => {
+      process.env.SAVISKAR_BROADCAST_PRODUCTION_READONLY_ENABLED = "true";
+      const req = makeCronRequest("GET");
+      const res = await getCronRoute(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.status).toBe("standby");
+      expect(json.liveBroadcastEnabled).toBe(false);
+      expect(getMockCampaignDispatches().length).toBe(0);
+    });
+
+    it("11e. Canonical host guard: Rejects POST with HTTP 403 when host is unapproved non-canonical domain", async () => {
+      (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+      const req = makeCronRequest("POST", {
+        authorization: `Bearer ${TEST_CRON_SECRET}`,
+        host: "unapproved-external-domain.com",
+        "x-forwarded-host": "unapproved-external-domain.com",
+      }, undefined, "https://unapproved-external-domain.com/api/admin/broadcast/cron/process-queue");
+
+      const res = await postCronRoute(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(["PREVIEW_MODE_PROCESSING_DISABLED", "LIVE_BROADCAST_DISABLED"]).toContain(json.code);
+    });
+
+    it("12a. Emergency stop safety: POST halts immediately and returns status emergency_stopped", async () => {
       process.env.SAVISKAR_BROADCAST_EMERGENCY_STOP = "true";
       expect(isBroadcastEmergencyStopActive()).toBe(true);
 
@@ -194,6 +325,18 @@ describe("SAVISKAR 2K26 — Automatic Broadcast Queue Processing & Concurrency S
       expect(json.status).toBe("emergency_stopped");
       expect(json.batchesExecuted).toBe(0);
       expect(json.totalClaimed).toBe(0);
+    });
+
+    it("12b. Emergency stop safety: GET reports status emergency_stopped", async () => {
+      process.env.SAVISKAR_BROADCAST_EMERGENCY_STOP = "true";
+      expect(isBroadcastEmergencyStopActive()).toBe(true);
+
+      const req = makeCronRequest("GET");
+      const res = await getCronRoute(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.status).toBe("emergency_stopped");
+      expect(json.emergencyStopActive).toBe(true);
     });
   });
 
