@@ -96,19 +96,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: { code: "DB_ERROR", message: "Failed to load hostels/floors/rooms." } }, { status: 500 });
     }
 
-    // 5. Calculate Current Occupancies
+    // 5. Calculate Current Occupancies by DISTINCT physical participants
     const { data: activeAllocations, error: allocErr } = await supabaseAdmin
       .from("accommodation_allocations")
-      .select("room_id")
+      .select("room_id, participant_accommodations ( participant_id )")
       .eq("status", "active");
 
     if (allocErr) {
       return NextResponse.json({ success: false, error: { code: "DB_ERROR", message: "Failed to load occupancies." } }, { status: 500 });
     }
 
-    const occupancyMap = new Map<string, number>();
+    const roomOccupantsMap = new Map<string, Set<string>>();
     for (const alloc of activeAllocations || []) {
-      occupancyMap.set(alloc.room_id, (occupancyMap.get(alloc.room_id) || 0) + 1);
+      const pa = Array.isArray(alloc.participant_accommodations)
+        ? alloc.participant_accommodations[0]
+        : alloc.participant_accommodations;
+      const participantId = pa?.participant_id || alloc.room_id;
+      if (!roomOccupantsMap.has(alloc.room_id)) {
+        roomOccupantsMap.set(alloc.room_id, new Set<string>());
+      }
+      roomOccupantsMap.get(alloc.room_id)!.add(participantId);
+    }
+
+    const occupancyMap = new Map<string, number>();
+    for (const [roomId, occupants] of roomOccupantsMap.entries()) {
+      occupancyMap.set(roomId, occupants.size);
     }
 
     // Build hierarchical map: Hostel -> Floor -> Room[]
@@ -196,8 +208,9 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 7. Call RPC
-      const { error: rpcError } = await supabaseAdmin.rpc("allocate_accommodation", {
+      // 7. Call RPC via authenticated client (fallback: supabaseAdmin.rpc("allocate_accommodation"))
+      const rpcClient = (auth.supabase && typeof auth.supabase.rpc === "function") ? auth.supabase : supabaseAdmin;
+      const { error: rpcError } = await rpcClient.rpc("allocate_accommodation", {
         p_participant_accommodation_id: acc.id,
         p_hostel_id: selectedHostelId,
         p_room_id: selectedRoom.id,

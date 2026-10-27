@@ -1376,13 +1376,35 @@ describe("Saviskar 2026 — Master Admin Email Broadcast & Participation Certifi
       ];
 
       let updatedPayload: any = null;
-      const mockSupabase = {
+      const buildMockSupabase = (getDeliveries: () => Array<{ status: string }>) => ({
         from: (table: string) => {
           if (table === "broadcast_deliveries") {
             return {
-              select: () => ({
-                eq: (col: string, val: string) => Promise.resolve({ data: mockDeliveries, error: null }),
-              }),
+              select: (_fields: string, opts?: { count?: string; head?: boolean }) => {
+                const builder: any = {
+                  _statusIn: null as string[] | null,
+                  _statusEq: null as string | null,
+                  eq: (col: string, val: string) => {
+                    if (col === "status") builder._statusEq = val;
+                    return builder;
+                  },
+                  in: (col: string, vals: string[]) => {
+                    if (col === "status") builder._statusIn = vals;
+                    return builder;
+                  },
+                  then: (resolve: (val: any) => void) => {
+                    const all = getDeliveries();
+                    let filtered = all;
+                    if (builder._statusIn) {
+                      filtered = filtered.filter((d) => builder._statusIn!.includes(d.status));
+                    } else if (builder._statusEq) {
+                      filtered = filtered.filter((d) => d.status === builder._statusEq);
+                    }
+                    return resolve({ count: filtered.length, data: null, error: null });
+                  },
+                };
+                return builder;
+              },
             };
           }
           if (table === "broadcast_campaigns") {
@@ -1397,7 +1419,9 @@ describe("Saviskar 2026 — Master Admin Email Broadcast & Participation Certifi
           }
           return {};
         },
-      } as any;
+      } as any);
+
+      const mockSupabase = buildMockSupabase(() => mockDeliveries);
 
       // 1. After Batch 1: remainingCount = 2 > 0 -> status MUST transition to 'processing'
       const progress1 = await updateCampaignProgressAndStatus(mockSupabase, campaignId);
@@ -1426,19 +1450,156 @@ describe("Saviskar 2026 — Master Admin Email Broadcast & Participation Certifi
       expect(updatedPayload.completed_at).toBeDefined();
     });
 
-    it("updateCampaignProgressAndStatus throws and does not ignore database query or update errors", async () => {
+    it("updateCampaignProgressAndStatus accurately counts >1,000 deliveries including sent rows beyond index 1,000", async () => {
+      const { updateCampaignProgressAndStatus } = await import("@/lib/broadcast/campaign-worker");
+      const campaignId = "c-large-scale-001";
+
+      // Simulate the exact production scale: 2,599 total deliveries
+      // 3 sent in first 1,000 rows, 27 sent beyond index 1,000 (total 30 sent)
+      // 2,569 queued deliveries
+      const largeDeliveries: Array<{ status: string }> = [];
+      for (let i = 0; i < 2599; i++) {
+        if (i < 3) {
+          largeDeliveries.push({ status: "sent" });
+        } else if (i >= 1500 && i < 1527) {
+          largeDeliveries.push({ status: "delivered" }); // 27 rows beyond 1000 with delivered status
+        } else {
+          largeDeliveries.push({ status: "queued" });
+        }
+      }
+
+      expect(largeDeliveries.length).toBe(2599);
+      expect(largeDeliveries.filter((d) => d.status === "sent" || d.status === "delivered").length).toBe(30);
+
+      let updatedPayload: any = null;
+      const mockSupabase = {
+        from: (table: string) => {
+          if (table === "broadcast_deliveries") {
+            return {
+              select: (_fields: string, opts?: { count?: string; head?: boolean }) => {
+                const builder: any = {
+                  _statusIn: null as string[] | null,
+                  _statusEq: null as string | null,
+                  eq: (col: string, val: string) => {
+                    if (col === "status") builder._statusEq = val;
+                    return builder;
+                  },
+                  in: (col: string, vals: string[]) => {
+                    if (col === "status") builder._statusIn = vals;
+                    return builder;
+                  },
+                  then: (resolve: (val: any) => void) => {
+                    let filtered = largeDeliveries;
+                    if (builder._statusIn) {
+                      filtered = filtered.filter((d) => builder._statusIn!.includes(d.status));
+                    } else if (builder._statusEq) {
+                      filtered = filtered.filter((d) => d.status === builder._statusEq);
+                    }
+                    return resolve({ count: filtered.length, data: null, error: null });
+                  },
+                };
+                return builder;
+              },
+            };
+          }
+          if (table === "broadcast_campaigns") {
+            return {
+              update: (payload: any) => ({
+                eq: (col: string, val: string) => {
+                  updatedPayload = payload;
+                  return Promise.resolve({ error: null });
+                },
+              }),
+            };
+          }
+          return {};
+        },
+      } as any;
+
+      const progress = await updateCampaignProgressAndStatus(mockSupabase, campaignId);
+
+      // Verifies exact counting: never truncated to 3 or 1000!
+      expect(progress.status).toBe("processing");
+      expect(progress.sentCount).toBe(30);
+      expect(progress.failedCount).toBe(0);
+      expect(progress.remainingCount).toBe(2569);
+      expect(updatedPayload.sent_count).toBe(30);
+      expect(updatedPayload.failed_count).toBe(0);
+      expect(updatedPayload.status).toBe("processing");
+    });
+
+    it("updateCampaignProgressAndStatus throws and does not update campaign when database count query errors", async () => {
       const { updateCampaignProgressAndStatus } = await import("@/lib/broadcast/campaign-worker");
       const campaignId = "c-err-001";
+      let campaignUpdated = false;
+
+      const createErrorBuilder = () => {
+        const b: any = {
+          eq: () => b,
+          in: () => b,
+          then: (resolve: (val: any) => void) => resolve({ count: null, data: null, error: new Error("DB Connection Error") }),
+        };
+        return b;
+      };
 
       const mockSupabaseError = {
-        from: (table: string) => ({
-          select: () => ({
-            eq: () => Promise.resolve({ data: null, error: new Error("DB Connection Error") }),
-          }),
-        }),
+        from: (table: string) => {
+          if (table === "broadcast_deliveries") {
+            return {
+              select: () => createErrorBuilder(),
+            };
+          }
+          if (table === "broadcast_campaigns") {
+            return {
+              update: () => {
+                campaignUpdated = true;
+                return { eq: () => Promise.resolve({ error: null }) };
+              },
+            };
+          }
+          return {};
+        },
       } as any;
 
       await expect(updateCampaignProgressAndStatus(mockSupabaseError, campaignId)).rejects.toThrow("DB Connection Error");
+      expect(campaignUpdated).toBe(false); // Database errors must never silently overwrite or update campaign records
+    });
+
+    it("updateCampaignProgressAndStatus throws when database returns null count and does not overwrite counters", async () => {
+      const { updateCampaignProgressAndStatus } = await import("@/lib/broadcast/campaign-worker");
+      const campaignId = "c-null-count-001";
+      let campaignUpdated = false;
+
+      const createNullCountBuilder = () => {
+        const b: any = {
+          eq: () => b,
+          in: () => b,
+          then: (resolve: (val: any) => void) => resolve({ count: null, data: null, error: null }),
+        };
+        return b;
+      };
+
+      const mockSupabaseNullCount = {
+        from: (table: string) => {
+          if (table === "broadcast_deliveries") {
+            return {
+              select: () => createNullCountBuilder(),
+            };
+          }
+          if (table === "broadcast_campaigns") {
+            return {
+              update: () => {
+                campaignUpdated = true;
+                return { eq: () => Promise.resolve({ error: null }) };
+              },
+            };
+          }
+          return {};
+        },
+      } as any;
+
+      await expect(updateCampaignProgressAndStatus(mockSupabaseNullCount, campaignId)).rejects.toThrow("Database returned null count");
+      expect(campaignUpdated).toBe(false);
     });
 
     it("processNextBroadcastBatch passes campaignId to claim_broadcast_deliveries RPC preventing cross-campaign dispatch", async () => {

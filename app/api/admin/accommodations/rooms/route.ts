@@ -167,3 +167,97 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Internal Error" }, { status: 500 });
   }
 }
+
+// DELETE ROOM (RESTRICTED IF ACTIVE ALLOCATIONS OR ACTIVE BOOKINGS EXIST)
+export async function DELETE(request: Request) {
+  try {
+    const auth = await requireAccommodationAdmin();
+    if (auth.error) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+      return NextResponse.json({ error: "No admin config" }, { status: 500 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    let id = searchParams.get("id");
+
+    if (!id && request.headers.get("content-type")?.includes("application/json")) {
+      const body = await request.json().catch(() => null);
+      if (body) id = body.id;
+    }
+
+    if (!id) {
+      return NextResponse.json({ error: "Room ID is required." }, { status: 400 });
+    }
+
+    // 1. Check for active participant allocations in this room
+    const { data: activeAllocs } = await supabaseAdmin
+      .from("accommodation_allocations")
+      .select("id")
+      .eq("room_id", id)
+      .eq("status", "active")
+      .limit(1);
+
+    if (activeAllocs && activeAllocs.length > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete room with active participant allocations. Deallocate or reassign participants first." },
+        { status: 400 }
+      );
+    }
+
+    // 2. Check for assigned participant bookings
+    const { data: bookings } = await supabaseAdmin
+      .from("participant_accommodations")
+      .select("id")
+      .eq("room_id", id)
+      .not("status", "in", '("cancelled", "failed")')
+      .limit(1);
+
+    if (bookings && bookings.length > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete room currently assigned to participant bookings." },
+        { status: 400 }
+      );
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("hostel_rooms")
+      .delete()
+      .eq("id", id)
+      .select("id");
+
+    if (error) {
+      if (error.code === "23503") {
+        return NextResponse.json(
+          { error: "Cannot delete room because historical allocation records exist. Deactivate the room instead." },
+          { status: 400 }
+        );
+      }
+      return NextResponse.json({ error: "Could not delete room." }, { status: 500 });
+    }
+
+    if (!data || data.length === 0) {
+      return NextResponse.json({ error: "Room not found or already deleted." }, { status: 404 });
+    }
+
+    if (auth.user?.id) {
+      try {
+        await supabaseAdmin.from("admin_audit_logs").insert({
+          admin_id: auth.user.id,
+          action_type: "DELETE_ACCOMMODATION_ROOM",
+          target_id: id,
+          details: { deleted_at: new Date().toISOString() },
+        });
+      } catch (auditErr) {
+        console.error("Failed to write audit log for room deletion:", auditErr);
+      }
+    }
+
+    return NextResponse.json({ success: true, message: "Room deleted successfully." }, { status: 200 });
+  } catch {
+    return NextResponse.json({ error: "Internal Error" }, { status: 500 });
+  }
+}

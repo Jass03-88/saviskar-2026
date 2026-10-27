@@ -19,7 +19,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import { getCanonicalStayLabel } from "@/lib/accommodation-dates";
-import { groupAccommodationRecords, paginateGroupedAccommodations, getGroupControlsId, getGroupHeaderId } from "@/lib/admin/accommodation-grouping";
+import { groupAccommodationRecords, paginateGroupedAccommodations, getGroupControlsId, getGroupHeaderId, groupRecordsByParticipant, ParticipantAccommodationEntry } from "@/lib/admin/accommodation-grouping";
 import { ParticipantDetailDialog } from "@/components/admin/ParticipantDetailDialog";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
 import AdminPageLoader from "@/components/admin/AdminPageLoader";
@@ -327,6 +327,54 @@ export default function AccommodationsAdmin() {
       hostel_id: newHostelId,
       floor_id: availableFloors.length > 0 ? availableFloors[0].id : ""
     }));
+  };
+
+  const deleteHostel = async (hostel: HostelRecord) => {
+    if (!window.confirm(`Are you sure you want to delete hostel "${hostel.name}"? This action cannot be undone.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/accommodations/hostels?id=${encodeURIComponent(hostel.id)}`, {
+        method: "DELETE",
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to delete hostel.");
+      loadData(true);
+    } catch (err: unknown) {
+      if (err instanceof Error) alert(err.message);
+    }
+  };
+
+  const deleteFloor = async (floor: FloorRecord) => {
+    if (!window.confirm(`Are you sure you want to delete Floor ${floor.floor_number} (${floor.name || "unnamed"})? This action cannot be undone.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/accommodations/floors?id=${encodeURIComponent(floor.id)}`, {
+        method: "DELETE",
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to delete floor.");
+      loadData(true);
+    } catch (err: unknown) {
+      if (err instanceof Error) alert(err.message);
+    }
+  };
+
+  const deleteRoom = async (room: RoomRecord) => {
+    if (!window.confirm(`Are you sure you want to delete room "${room.room_number}"? This action cannot be undone.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/accommodations/rooms?id=${encodeURIComponent(room.id)}`, {
+        method: "DELETE",
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to delete room.");
+      loadData(true);
+    } catch (err: unknown) {
+      if (err instanceof Error) alert(err.message);
+    }
   };
 
   if (loading && !data) {
@@ -638,6 +686,12 @@ export default function AccommodationsAdmin() {
                           >
                             Edit
                           </button>
+                          <button
+                            onClick={() => deleteHostel(h)}
+                            className="ml-3 text-red-500 hover:text-red-700 font-medium"
+                          >
+                            Delete
+                          </button>
                         </td>
                       </tr>
                     );
@@ -767,6 +821,12 @@ export default function AccommodationsAdmin() {
                               className="text-black/60 hover:text-black font-medium"
                             >
                               Edit
+                            </button>
+                            <button
+                              onClick={() => deleteFloor(f)}
+                              className="ml-3 text-red-500 hover:text-red-700 font-medium"
+                            >
+                              Delete
                             </button>
                           </td>
                         </tr>
@@ -917,6 +977,12 @@ export default function AccommodationsAdmin() {
                               className="text-black/60 hover:text-black font-medium"
                             >
                               Edit
+                            </button>
+                            <button
+                              onClick={() => deleteRoom(r)}
+                              className="ml-3 text-red-500 hover:text-red-700 font-medium"
+                            >
+                              Delete
                             </button>
                           </td>
                         </tr>
@@ -1366,15 +1432,28 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
     const map = new Map<string, number>();
     let idx = 1;
     for (const g of fullGroupedData.groups) {
-      for (const r of g.records) {
-        map.set(r.id, idx++);
+      const pEntries = groupRecordsByParticipant(g.records);
+      for (const e of pEntries) {
+        map.set(e.participantId, idx++);
       }
     }
-    for (const r of fullGroupedData.standalone) {
-      map.set(r.id, idx++);
+    const sEntries = groupRecordsByParticipant(fullGroupedData.standalone);
+    for (const e of sEntries) {
+      map.set(e.participantId, idx++);
     }
     return map;
   }, [fullGroupedData]);
+
+  const toggleParticipantSelection = (entry: ParticipantAccommodationEntry) => {
+    const next = new Set(selectedIds);
+    const allSelected = entry.records.every(r => next.has(r.id));
+    if (allSelected) {
+      entry.records.forEach(r => next.delete(r.id));
+    } else {
+      entry.records.forEach(r => next.add(r.id));
+    }
+    setSelectedIds(next);
+  };
 
   const toggleSelection = (id: string) => {
     const next = new Set(selectedIds);
@@ -1461,10 +1540,11 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
     }
   };
 
-  const handleDeleteAccommodation = async (acc: AccommodationRecord) => {
+  const handleDeleteAccommodation = async (acc: AccommodationRecord, allRecords?: AccommodationRecord[]) => {
     const participantName = acc.participants?.name || "this participant";
+    const targets = allRecords && allRecords.length > 1 ? allRecords : [acc];
     const confirmed = window.confirm(
-      `Are you sure you want to PERMANENTLY DELETE the accommodation for ${participantName}?\n\nThis will release any room allocation and completely remove this accommodation record. This action cannot be undone.`
+      `Are you sure you want to PERMANENTLY DELETE accommodation (${targets.length} order(s)) for ${participantName}?\n\nThis will release any room allocation and completely remove the accommodation record(s). This action cannot be undone.`
     );
     if (!confirmed) return;
 
@@ -1473,14 +1553,16 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
     setActionError(null);
 
     try {
-      const res = await fetch(`/api/admin/accommodations?id=${encodeURIComponent(acc.id)}`, {
-        method: "DELETE",
-      });
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(payload?.error?.message || payload?.error || "Failed to delete accommodation record.");
+      for (const target of targets) {
+        const res = await fetch(`/api/admin/accommodations?id=${encodeURIComponent(target.id)}`, {
+          method: "DELETE",
+        });
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+          throw new Error(payload?.error?.message || payload?.error || "Failed to delete accommodation record.");
+        }
       }
-      setActionMessage(`Accommodation record for ${participantName} was deleted successfully.`);
+      setActionMessage(`Accommodation record(s) for ${participantName} deleted successfully.`);
       onRefresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to delete accommodation record.";
@@ -1559,39 +1641,42 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
       "Payment Status", "Accommodation Status", "Hostel", "Floor", "Room",
       "Allocation Status", "Checked In", "Checked In At", "Checked Out", "Checked Out At"
     ];
-    const rows = filtered.map((acc, idx) => {
-      const plan = data.plans.find(p => p.id === acc.accommodation_plan_id);
-      const hostel = data.hostels.find(h => h.id === acc.hostel_id);
-      const room = data.rooms.find(r => r.id === acc.room_id);
+    const exportEntries = groupRecordsByParticipant(filtered);
+    const rows = exportEntries.map((entry, idx) => {
+      const planNames = entry.records
+        .map(r => data.plans.find(p => p.id === r.accommodation_plan_id)?.name || "Plan")
+        .join(" + ");
+      const stayDetails = entry.records.map(r => getAccommodationStayLabel(r)).join(" | ");
+      const hostel = data.hostels.find(h => h.id === entry.assignedHostelId);
+      const room = data.rooms.find(r => r.id === entry.assignedRoomId);
       const floor = room ? data.floors.find(f => f.id === room.floor_id) : null;
-      
-      const allocStatus = !acc.room_id ? "Awaiting Allocation" : "Allocated";
-      
+      const allocStatus = !entry.assignedRoomId ? "Awaiting Allocation" : entry.isPartiallyAllocated ? "Partially Allocated" : "Allocated";
+
       return [
         idx + 1,
-        acc.participants?.participant_id || "",
-        `"${(acc.participants?.name || "").replace(/"/g, '""')}"`,
-        acc.participants?.is_faculty ? "Faculty" : "Participant",
-        `"${(acc.participants?.email || "").replace(/"/g, '""')}"`,
-        acc.participants?.gender || "",
-        `"${(acc.participants?.state || "").replace(/"/g, '""')}"`,
-        `"${(plan?.name || "").replace(/"/g, '""')}"`,
-        `"${getAccommodationStayLabel(acc)}"`,
-        acc.start_date || "",
-        acc.end_date || "",
-        acc.duration_days,
-        acc.amount,
-        acc.currency,
-        acc.status,
-        acc.checked_out ? "Checked Out" : acc.checked_in ? "Checked In" : acc.room_id ? "Allocated" : "Awaiting Allocation",
+        entry.participantCode,
+        `"${entry.name.replace(/"/g, '""')}"`,
+        entry.isFaculty ? "Faculty" : "Participant",
+        `"${entry.email.replace(/"/g, '""')}"`,
+        entry.gender || "",
+        `"${entry.state.replace(/"/g, '""')}"`,
+        `"${planNames.replace(/"/g, '""')}"`,
+        `"${stayDetails.replace(/"/g, '""')}"`,
+        entry.records[0]?.start_date || "",
+        entry.records[entry.records.length - 1]?.end_date || "",
+        entry.records.reduce((sum, r) => sum + (r.duration_days || 0), 0),
+        entry.totalAmount,
+        entry.primaryRecord.currency,
+        entry.allPaid ? "paid" : entry.hasPaid ? "partial" : "pending",
+        entry.isCheckedOut ? "Checked Out" : entry.isCheckedIn ? "Checked In" : entry.assignedRoomId ? "Allocated" : "Awaiting Allocation",
         `"${(hostel?.name || "").replace(/"/g, '""')}"`,
         floor ? floor.floor_number : "",
         `"${(room?.room_number || "").replace(/"/g, '""')}"`,
         allocStatus,
-        acc.checked_in ? "Yes" : "No",
-        acc.checked_in_at ? new Date(acc.checked_in_at).toLocaleString() : "",
-        acc.checked_out ? "Yes" : "No",
-        acc.checked_out_at ? new Date(acc.checked_out_at).toLocaleString() : ""
+        entry.isCheckedIn ? "Yes" : "No",
+        entry.primaryRecord.checked_in_at ? new Date(entry.primaryRecord.checked_in_at).toLocaleString() : "",
+        entry.isCheckedOut ? "Yes" : "No",
+        entry.primaryRecord.checked_out_at ? new Date(entry.primaryRecord.checked_out_at).toLocaleString() : ""
       ];
     });
     
@@ -1606,19 +1691,21 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
     document.body.removeChild(link);
   };
 
-  const renderRow = (acc: AccommodationRecord, isGroupMember: boolean) => {
-    const plan = data.plans.find(p => p.id === acc.accommodation_plan_id);
-    const hostel = data.hostels.find(h => h.id === acc.hostel_id);
-    const room = data.rooms.find(r => r.id === acc.room_id);
+  const renderParticipantRow = (entry: ParticipantAccommodationEntry, isGroupMember: boolean) => {
+    const primaryAcc = entry.primaryRecord;
+    const plan = data.plans.find(p => p.id === primaryAcc.accommodation_plan_id);
+    const hostel = data.hostels.find(h => h.id === entry.assignedHostelId);
+    const room = data.rooms.find(r => r.id === entry.assignedRoomId);
     const floor = room ? data.floors.find(f => f.id === room.floor_id) : null;
 
-    const canReallocate = acc.status === "paid" && !!acc.room_id && !acc.checked_out;
-    const serialNo = serialNumberMap.get(acc.id) ?? 1;
+    const serialNo = serialNumberMap.get(entry.participantId) ?? 1;
+    const isSelected = entry.records.some(r => selectedIds.has(r.id));
+    const isIndeterminate = !isSelected && entry.records.some(r => selectedIds.has(r.id));
 
     return (
       <tr
-        key={acc.id}
-        id={`row-${acc.id}`}
+        key={entry.participantId}
+        id={`row-${primaryAcc.id}`}
         className={`border-b border-black/5 last:border-0 hover:bg-black/[0.02] transition-colors ${
           isGroupMember ? "bg-indigo-50/[0.03] border-l-4 border-l-indigo-300/40" : ""
         }`}
@@ -1626,19 +1713,27 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
         <td className="py-4 pr-2 pl-4">
           <input
             type="checkbox"
-            checked={selectedIds.has(acc.id)}
-            onChange={() => toggleSelection(acc.id)}
+            checked={isSelected}
+            onChange={() => toggleParticipantSelection(entry)}
+            ref={el => {
+              if (el) el.indeterminate = isIndeterminate;
+            }}
             className="rounded border-black/20 cursor-pointer"
           />
         </td>
         <td className="py-4 pr-4 font-mono text-xs text-black/60">{serialNo}</td>
-        <td className="py-4 pr-4 font-mono text-xs text-black/60">{acc.participants?.participant_id}</td>
+        <td className="py-4 pr-4 font-mono text-xs text-black/60">{entry.participantCode}</td>
         <td className="py-4 px-4 font-medium text-black">
-          {acc.participants?.name}
-          <div className="text-xs text-black/50 font-normal">{data?.role === "master" ? acc.participants?.email : maskEmail(acc.participants?.email || "")}</div>
+          {entry.name}
+          <div className="text-xs text-black/50 font-normal">
+            {data?.role === "master" ? entry.email : maskEmail(entry.email || "")}
+          </div>
+          {entry.phone && (
+            <div className="text-[11px] text-black/40 font-mono mt-0.5">{entry.phone}</div>
+          )}
         </td>
         <td className="py-4 px-4 font-medium text-black">
-          {acc.participants?.is_faculty ? (
+          {entry.isFaculty ? (
             <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-orange-50 text-orange-700 border border-orange-200">
               Faculty
             </span>
@@ -1649,46 +1744,101 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
           )}
         </td>
         <td className="py-4 px-4 uppercase text-xs">
-          {acc.participants?.gender || "—"}<br/>
-          <span className="text-black/50">{acc.participants?.state || "—"}</span>
+          {entry.gender || "—"}<br/>
+          <span className="text-black/50">{entry.state || "—"}</span>
         </td>
         <td className="py-4 px-4 text-black">
-          <div className="font-medium text-xs sm:text-sm">{plan?.name || "Unknown"}</div>
-          <div className="text-[11px] font-mono text-black/50 mt-0.5">
-            {renderAccommodationStayBadge(acc)}
-          </div>
+          {entry.isMultiOrder ? (
+            <div>
+              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 mb-1">
+                {entry.totalOrders} Plans • Combined Stay
+              </span>
+              <div className="flex flex-col gap-1 mt-0.5">
+                {entry.records.map((r, rIdx) => {
+                  const p = data.plans.find(pl => pl.id === r.accommodation_plan_id);
+                  return (
+                    <div key={r.id} className="text-xs flex items-center gap-1.5 font-mono">
+                      <span className="font-semibold text-black/90">
+                        {p?.name || `Plan ${rIdx + 1}`}
+                      </span>
+                      <span className="text-black/50 text-[11px]">
+                        ({r.start_date} to {r.end_date})
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="font-medium text-xs sm:text-sm">{plan?.name || "Unknown"}</div>
+              <div className="text-[11px] font-mono text-black/50 mt-0.5">
+                {renderAccommodationStayBadge(primaryAcc)}
+              </div>
+            </div>
+          )}
         </td>
-        <td className="py-4 px-4 uppercase text-xs font-semibold text-black">{acc.status}</td>
         <td className="py-4 px-4">
-          {acc.status !== "paid" ? (
-            <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-red-50 text-red-700 border border-red-200">
-              Payment Pending
-            </span>
-          ) : acc.checked_out ? (
+          {entry.isMultiOrder ? (
+            <div>
+              {entry.allPaid ? (
+                <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  Paid ({entry.totalOrders} Plans • ₹{entry.totalAmount})
+                </span>
+              ) : entry.hasPaid ? (
+                <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                  Partial: {entry.records.filter(r => r.status === "paid").length}/{entry.totalOrders} Paid
+                </span>
+              ) : (
+                <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-red-50 text-red-700 border border-red-200">
+                  Payment Pending
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="uppercase text-xs font-semibold text-black">
+              {primaryAcc.status === "paid" ? (
+                <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  PAID (₹{primaryAcc.amount})
+                </span>
+              ) : (
+                <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-red-50 text-red-700 border border-red-200">
+                  {primaryAcc.status}
+                </span>
+              )}
+            </div>
+          )}
+        </td>
+        <td className="py-4 px-4">
+          {entry.isCheckedOut ? (
             <div>
               <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
                 Checked Out
               </span>
-              {acc.checked_out_at && (
+              {primaryAcc.checked_out_at && (
                 <div className="text-[10px] text-black/40 mt-1 font-mono">
-                  {new Date(acc.checked_out_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                  {new Date(primaryAcc.checked_out_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
                 </div>
               )}
             </div>
-          ) : acc.checked_in ? (
+          ) : entry.isCheckedIn ? (
             <div>
               <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
                 Checked In
               </span>
-              {acc.checked_in_at && (
+              {primaryAcc.checked_in_at && (
                 <div className="text-[10px] text-black/40 mt-1 font-mono">
-                  {new Date(acc.checked_in_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                  {new Date(primaryAcc.checked_in_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
                 </div>
               )}
             </div>
-          ) : acc.room_id ? (
+          ) : entry.isAllocated ? (
             <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
               Allocated
+            </span>
+          ) : entry.isPartiallyAllocated ? (
+            <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+              Partially Allocated
             </span>
           ) : (
             <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-600 border border-gray-200">
@@ -1709,54 +1859,54 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
             {/* View Participant Details Action */}
             <button
               type="button"
-              id={`btn-view-${acc.id}`}
-              onClick={() => setSelectedParticipantForDetail(acc)}
+              id={`btn-view-${primaryAcc.id}`}
+              onClick={() => setSelectedParticipantForDetail(primaryAcc)}
               className="p-1.5 text-black/60 hover:text-black hover:bg-black/5 rounded-full transition focus:outline-none focus:ring-2 focus:ring-black/20"
-              title="View participant details"
+              title="View participant details and all orders"
               aria-label="View participant details"
             >
               <Eye size={16} />
             </button>
 
-            {acc.status !== "paid" ? (
+            {!entry.hasPaid ? (
               <span className="text-xs text-black/40 italic">Payment Pending</span>
-            ) : !acc.room_id ? (
+            ) : !entry.isAllocated ? (
               <button
-                onClick={() => setAllocatingAcc(acc)}
+                onClick={() => setAllocatingAcc(primaryAcc)}
                 className="px-3 py-1.5 bg-black text-white rounded-full text-xs font-medium hover:bg-black/80 transition"
               >
                 Allocate
               </button>
-            ) : !acc.checked_in ? (
+            ) : !entry.isCheckedIn ? (
               <>
                 <button
-                  onClick={() => handleCheckIn(acc)}
-                  disabled={actionLoadingId === acc.id}
+                  onClick={() => handleCheckIn(primaryAcc)}
+                  disabled={actionLoadingId === primaryAcc.id}
                   className="px-3 py-1.5 bg-emerald-600 text-white rounded-full text-xs font-medium hover:bg-emerald-700 transition disabled:opacity-50"
                 >
-                  {actionLoadingId === acc.id ? "Processing..." : "Check In"}
+                  {actionLoadingId === primaryAcc.id ? "Processing..." : "Check In"}
                 </button>
-                {canReallocate && (
+                {entry.canReallocate && (
                   <button
-                    onClick={() => setAllocatingAcc(acc)}
+                    onClick={() => setAllocatingAcc(primaryAcc)}
                     className="px-3 py-1.5 border border-black/20 text-black rounded-full text-xs font-medium hover:bg-black/5 transition"
                   >
                     Reallocate
                   </button>
                 )}
               </>
-            ) : !acc.checked_out ? (
+            ) : !entry.isCheckedOut ? (
               <>
                 <button
-                  onClick={() => handleCheckOut(acc)}
-                  disabled={actionLoadingId === acc.id}
+                  onClick={() => handleCheckOut(primaryAcc)}
+                  disabled={actionLoadingId === primaryAcc.id}
                   className="px-3 py-1.5 bg-black text-white rounded-full text-xs font-medium hover:bg-black/80 transition disabled:opacity-50"
                 >
-                  {actionLoadingId === acc.id ? "Processing..." : "Check Out"}
+                  {actionLoadingId === primaryAcc.id ? "Processing..." : "Check Out"}
                 </button>
-                {canReallocate && (
+                {entry.canReallocate && (
                   <button
-                    onClick={() => setAllocatingAcc(acc)}
+                    onClick={() => setAllocatingAcc(primaryAcc)}
                     className="px-3 py-1.5 border border-black/20 text-black rounded-full text-xs font-medium hover:bg-black/5 transition"
                   >
                     Reallocate
@@ -1767,19 +1917,19 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
               <span className="text-xs font-medium text-purple-700">Checked Out</span>
             )}
             <button
-              onClick={() => setHistoryAcc(acc)}
+              onClick={() => setHistoryAcc(primaryAcc)}
               className="ml-0.5 p-1.5 text-black/40 hover:text-black transition"
               title="History"
             >
               <History size={16} />
             </button>
             <button
-              onClick={() => handleDeleteAccommodation(acc)}
-              disabled={deletingId === acc.id || actionLoadingId === acc.id}
+              onClick={() => handleDeleteAccommodation(primaryAcc, entry.records)}
+              disabled={deletingId === primaryAcc.id || actionLoadingId === primaryAcc.id}
               className="p-1.5 text-black/40 hover:text-red-600 transition disabled:opacity-50"
-              title="Delete Accommodation Permanently"
+              title="Delete Accommodation"
             >
-              {deletingId === acc.id ? (
+              {deletingId === primaryAcc.id ? (
                 <RefreshCw size={16} className="animate-spin text-red-500" />
               ) : (
                 <Trash2 size={16} />
@@ -2061,7 +2211,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
                       id={controlsId}
                       className={isCollapsed ? "hidden" : ""}
                     >
-                      {group.records.map((acc) => renderRow(acc, true))}
+                      {groupRecordsByParticipant(group.records).map((entry) => renderParticipantRow(entry, true))}
                     </tbody>
                   </Fragment>
                 );
@@ -2077,7 +2227,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
                       </td>
                     </tr>
                   )}
-                  {groupedData.standalone.map((acc) => renderRow(acc, false))}
+                  {groupRecordsByParticipant(groupedData.standalone).map((entry) => renderParticipantRow(entry, false))}
                 </tbody>
               )}
             </>

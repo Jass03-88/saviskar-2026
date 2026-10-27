@@ -1,20 +1,16 @@
 -- ==============================================================================
 -- Saviskar 2026: Phase 2 Temporary Registration-Form Lock Migration
 -- Migration: 20261027010000_registration_lock_atomic_guard.sql
+-- Status: IN REVIEW / PENDING DEPLOYMENT VALIDATION (PR #27)
 --
 -- Extends the Site Page Access & Lock Control architecture with:
 -- 1. Dual Advisory Locking in update_site_page_locks for both
 --    ACCOMMODATION_ENABLED and REGISTRATION_ENABLED.
--- 2. Index coverage on admin_audit_logs for instant lock lookups.
--- 3. Atomic transaction boundary for admin lock transitions.
+-- 2. Atomic transaction boundary for admin lock transitions.
+-- Note: idx_admin_audit_logs_site_page_locks is provisioned in 20261027000000.
 -- ==============================================================================
 
--- 1. Ensure lookup index exists for site page lock audit records
-CREATE INDEX IF NOT EXISTS "idx_admin_audit_logs_site_page_locks"
-ON "public"."admin_audit_logs" ("action_type", "created_at" DESC)
-WHERE "action_type" = 'SITE_PAGE_LOCKS_UPDATE';
-
--- 2. Atomic Site Page Lock Update RPC with Dual Advisory Locking
+-- Atomic Site Page Lock Update RPC with Dual Advisory Locking
 CREATE OR REPLACE FUNCTION "public"."update_site_page_locks"(
     "p_admin_id" uuid,
     "p_target_id" uuid,

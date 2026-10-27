@@ -32,6 +32,7 @@
   ],
   "exclude": [
     "node_modules",
+    "scratch",
     ".next/cache",
     ".next/dev/cache",
     ".next/server",

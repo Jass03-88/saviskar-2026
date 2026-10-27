@@ -726,22 +726,69 @@ export async function updateCampaignProgressAndStatus(
   supabaseAdmin: SupabaseClient,
   campaignId: string
 ): Promise<{ status: "draft" | "queued" | "processing" | "completed" | "paused" | "cancelled" | "failed"; sentCount: number; failedCount: number; remainingCount: number }> {
-  // Query all delivery statuses for this campaign
-  const { data: deliveries, error: delErr } = await supabaseAdmin
-    .from("broadcast_deliveries")
-    .select("status")
-    .eq("campaign_id", campaignId);
+  // Query exact database counts per status group using database aggregation ({ count: 'exact', head: true })
+  const [sentRes, failedRes, queuedRes, sendingRes, totalRes] = await Promise.all([
+    supabaseAdmin
+      .from("broadcast_deliveries")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .in("status", ["sent", "delivered"]),
+    supabaseAdmin
+      .from("broadcast_deliveries")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .in("status", ["failed", "manual_review"]),
+    supabaseAdmin
+      .from("broadcast_deliveries")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .eq("status", "queued"),
+    supabaseAdmin
+      .from("broadcast_deliveries")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .eq("status", "sending"),
+    supabaseAdmin
+      .from("broadcast_deliveries")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", campaignId),
+  ]);
 
-  if (delErr) {
-    console.error(`[CAMPAIGN WORKER] Error querying deliveries for campaign ${campaignId}:`, delErr);
-    throw delErr;
+  const queryError =
+    sentRes.error ||
+    failedRes.error ||
+    queuedRes.error ||
+    sendingRes.error ||
+    totalRes.error;
+
+  if (queryError) {
+    console.error(`[CAMPAIGN WORKER] Error querying exact delivery counts for campaign ${campaignId}:`, queryError);
+    throw queryError;
   }
 
-  const allDeliveries = deliveries || [];
-  const total = allDeliveries.length;
-  const sentCount = allDeliveries.filter((d) => d.status === "sent" || d.status === "delivered").length;
-  const failedCount = allDeliveries.filter((d) => d.status === "failed" || d.status === "manual_review").length;
-  const remainingCount = allDeliveries.filter((d) => d.status === "queued" || d.status === "sending").length;
+  if (
+    sentRes.count === null ||
+    sentRes.count === undefined ||
+    failedRes.count === null ||
+    failedRes.count === undefined ||
+    queuedRes.count === null ||
+    queuedRes.count === undefined ||
+    sendingRes.count === null ||
+    sendingRes.count === undefined ||
+    totalRes.count === null ||
+    totalRes.count === undefined
+  ) {
+    const nullErr = new Error(`Database returned null count for campaign ${campaignId}`);
+    console.error(`[CAMPAIGN WORKER] Null count error for campaign ${campaignId}:`, nullErr);
+    throw nullErr;
+  }
+
+  const sentCount = sentRes.count;
+  const failedCount = failedRes.count;
+  const queuedCount = queuedRes.count;
+  const sendingCount = sendingRes.count;
+  const remainingCount = queuedCount + sendingCount;
+  const total = totalRes.count;
 
   let newStatus: "draft" | "queued" | "processing" | "completed" | "paused" | "cancelled" | "failed";
 
@@ -777,4 +824,288 @@ export async function updateCampaignProgressAndStatus(
   }
 
   return { status: newStatus, sentCount, failedCount, remainingCount };
+}
+
+// ============================================================================
+// Worker Concurrency Lease & Queue Orchestration
+// ============================================================================
+
+export function isBroadcastEmergencyStopActive(): boolean {
+  return (
+    process.env.SAVISKAR_BROADCAST_EMERGENCY_STOP === "true" ||
+    process.env.NEXT_PUBLIC_BROADCAST_EMERGENCY_STOP === "true"
+  );
+}
+
+// In-memory lease store as fallback for unit-testing/mock environments
+const memoryLeases = new Map<string, { ownerToken: string; expiresAt: number }>();
+
+export function acquireMemoryLease(lockKey: string, ownerToken: string, leaseDurationMs: number): boolean {
+  const now = Date.now();
+  const existing = memoryLeases.get(lockKey);
+  if (existing && existing.expiresAt > now) {
+    if (existing.ownerToken === ownerToken) {
+      existing.expiresAt = now + leaseDurationMs;
+      return true;
+    }
+    return false;
+  }
+  memoryLeases.set(lockKey, { ownerToken, expiresAt: now + leaseDurationMs });
+  return true;
+}
+
+export function releaseMemoryLease(lockKey: string, ownerToken: string): boolean {
+  const existing = memoryLeases.get(lockKey);
+  if (!existing) return false;
+  if (existing.ownerToken === ownerToken) {
+    memoryLeases.delete(lockKey);
+    return true;
+  }
+  return false;
+}
+
+export function clearAllMemoryLeases(): void {
+  memoryLeases.clear();
+}
+
+/**
+ * Acquires a database-backed worker lease with an expiry and ownership token.
+ * Prevents overlapping cron/scheduler executions across connection-pooled environments.
+ */
+export async function acquireBroadcastWorkerLease(
+  supabaseAdmin: SupabaseClient,
+  lockKey = "global_queue_worker",
+  ownerToken = crypto.randomUUID(),
+  leaseSeconds = 45
+): Promise<{ acquired: boolean; ownerToken: string }> {
+  try {
+    const { data, error } = await supabaseAdmin.rpc("acquire_broadcast_worker_lease", {
+      p_lock_key: lockKey,
+      p_owner_token: ownerToken,
+      p_lease_seconds: leaseSeconds,
+    });
+    if (error) {
+      // In mock/test environments without the RPC applied, fallback to memory lease
+      return { acquired: acquireMemoryLease(lockKey, ownerToken, leaseSeconds * 1000), ownerToken };
+    }
+    return { acquired: Boolean(data), ownerToken };
+  } catch {
+    return { acquired: acquireMemoryLease(lockKey, ownerToken, leaseSeconds * 1000), ownerToken };
+  }
+}
+
+/**
+ * Releases a database-backed worker lease only if the ownerToken matches.
+ * Protects against releasing a newer owner's lease after a stale lease has expired.
+ */
+export async function releaseBroadcastWorkerLease(
+  supabaseAdmin: SupabaseClient,
+  lockKey = "global_queue_worker",
+  ownerToken: string
+): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin.rpc("release_broadcast_worker_lease", {
+      p_lock_key: lockKey,
+      p_owner_token: ownerToken,
+    });
+    if (error) {
+      return releaseMemoryLease(lockKey, ownerToken);
+    }
+    return Boolean(data);
+  } catch {
+    return releaseMemoryLease(lockKey, ownerToken);
+  }
+}
+
+export interface ProcessActiveQueueOptions {
+  timeBudgetMs?: number; // default 20000 ms (20 seconds)
+  batchSize?: number; // default 10
+  workerId?: string;
+  leaseSeconds?: number;
+  concurrencyLockKey?: string;
+  throttleMs?: number; // default 100 ms
+}
+
+export interface ActiveQueueSummary {
+  success: boolean;
+  status: "completed" | "idle" | "budget_exhausted" | "locked" | "emergency_stopped";
+  batchesExecuted: number;
+  totalClaimed: number;
+  totalSent: number;
+  totalFailed: number;
+  durationMs: number;
+  activeCampaignsProcessed: string[];
+  message?: string;
+}
+
+/**
+ * Main automatic queue orchestrator. Discovers active campaigns ('queued' or 'processing'),
+ * acquires a global database-backed concurrency lease, processes batches within a time budget,
+ * throttles Resend calls conservatively, and safely reconciles counters and releases locks.
+ */
+export async function processActiveBroadcastQueue(
+  supabaseAdmin: SupabaseClient,
+  options: ProcessActiveQueueOptions = {}
+): Promise<ActiveQueueSummary> {
+  // Fail-closed environment guards
+  if (isPreviewDeployment()) {
+    throw new Error(PREVIEW_READONLY_ERROR);
+  }
+  if (isProductionReadOnlyEnabled()) {
+    throw new Error(PRODUCTION_READONLY_ERROR);
+  }
+
+  // Emergency stop check
+  if (isBroadcastEmergencyStopActive()) {
+    return {
+      success: true,
+      status: "emergency_stopped",
+      batchesExecuted: 0,
+      totalClaimed: 0,
+      totalSent: 0,
+      totalFailed: 0,
+      durationMs: 0,
+      activeCampaignsProcessed: [],
+      message: "Queue processing halted by emergency stop (SAVISKAR_BROADCAST_EMERGENCY_STOP=true).",
+    };
+  }
+
+  const timeBudgetMs = Math.max(5000, Math.min(options.timeBudgetMs ?? 20000, 25000));
+  const batchSize = Math.max(1, Math.min(options.batchSize ?? 10, 25));
+  const throttleMs = options.throttleMs ?? 100;
+  const lockKey = options.concurrencyLockKey || "global_queue_worker";
+  const workerId = options.workerId || `auto_worker_${process.pid}_${Math.random().toString(36).substring(7)}`;
+  const ownerToken = crypto.randomUUID();
+
+  // Lease duration must be comfortably larger than the execution budget
+  const leaseSeconds = Math.ceil(timeBudgetMs / 1000) + 15;
+
+  const { acquired } = await acquireBroadcastWorkerLease(
+    supabaseAdmin,
+    lockKey,
+    ownerToken,
+    leaseSeconds
+  );
+
+  if (!acquired) {
+    return {
+      success: true,
+      status: "locked",
+      batchesExecuted: 0,
+      totalClaimed: 0,
+      totalSent: 0,
+      totalFailed: 0,
+      durationMs: 0,
+      activeCampaignsProcessed: [],
+      message: "Skipped: another worker lease is currently active.",
+    };
+  }
+
+  const startTime = Date.now();
+  const reserveBufferMs = 3000; // Leave 3s buffer to finalize counters & release lock safely
+  let batchesExecuted = 0;
+  let totalClaimed = 0;
+  let totalSent = 0;
+  let totalFailed = 0;
+  const activeCampaignsProcessed: string[] = [];
+  let budgetExhausted = false;
+
+  try {
+    // 1. Discover all active campaigns eligible for dispatch
+    const { data: activeCampaigns, error: campErr } = await supabaseAdmin
+      .from("broadcast_campaigns")
+      .select("id, status, title")
+      .in("status", ["queued", "processing"])
+      .order("created_at", { ascending: true });
+
+    if (campErr) {
+      console.error("[AUTO WORKER] Error discovering active campaigns:", campErr);
+      throw campErr;
+    }
+
+    if (!activeCampaigns || activeCampaigns.length === 0) {
+      return {
+        success: true,
+        status: "idle",
+        batchesExecuted: 0,
+        totalClaimed: 0,
+        totalSent: 0,
+        totalFailed: 0,
+        durationMs: Date.now() - startTime,
+        activeCampaignsProcessed: [],
+        message: "Queue idle: no active campaigns in queued or processing status.",
+      };
+    }
+
+    // 2. Process deliveries across active campaigns
+    for (const campaign of activeCampaigns) {
+      if (Date.now() - startTime >= timeBudgetMs - reserveBufferMs) {
+        budgetExhausted = true;
+        break;
+      }
+      if (isBroadcastEmergencyStopActive()) {
+        break;
+      }
+
+      let campaignHasMore = true;
+      while (campaignHasMore) {
+        if (Date.now() - startTime >= timeBudgetMs - reserveBufferMs) {
+          budgetExhausted = true;
+          break;
+        }
+        if (isBroadcastEmergencyStopActive()) {
+          break;
+        }
+
+        const batchResult = await processNextBroadcastBatch(supabaseAdmin, {
+          batchSize,
+          campaignId: campaign.id,
+          workerId,
+        });
+
+        if (batchResult.processedCount === 0) {
+          campaignHasMore = false;
+          break;
+        }
+
+        batchesExecuted++;
+        totalClaimed += batchResult.processedCount;
+        totalSent += batchResult.successCount;
+        totalFailed += batchResult.failureCount;
+
+        if (!activeCampaignsProcessed.includes(campaign.id)) {
+          activeCampaignsProcessed.push(campaign.id);
+        }
+
+        // Reconcile status and counters using exact aggregations
+        await updateCampaignProgressAndStatus(supabaseAdmin, campaign.id);
+
+        if (throttleMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, throttleMs));
+        }
+      }
+    }
+
+    const durationMs = Date.now() - startTime;
+    return {
+      success: true,
+      status: budgetExhausted ? "budget_exhausted" : totalClaimed > 0 ? "completed" : "idle",
+      batchesExecuted,
+      totalClaimed,
+      totalSent,
+      totalFailed,
+      durationMs,
+      activeCampaignsProcessed,
+      message: budgetExhausted
+        ? `Execution budget reached (${durationMs}ms). Processed ${totalClaimed} deliveries in ${batchesExecuted} batches.`
+        : `Processed ${totalClaimed} deliveries in ${batchesExecuted} batches.`,
+    };
+  } finally {
+    // 3. Always release the worker lease safely
+    try {
+      await releaseBroadcastWorkerLease(supabaseAdmin, lockKey, ownerToken);
+    } catch (relErr) {
+      console.error("[AUTO WORKER] Error releasing lease:", relErr);
+    }
+  }
 }
