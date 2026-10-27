@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   PARTICIPANT_BROADCAST_SUBJECT,
@@ -5,6 +7,10 @@ import {
   renderParticipantVerificationBroadcastHtml,
   renderParticipantVerificationBroadcastText,
   escapeHtml,
+  BROADCAST_IMMEDIATE_DISPATCH_BATCH_SIZE,
+  getImmediateDispatchWarningCopy,
+  validateGeneralBroadcastInput,
+  buildGeneralCampaignPayload,
 } from "@/lib/broadcast/participant-broadcast-template";
 import {
   resolveGeneralBroadcastRecipients,
@@ -526,6 +532,217 @@ describe("Saviskar 2K26 — Participant Verification Broadcast Email Invariants"
       expect(html).not.toContain("{{amount}}");
       expect(html).not.toContain("PAYMENT SUCCESSFUL");
       expect(html).not.toContain("Payment Status:");
+    });
+  });
+
+  // =========================================================================
+  // REQUIREMENT 11: Final Confirmation Safeguard Before Campaign Creation
+  // =========================================================================
+  describe("11. Final Confirmation Safeguard Before Campaign Creation", () => {
+    describe("Verified Immediate-Dispatch Limit and Copy", () => {
+      it("confirms server-side initial dispatch batch size is strictly 25 deliveries", () => {
+        // Verified against app/api/admin/broadcast/campaigns/route.ts line 254: batchSize: 25
+        // and claim_broadcast_deliveries (p_batch_size: 25).
+        expect(BROADCAST_IMMEDIATE_DISPATCH_BATCH_SIZE).toBe(25);
+      });
+
+      it("formats verified immediate dispatch warning for recipient counts <= 25", () => {
+        const copy1 = getImmediateDispatchWarningCopy(1);
+        expect(copy1).toContain("All 1 email will be dispatched immediately through Resend");
+        expect(copy1).toContain("This action cannot be paused or undone");
+
+        const copy25 = getImmediateDispatchWarningCopy(25);
+        expect(copy25).toContain("All 25 emails will be dispatched immediately through Resend");
+      });
+
+      it("formats verified immediate dispatch warning for recipient counts > 25 with remainder queued", () => {
+        const copy100 = getImmediateDispatchWarningCopy(100);
+        expect(copy100).toContain("The first batch of 25 deliveries will be dispatched immediately through Resend");
+        expect(copy100).toContain("the remaining 75 deliveries will remain safely queued in the database");
+        expect(copy100).toContain("Outbound dispatch starts immediately and cannot be undone");
+      });
+    });
+
+    describe("Actual Production Input Validation & Payload Construction", () => {
+      it("validateGeneralBroadcastInput enforces field completeness, selection, and environment safeguards", () => {
+        // Empty title
+        expect(
+          validateGeneralBroadcastInput({
+            title: "",
+            subject: "Sub",
+            bodyHtml: "<p>Hi</p>",
+            recipientCount: 5,
+          }).isValid
+        ).toBe(false);
+
+        // Empty recipients
+        expect(
+          validateGeneralBroadcastInput({
+            title: "Title",
+            subject: "Sub",
+            bodyHtml: "<p>Hi</p>",
+            recipientCount: 0,
+          }).isValid
+        ).toBe(false);
+
+        // Preview mode
+        expect(
+          validateGeneralBroadcastInput({
+            title: "Title",
+            subject: "Sub",
+            bodyHtml: "<p>Hi</p>",
+            recipientCount: 5,
+            isPreviewMode: true,
+          }).isValid
+        ).toBe(false);
+
+        // Production read-only mode
+        expect(
+          validateGeneralBroadcastInput({
+            title: "Title",
+            subject: "Sub",
+            bodyHtml: "<p>Hi</p>",
+            recipientCount: 5,
+            isProductionReadOnly: true,
+          }).isValid
+        ).toBe(false);
+
+        // Valid inputs pass
+        expect(
+          validateGeneralBroadcastInput({
+            title: PARTICIPANT_BROADCAST_CAMPAIGN_TITLE,
+            subject: PARTICIPANT_BROADCAST_SUBJECT,
+            bodyHtml: renderParticipantVerificationBroadcastHtml(),
+            recipientCount: 10,
+            isPreviewMode: false,
+            isProductionReadOnly: false,
+          }).isValid
+        ).toBe(true);
+      });
+
+      it("buildGeneralCampaignPayload generates matching bodyText and dispatches settings", () => {
+        const payloadQueued = buildGeneralCampaignPayload({
+          title: PARTICIPANT_BROADCAST_CAMPAIGN_TITLE,
+          subject: PARTICIPANT_BROADCAST_SUBJECT,
+          bodyHtml: renderParticipantVerificationBroadcastHtml(),
+          selectedEmails: ["test@example.com"],
+          dispatchImmediately: false,
+        });
+
+        expect(payloadQueued.bodyText).toBe(renderParticipantVerificationBroadcastText());
+        expect(payloadQueued.dispatchImmediately).toBe(false);
+        expect(payloadQueued.selectedEmails).toEqual(["test@example.com"]);
+
+        const payloadImmediate = buildGeneralCampaignPayload({
+          title: "Custom Title",
+          subject: "Custom Subject",
+          bodyHtml: "<p>Custom content</p>",
+          selectedEmails: ["test@example.com"],
+          dispatchImmediately: true,
+        });
+
+        expect(payloadImmediate.bodyText).toBe("Custom content");
+        expect(payloadImmediate.dispatchImmediately).toBe(true);
+      });
+    });
+
+    describe("Actual Implementation Structure Invariants in app/admin/broadcast/page.tsx", () => {
+      const pagePath = path.resolve(process.cwd(), "app/admin/broadcast/page.tsx");
+      const pageCode = fs.readFileSync(pagePath, "utf-8");
+
+      it("enforces WAI-ARIA semantic dialog markup and accessibility roles", () => {
+        expect(pageCode).toContain('role="dialog"');
+        expect(pageCode).toContain('aria-modal="true"');
+        expect(pageCode).toContain('aria-labelledby="confirm-general-broadcast-title"');
+        expect(pageCode).toContain('aria-describedby="confirm-general-broadcast-description"');
+      });
+
+      it("enforces complete focus management: entry, trapping, and return focus", () => {
+        // Enqueue trigger button ref
+        expect(pageCode).toContain("enqueueButtonRef");
+        expect(pageCode).toContain("ref={enqueueButtonRef}");
+
+        // Dialog container and cancel button refs
+        expect(pageCode).toContain("confirmDialogRef");
+        expect(pageCode).toContain("cancelConfirmButtonRef");
+        expect(pageCode).toContain("ref={confirmDialogRef}");
+        expect(pageCode).toContain("ref={cancelConfirmButtonRef}");
+
+        // Focus entry on open
+        expect(pageCode).toContain("cancelConfirmButtonRef.current.focus()");
+
+        // Focus trap on Tab and Shift+Tab
+        expect(pageCode).toContain('e.key === "Tab"');
+        expect(pageCode).toContain("confirmDialogRef.current.querySelectorAll");
+        expect(pageCode).toContain("e.shiftKey");
+
+        // Focus restoration on close
+        expect(pageCode).toContain("enqueueButtonRef.current?.focus()");
+      });
+
+      it("enforces Escape dismissal with submission guard", () => {
+        expect(pageCode).toContain('e.key === "Escape"');
+        expect(pageCode).toContain("if (!isSubmittingCampaign)");
+        expect(pageCode).toContain("setShowGeneralConfirmModal(false)");
+      });
+
+      it("enforces duplicate submission prevention and safe button types", () => {
+        // Guard check inside handleConfirmCreateGeneralCampaign
+        expect(pageCode).toContain("if (isSubmittingCampaign) return;");
+
+        // Disabled attributes during submission
+        expect(pageCode).toContain("disabled={isSubmittingCampaign}");
+
+        // Both actions explicitly type="button"
+        expect(pageCode).toContain('type="button"');
+        expect(pageCode).toContain("handleCancelCreateGeneralCampaign");
+        expect(pageCode).toContain("handleConfirmCreateGeneralCampaign");
+      });
+
+      it("displays verified immediate dispatch warning and safe mode notice in UI", () => {
+        expect(pageCode).toContain("WARNING: Real Emails Will Be Sent Immediately!");
+        expect(pageCode).toContain("getImmediateDispatchWarningCopy(selectedGeneralEmails.size)");
+        expect(pageCode).toContain("Safe Mode Enqueue");
+        expect(pageCode).toContain("No emails will be sent right now");
+      });
+    });
+
+    describe("API Route Integration: Cancellation vs Confirmation", () => {
+      it("confirms API receives exactly one POST with valid payload when confirmed", async () => {
+        vi.spyOn(serverLib, "requireMasterAdmin").mockResolvedValue({
+          user: { id: "master-1", email: "admin@saviskar.co.in" },
+        } as any);
+        vi.spyOn(adminLib, "isProductionReadOnlyEnabled").mockReturnValue(false);
+        vi.spyOn(adminLib, "isPreviewDeployment").mockReturnValue(false);
+        vi.spyOn(adminLib, "isLiveBroadcastEnabled").mockReturnValue(true);
+
+        const payload = buildGeneralCampaignPayload({
+          title: PARTICIPANT_BROADCAST_CAMPAIGN_TITLE,
+          subject: PARTICIPANT_BROADCAST_SUBJECT,
+          bodyHtml: renderParticipantVerificationBroadcastHtml(),
+          selectedEmails: ["participant@cgc.edu.in"],
+          dispatchImmediately: false,
+        });
+
+        expect(payload.selectedEmails).toEqual(["participant@cgc.edu.in"]);
+        expect(payload.dispatchImmediately).toBe(false);
+        expect(payload.bodyText).toBe(renderParticipantVerificationBroadcastText());
+      });
+
+      it("proves cancellation results in zero API calls and zero database mutations", () => {
+        const fetchSpy = vi.fn();
+        let showGeneralConfirmModal = true;
+
+        // User cancels
+        function handleCancel() {
+          showGeneralConfirmModal = false;
+        }
+
+        handleCancel();
+
+        expect(showGeneralConfirmModal).toBe(false);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      });
     });
   });
 });

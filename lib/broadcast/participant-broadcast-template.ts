@@ -531,3 +531,96 @@ Team SAVISKAR 2K26
 CGC University, Mohali
 `;
 }
+
+/**
+ * Verified server-side initial dispatch batch size limit.
+ * Source: app/api/admin/broadcast/campaigns/route.ts (batchSize: 25)
+ * and claim_broadcast_deliveries (p_batch_size: 25).
+ * In general broadcast campaigns, 1 delivery = 1 recipient email.
+ */
+export const BROADCAST_IMMEDIATE_DISPATCH_BATCH_SIZE = 25;
+
+/**
+ * Returns precise, verified warning copy for immediate dispatch mode based on selected recipient count.
+ */
+export function getImmediateDispatchWarningCopy(recipientCount: number): string {
+  if (recipientCount <= BROADCAST_IMMEDIATE_DISPATCH_BATCH_SIZE) {
+    return `You have enabled Begin dispatch immediately upon creation. All ${recipientCount} ${
+      recipientCount === 1 ? "email" : "emails"
+    } will be dispatched immediately through Resend upon campaign creation. This action cannot be paused or undone.`;
+  }
+  const remainder = recipientCount - BROADCAST_IMMEDIATE_DISPATCH_BATCH_SIZE;
+  return `You have enabled Begin dispatch immediately upon creation. The first batch of ${BROADCAST_IMMEDIATE_DISPATCH_BATCH_SIZE} deliveries will be dispatched immediately through Resend, and the remaining ${remainder} ${
+    remainder === 1 ? "delivery" : "deliveries"
+  } will remain safely queued in the database for subsequent batch processing. Outbound dispatch starts immediately and cannot be undone.`;
+}
+
+export interface GeneralBroadcastValidationInput {
+  title: string;
+  subject: string;
+  bodyHtml: string;
+  recipientCount: number;
+  isPreviewMode?: boolean;
+  isProductionReadOnly?: boolean;
+}
+
+export interface GeneralBroadcastValidationResult {
+  isValid: boolean;
+  errorMessage?: string;
+}
+
+export function validateGeneralBroadcastInput(
+  input: GeneralBroadcastValidationInput
+): GeneralBroadcastValidationResult {
+  if (!input.title.trim() || !input.subject.trim() || !input.bodyHtml.trim()) {
+    return {
+      isValid: false,
+      errorMessage: "Please enter campaign title, subject, and message body.",
+    };
+  }
+  if (input.recipientCount === 0) {
+    return {
+      isValid: false,
+      errorMessage: "Please select at least one recipient email.",
+    };
+  }
+  if (input.isPreviewMode) {
+    return {
+      isValid: false,
+      errorMessage: "Campaign creation is disabled in Preview Mode.",
+    };
+  }
+  if (input.isProductionReadOnly) {
+    return {
+      isValid: false,
+      errorMessage: "Campaign creation is disabled in Production Read-Only Mode.",
+    };
+  }
+  return { isValid: true };
+}
+
+export interface GeneralCampaignPayloadParams {
+  title: string;
+  subject: string;
+  bodyHtml: string;
+  selectedEmails: string[];
+  dispatchImmediately: boolean;
+}
+
+export function buildGeneralCampaignPayload(params: GeneralCampaignPayloadParams) {
+  const bodyText =
+    params.title === PARTICIPANT_BROADCAST_CAMPAIGN_TITLE &&
+    params.bodyHtml === renderParticipantVerificationBroadcastHtml()
+      ? renderParticipantVerificationBroadcastText()
+      : params.bodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
+  return {
+    title: params.title.trim(),
+    subject: params.subject.trim(),
+    bodyHtml: params.bodyHtml,
+    bodyText,
+    campaignType: "general" as const,
+    selectedEmails: params.selectedEmails,
+    dispatchImmediately: params.dispatchImmediately,
+  };
+}

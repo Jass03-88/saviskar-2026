@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Mail,
@@ -18,6 +18,7 @@ import {
   ShieldAlert,
   ArrowLeft,
   ChevronRight,
+  X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -25,6 +26,10 @@ import {
   PARTICIPANT_BROADCAST_CAMPAIGN_TITLE,
   renderParticipantVerificationBroadcastHtml,
   renderParticipantVerificationBroadcastText,
+  BROADCAST_IMMEDIATE_DISPATCH_BATCH_SIZE,
+  getImmediateDispatchWarningCopy,
+  validateGeneralBroadcastInput,
+  buildGeneralCampaignPayload,
 } from "@/lib/broadcast/participant-broadcast-template";
 
 interface GeneralRecipient {
@@ -99,6 +104,10 @@ export default function AdminBroadcastPage() {
     renderParticipantVerificationBroadcastHtml()
   );
   const [showGeneralEmailPreview, setShowGeneralEmailPreview] = useState(false);
+  const [showGeneralConfirmModal, setShowGeneralConfirmModal] = useState(false);
+  const enqueueButtonRef = useRef<HTMLButtonElement | null>(null);
+  const confirmDialogRef = useRef<HTMLDivElement | null>(null);
+  const cancelConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
   const [generalRecipients, setGeneralRecipients] = useState<GeneralRecipient[]>([]);
   const [selectedGeneralEmails, setSelectedGeneralEmails] = useState<Set<string>>(new Set());
   const [generalSearch, setGeneralSearch] = useState("");
@@ -175,6 +184,64 @@ export default function AdminBroadcastPage() {
     }
     checkRole();
   }, [router]);
+
+  // Focus management, keyboard trap, and accessibility for the confirmation modal
+  useEffect(() => {
+    if (!showGeneralConfirmModal) return;
+
+    // 1. Move keyboard focus into the dialog on open (target Cancel button)
+    const focusTimer = setTimeout(() => {
+      if (cancelConfirmButtonRef.current) {
+        cancelConfirmButtonRef.current.focus();
+      } else if (confirmDialogRef.current) {
+        confirmDialogRef.current.focus();
+      }
+    }, 10);
+
+    // 2. Keyboard focus trap (Tab/Shift+Tab) and Escape key listener
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (!isSubmittingCampaign) {
+          e.preventDefault();
+          setShowGeneralConfirmModal(false);
+        }
+        return;
+      }
+
+      if (e.key === "Tab" && confirmDialogRef.current) {
+        const focusableElements = Array.from(
+          confirmDialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        );
+        if (focusableElements.length === 0) return;
+
+        const first = focusableElements[0];
+        const last = focusableElements[focusableElements.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first || !confirmDialogRef.current.contains(document.activeElement)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last || !confirmDialogRef.current.contains(document.activeElement)) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      clearTimeout(focusTimer);
+      window.removeEventListener("keydown", handleKeyDown);
+      // 3. Restore focus to the triggering Enqueue Campaign button when closing
+      enqueueButtonRef.current?.focus();
+    };
+  }, [showGeneralConfirmModal, isSubmittingCampaign]);
 
   // 2. Fetch data based on active tab
   useEffect(() => {
@@ -357,22 +424,45 @@ export default function AdminBroadcastPage() {
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
   }, [certCandidates]);
 
-  // Create General Campaign
-  async function handleCreateGeneralCampaign() {
-    if (!generalTitle.trim() || !generalSubject.trim() || !generalBodyHtml.trim()) {
-      alert("Please enter campaign title, subject, and message body.");
-      return;
-    }
-    if (selectedGeneralEmails.size === 0) {
-      alert("Please select at least one recipient email.");
+  // Step 1: Pre-campaign validation and confirmation trigger
+  function handleInitiateCreateGeneralCampaign() {
+    const validation = validateGeneralBroadcastInput({
+      title: generalTitle,
+      subject: generalSubject,
+      bodyHtml: generalBodyHtml,
+      recipientCount: selectedGeneralEmails.size,
+      isPreviewMode,
+      isProductionReadOnly,
+    });
+
+    if (!validation.isValid) {
+      if (validation.errorMessage) alert(validation.errorMessage);
       return;
     }
 
-    const bodyText =
-      generalTitle === PARTICIPANT_BROADCAST_CAMPAIGN_TITLE &&
-      generalBodyHtml === renderParticipantVerificationBroadcastHtml()
-        ? renderParticipantVerificationBroadcastText()
-        : generalBodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    setShowGeneralConfirmModal(true);
+  }
+
+  // Backwards compatibility alias
+  const handleCreateGeneralCampaign = handleInitiateCreateGeneralCampaign;
+
+  // Step 2: Cancel creation
+  function handleCancelCreateGeneralCampaign() {
+    if (isSubmittingCampaign) return;
+    setShowGeneralConfirmModal(false);
+  }
+
+  // Step 3: Explicit confirmed submission
+  async function handleConfirmCreateGeneralCampaign() {
+    if (isSubmittingCampaign) return;
+
+    const payload = buildGeneralCampaignPayload({
+      title: generalTitle,
+      subject: generalSubject,
+      bodyHtml: generalBodyHtml,
+      selectedEmails: Array.from(selectedGeneralEmails),
+      dispatchImmediately: generalDispatchImmediately,
+    });
 
     setIsSubmittingCampaign(true);
     setCampaignSuccessMsg(null);
@@ -381,19 +471,12 @@ export default function AdminBroadcastPage() {
       const res = await fetch("/api/admin/broadcast/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: generalTitle,
-          subject: generalSubject,
-          bodyHtml: generalBodyHtml,
-          bodyText,
-          campaignType: "general",
-          selectedEmails: Array.from(selectedGeneralEmails),
-          dispatchImmediately: generalDispatchImmediately,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
       if (data.success) {
+        setShowGeneralConfirmModal(false);
         const processedInfo =
           typeof data.processedCount === "number" && data.processedCount > 0
             ? ` (${data.successCount}/${data.totalDeliveries} delivered immediately)`
@@ -881,6 +964,7 @@ export default function AdminBroadcastPage() {
                   (Isolated from transactional emails)
                 </div>
                 <button
+                  ref={enqueueButtonRef}
                   type="button"
                   onClick={handleCreateGeneralCampaign}
                   disabled={isSubmittingCampaign || isPreviewMode || isProductionReadOnly || selectedGeneralEmails.size === 0}
@@ -1725,6 +1809,177 @@ export default function AdminBroadcastPage() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* CONFIRMATION SAFEGUARD MODAL: GENERAL BROADCAST CAMPAIGN */}
+        {showGeneralConfirmModal && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-general-broadcast-title"
+            aria-describedby="confirm-general-broadcast-description"
+            className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !isSubmittingCampaign) {
+                handleCancelCreateGeneralCampaign();
+              }
+            }}
+          >
+            <div
+              ref={confirmDialogRef}
+              tabIndex={-1}
+              className="relative w-full max-w-lg rounded-3xl bg-white text-black shadow-2xl border border-black/10 overflow-hidden outline-none animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-black/10 px-6 py-5">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`flex h-10 w-10 items-center justify-center rounded-2xl ${
+                      generalDispatchImmediately ? "bg-amber-500 text-white" : "bg-black text-white"
+                    }`}
+                  >
+                    {generalDispatchImmediately ? <AlertTriangle size={20} /> : <Mail size={20} />}
+                  </div>
+                  <div>
+                    <h3 id="confirm-general-broadcast-title" className="text-base font-bold text-black">
+                      Confirm Campaign Creation
+                    </h3>
+                    <p id="confirm-general-broadcast-description" className="text-xs text-black/50">
+                      Review campaign details and dispatch parameters before proceeding.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancelCreateGeneralCampaign}
+                  disabled={isSubmittingCampaign}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-black/5 text-black/60 hover:bg-black/10 hover:text-black transition disabled:opacity-40"
+                  aria-label="Close confirmation dialog"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-4">
+                {/* Details Breakdown */}
+                <div className="rounded-2xl border border-black/10 bg-black/[0.02] p-4 space-y-3">
+                  <div>
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-black/50">
+                      Campaign Title
+                    </span>
+                    <span className="text-xs font-semibold text-black break-words">
+                      {generalTitle}
+                    </span>
+                  </div>
+
+                  <div className="border-t border-black/5 pt-2">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-black/50">
+                      Email Subject
+                    </span>
+                    <span className="text-xs font-medium text-black/80 font-mono break-words">
+                      {generalSubject}
+                    </span>
+                  </div>
+
+                  <div className="border-t border-black/5 pt-2 flex items-center justify-between">
+                    <div>
+                      <span className="block text-[10px] font-bold uppercase tracking-wider text-black/50">
+                        Selected Recipients
+                      </span>
+                      <span className="text-xs font-bold text-black">
+                        {selectedGeneralEmails.size} {selectedGeneralEmails.size === 1 ? "Recipient" : "Recipients"}
+                      </span>
+                    </div>
+                    <span className="inline-flex items-center rounded-full border border-black/10 bg-white px-2.5 py-1 text-[11px] font-mono font-medium text-black/70">
+                      Deduplicated &amp; Filtered
+                    </span>
+                  </div>
+
+                  <div className="border-t border-black/5 pt-2 flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-black/50">
+                      Dispatch Mode
+                    </span>
+                    {generalDispatchImmediately ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-900">
+                        <AlertTriangle size={11} className="text-amber-700" />
+                        Immediate Dispatch
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-neutral-300 bg-neutral-100 px-2.5 py-0.5 text-[11px] font-bold text-neutral-800">
+                        <CheckCircle2 size={11} className="text-neutral-700" />
+                        Safe Enqueue (Manual Queue Process)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Warning Card */}
+                {generalDispatchImmediately ? (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 space-y-1.5">
+                    <div className="flex items-center gap-2 font-bold text-amber-950">
+                      <AlertTriangle size={15} className="text-amber-700 shrink-0" />
+                      <span>WARNING: Real Emails Will Be Sent Immediately!</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-amber-900/90 pl-6">
+                      {getImmediateDispatchWarningCopy(selectedGeneralEmails.size)}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-black/10 bg-neutral-50 p-3.5 text-xs text-neutral-700">
+                    <div className="flex items-center gap-2 font-semibold text-neutral-900 mb-1">
+                      <CheckCircle2 size={14} className="text-neutral-700 shrink-0" />
+                      <span>Safe Mode Enqueue</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-neutral-600 pl-5">
+                      No emails will be sent right now. The campaign will be safely stored in the database with status &ldquo;queued&rdquo; for inspection. You can dispatch batches manually at any time from the Campaign History &amp; Queue tab.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer Actions */}
+              <div className="flex items-center justify-end gap-3 border-t border-black/10 bg-black/[0.01] px-6 py-4">
+                <button
+                  ref={cancelConfirmButtonRef}
+                  type="button"
+                  onClick={handleCancelCreateGeneralCampaign}
+                  disabled={isSubmittingCampaign}
+                  className="rounded-full border border-black/15 bg-white px-5 py-2 text-xs md:text-sm font-semibold text-black hover:bg-black/[0.04] transition disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmCreateGeneralCampaign}
+                  disabled={isSubmittingCampaign}
+                  className={`flex items-center gap-2 rounded-full px-6 py-2 text-xs md:text-sm font-semibold text-white shadow-sm transition disabled:opacity-40 ${
+                    generalDispatchImmediately
+                      ? "bg-amber-600 hover:bg-amber-700"
+                      : "bg-black hover:bg-neutral-800"
+                  }`}
+                >
+                  {isSubmittingCampaign ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" />
+                      <span>Creating Campaign...</span>
+                    </>
+                  ) : generalDispatchImmediately ? (
+                    <>
+                      <AlertTriangle size={14} />
+                      <span>Confirm &amp; Dispatch Immediately</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send size={14} />
+                      <span>Confirm and Create Campaign</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         )}
