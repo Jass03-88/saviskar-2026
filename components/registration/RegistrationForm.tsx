@@ -1287,7 +1287,7 @@ export default function RegistrationForm({
         return plan?.price ?? 499;
       }
       if (baseSlug === "2_days") {
-        if (selectedDate === "2026-10-30" || selectedDate === "2026-10-28" || extraDays === "none") {
+        if (selectedDate === "2026-10-30" || extraDays === "none") {
           const plan = accommodationPlans.find((p) => p.slug === "2_days");
           return plan?.price ?? 999;
         }

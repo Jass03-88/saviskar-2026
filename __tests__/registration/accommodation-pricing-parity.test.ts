@@ -37,7 +37,7 @@ describe("SAVISKAR 2026: Accommodation Pricing Parity & 30–31 Oct Investigatio
       return plan?.price ?? 499;
     }
     if (baseSlug === "2_days") {
-      if (selectedDate === "2026-10-30" || selectedDate === "2026-10-28" || extraDays === "none") {
+      if (selectedDate === "2026-10-30" || extraDays === "none") {
         const plan = accommodationPlans.find((p) => p.slug === "2_days");
         return plan?.price ?? 999;
       }
@@ -83,6 +83,10 @@ describe("SAVISKAR 2026: Accommodation Pricing Parity & 30–31 Oct Investigatio
       expect(getAccommodationCost("2_days", "none", "2026-10-30")).toBe(999);
       // Even if extraDays was erroneously passed as after_30, selectedDate 2026-10-30 must resolve to ₹999
       expect(getAccommodationCost("2_days", "after_30", "2026-10-30")).toBe(999);
+    });
+
+    it("2-day accommodation (28 Oct) extended with after_30 -> ₹1,498 (3-day pricing parity)", () => {
+      expect(getAccommodationCost("2_days", "after_30", "2026-10-28")).toBe(1498);
     });
 
     it("3-day accommodation -> ₹1,498", () => {
