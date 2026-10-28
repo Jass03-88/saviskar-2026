@@ -18,7 +18,7 @@ import {
   ChevronDown,
   ChevronRight
 } from "lucide-react";
-import { getCanonicalStayLabel } from "@/lib/accommodation-dates";
+import { getCanonicalStayLabel, calculateRoomDateOccupancy } from "@/lib/accommodation-dates";
 import { groupAccommodationRecords, paginateGroupedAccommodations, getGroupControlsId, getGroupHeaderId, groupRecordsByParticipant, ParticipantAccommodationEntry } from "@/lib/admin/accommodation-grouping";
 import { ParticipantDetailDialog } from "@/components/admin/ParticipantDetailDialog";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
@@ -189,6 +189,13 @@ type DashboardData = {
   roomOccupancy: Record<string, number>;
   floorOccupancy: Record<string, number>;
   hostelOccupancy: Record<string, number>;
+  activeAllocations?: Array<{
+    hostel_id: string;
+    room_id: string;
+    participant_id: string;
+    start_date: string | null;
+    end_date: string | null;
+  }>;
   stats: { total: number; paid: number; pending: number; cancelled: number; checkedIn?: number; checkedOut?: number; allocated?: number; awaitingAllocation?: number; totalCapacity?: number; occupiedCapacity?: number; participants?: number; faculty?: number };
   role?: string;
 };
@@ -2345,6 +2352,7 @@ function AllocateModal({ acc, data, onClose, onSuccess }: { acc: AccommodationRe
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [partialWarning, setPartialWarning] = useState<string | null>(null);
 
   const isReallocation = !!acc.room_id;
 
@@ -2374,6 +2382,24 @@ function AllocateModal({ acc, data, onClose, onSuccess }: { acc: AccommodationRe
     });
   }, [hostelId, floorId, data.rooms]);
 
+  // Date-aware room availability for this booking's stay dates
+  const roomAvailability = useMemo(() => {
+    const result: Record<string, { peakOccupancy: number; isFull: boolean; availableBeds: number }> = {};
+    if (!data.rooms || !acc.start_date || !acc.end_date) return result;
+
+    for (const r of data.rooms) {
+      result[r.id] = calculateRoomDateOccupancy({
+        roomId: r.id,
+        roomCapacity: r.capacity,
+        targetStartDate: acc.start_date,
+        targetEndDate: acc.end_date,
+        excludeParticipantId: acc.participant_id || acc.participants?.participant_id,
+        activeAllocations: data.activeAllocations || [],
+      });
+    }
+    return result;
+  }, [data.rooms, data.activeAllocations, acc.start_date, acc.end_date, acc.participant_id, acc.participants?.participant_id]);
+
   const handleSubmit = async () => {
     if (!hostelId || !roomId) {
       setError("Please select both a hostel and a room.");
@@ -2385,6 +2411,7 @@ function AllocateModal({ acc, data, onClose, onSuccess }: { acc: AccommodationRe
     }
     setSubmitting(true);
     setError("");
+    setPartialWarning(null);
 
     try {
       const endpoint = isReallocation ? "/api/admin/accommodations/reallocate" : "/api/admin/accommodations/allocate";
@@ -2401,7 +2428,12 @@ function AllocateModal({ acc, data, onClose, onSuccess }: { acc: AccommodationRe
       const payload = await res.json();
       if (!res.ok) throw new Error(payload.error?.message || "Failed to allocate.");
       
-      onSuccess();
+      if (payload.partialSuccess && payload.warning) {
+        setPartialWarning(payload.warning);
+        setSubmitting(false);
+      } else {
+        onSuccess();
+      }
     } catch(err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to allocate.";
       setError(msg);
@@ -2413,9 +2445,25 @@ function AllocateModal({ acc, data, onClose, onSuccess }: { acc: AccommodationRe
     <div data-lenis-prevent="true" className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-lg bg-white rounded-3xl p-8 shadow-2xl">
         <h2 className="text-2xl font-semibold mb-2 text-black">{isReallocation ? "Reallocate Participant" : "Allocate Participant"}</h2>
-        <p className="text-sm text-black/50 mb-6">{acc.participants?.name} ({acc.participants?.gender || "Unknown"})</p>
+        <p className="text-sm text-black/50 mb-1">{acc.participants?.name} ({acc.participants?.gender || "Unknown"})</p>
+        <p className="text-xs text-black/40 mb-6">Stay: {getAccommodationStayLabel(acc)} ({acc.start_date} to {acc.end_date})</p>
 
         {error && <div className="mb-4 text-red-600 text-sm p-3 bg-red-50 rounded-xl">{error}</div>}
+
+        {partialWarning && (
+          <div className="mb-4 text-amber-800 text-sm p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+            <div className="font-semibold mb-1 text-amber-900">Partial Allocation Warning</div>
+            <p className="text-xs text-amber-800 leading-relaxed mb-3">{partialWarning}</p>
+            <div className="flex justify-end">
+              <button
+                onClick={() => onSuccess()}
+                className="px-4 py-1.5 bg-amber-600 text-white rounded-full text-xs font-medium hover:bg-amber-700 transition shadow-sm"
+              >
+                Acknowledge & Close
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-col gap-5">
           <div>
@@ -2466,12 +2514,16 @@ function AllocateModal({ acc, data, onClose, onSuccess }: { acc: AccommodationRe
             >
               <option value="">-- Choose Room --</option>
               {filteredRooms.map(r => {
-                const occ = data.roomOccupancy[r.id] || 0;
-                const isFull = occ >= r.capacity;
+                const availInfo = roomAvailability[r.id] || {
+                  peakOccupancy: data.roomOccupancy[r.id] || 0,
+                  isFull: (data.roomOccupancy[r.id] || 0) >= r.capacity,
+                  availableBeds: Math.max(0, r.capacity - (data.roomOccupancy[r.id] || 0)),
+                };
+                const isFull = availInfo.isFull;
                 const fl = data.floors.find(f => f.id === r.floor_id);
                 return (
                   <option key={r.id} value={r.id} disabled={isFull && r.id !== acc.room_id}>
-                    {fl ? `Fl ${fl.floor_number} • ` : ""}Room {r.room_number} (Available: {Math.max(0, r.capacity - occ)})
+                    {fl ? `Fl ${fl.floor_number} • ` : ""}Room {r.room_number} (Available: {availInfo.availableBeds})
                   </option>
                 );
               })}
@@ -2491,21 +2543,23 @@ function AllocateModal({ acc, data, onClose, onSuccess }: { acc: AccommodationRe
             </div>
           )}
 
-          <div className="flex justify-end gap-3 mt-4">
-            <button 
-              onClick={onClose} 
-              className="px-5 py-2.5 bg-gray-100 rounded-full text-black/70 font-medium hover:bg-gray-200 transition"
-            >
-              Cancel
-            </button>
-            <button 
-              onClick={handleSubmit} 
-              disabled={submitting} 
-              className="px-5 py-2.5 bg-black text-white rounded-full font-medium hover:bg-black/90 transition disabled:opacity-50"
-            >
-              {submitting ? "Saving..." : "Confirm"}
-            </button>
-          </div>
+          {!partialWarning && (
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                onClick={onClose}
+                className="px-5 py-2.5 bg-gray-100 rounded-full text-black/70 font-medium hover:bg-gray-200 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="px-5 py-2.5 bg-black text-white rounded-full font-medium hover:bg-black/90 transition disabled:opacity-50"
+              >
+                {submitting ? "Saving..." : "Confirm"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

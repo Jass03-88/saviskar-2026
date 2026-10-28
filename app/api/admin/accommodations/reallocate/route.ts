@@ -87,6 +87,9 @@ export async function POST(request: Request) {
       } else if (/Status must be paid|UNPAID/i.test(msg)) {
         code = "UNPAID";
         status = 400;
+      } else if (/INVALID_BOOKING_DATES/i.test(msg)) {
+        code = "INVALID_BOOKING_DATES";
+        status = 400;
       } else if (/NOT_FOUND/i.test(msg)) {
         code = "NOT_FOUND";
         status = 404;
@@ -98,6 +101,13 @@ export async function POST(request: Request) {
 
     // Reallocate any sibling paid orders for the same participant to the new room
     let participantId: string | null = null;
+    const siblingResults: Array<{
+      id: string;
+      success: boolean;
+      room_id?: string;
+      error?: string;
+    }> = [];
+
     try {
       const primaryQuery = supabaseAdmin.from?.("participant_accommodations")?.select?.("participant_id")?.eq?.("id", primaryAccId)?.single?.();
       const primaryRes = primaryQuery ? await primaryQuery : null;
@@ -106,7 +116,7 @@ export async function POST(request: Request) {
       if (participantId) {
         const siblingQuery = supabaseAdmin
           .from?.("participant_accommodations")
-          ?.select?.("id, status, room_id")
+          ?.select?.("id, start_date, end_date, status, room_id")
           ?.eq?.("participant_id", participantId)
           ?.eq?.("status", "paid")
           ?.neq?.("id", primaryAccId);
@@ -117,37 +127,44 @@ export async function POST(request: Request) {
         if (siblingOrders && siblingOrders.length > 0) {
           for (const sibling of siblingOrders) {
             if (sibling.room_id !== roomId) {
-              await supabaseAdmin
-                .from?.("participant_accommodations")
-                ?.update?.({
-                  hostel_id: hostelId,
-                  room_id: roomId,
-                  updated_at: new Date().toISOString(),
-                })
-                ?.eq?.("id", sibling.id);
+              const siblingReason = `${reason.trim()} (Multi-order participant stay reallocation)`;
 
-              await supabaseAdmin
-                .from?.("accommodation_allocations")
-                ?.update?.({ status: "reassigned", deallocated_at: new Date().toISOString() })
-                ?.eq?.("participant_accommodation_id", sibling.id)
-                ?.eq?.("status", "active");
+              // CRITICAL: Call the authoritative RPC for each sibling order!
+              // This guarantees row-level locking (FOR UPDATE on hostel_rooms and participant_accommodations),
+              // date-aware capacity validation, gender validation, and safe reallocation history.
+              // NO DIRECT WRITES to participant_accommodations or accommodation_allocations!
+              const { data: siblingData, error: siblingRpcError } = await rpcClient.rpc(
+                "allocate_accommodation",
+                {
+                  p_participant_accommodation_id: sibling.id,
+                  p_hostel_id: hostelId,
+                  p_room_id: roomId,
+                  p_reason: siblingReason,
+                }
+              );
 
-              await supabaseAdmin
-                .from?.("accommodation_allocations")
-                ?.insert?.({
-                  participant_accommodation_id: sibling.id,
-                  hostel_id: hostelId,
-                  room_id: roomId,
-                  status: "active",
-                  allocated_by: auth.user.id,
-                  reason: reason.trim(),
+              if (siblingRpcError) {
+                console.warn(
+                  `[ACCOMMODATION REALLOCATE] Sibling booking ${sibling.id} reallocation failed: ${siblingRpcError.message}`
+                );
+                siblingResults.push({
+                  id: sibling.id,
+                  success: false,
+                  error: siblingRpcError.message,
                 });
+              } else {
+                siblingResults.push({
+                  id: sibling.id,
+                  success: true,
+                  room_id: roomId,
+                });
+              }
             }
           }
         }
       }
-    } catch (siblingErr) {
-      console.warn("[ACCOMMODATION REALLOCATE] Sibling order reallocation warning:", siblingErr);
+    } catch (siblingErr: any) {
+      console.warn("[ACCOMMODATION REALLOCATE] Sibling order reallocation unexpected error:", siblingErr?.message || siblingErr);
     }
 
     if (auth.user?.id) {
@@ -161,6 +178,7 @@ export async function POST(request: Request) {
             room_id: roomId,
             reason: reason.trim(),
             participant_id: participantId || null,
+            sibling_allocations: siblingResults.length > 0 ? siblingResults : undefined,
           },
         });
       } catch (auditErr) {
@@ -169,7 +187,22 @@ export async function POST(request: Request) {
     }
 
     console.log(`[ACCOMMODATION REALLOCATE] Successfully reallocated booking ${primaryAccId} to room ${roomId} by admin ${auth.user?.id}`);
-    return NextResponse.json({ success: true, data });
+
+    const hasPartialFailures = siblingResults.some((s) => !s.success);
+    const failedCount = siblingResults.filter((s) => !s.success).length;
+
+    return NextResponse.json({
+      success: true,
+      data,
+      siblingAllocations: siblingResults.length > 0 ? siblingResults : undefined,
+      partialSuccess: hasPartialFailures ? true : undefined,
+      warning: hasPartialFailures
+        ? `Primary booking reallocated successfully, but ${failedCount} sibling booking(s) could not be reallocated to this room: ${siblingResults
+            .filter((s) => !s.success)
+            .map((s) => `${s.id} (${s.error})`)
+            .join("; ")}`
+        : undefined,
+    });
 
   } catch (err: any) {
     console.error("[ACCOMMODATION REALLOCATE] Server error:", err?.message || err);

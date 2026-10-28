@@ -29,8 +29,7 @@ DECLARE
     v_hostel record;
     v_pa record;
     v_participant record;
-    v_current_occupancy integer;
-    v_is_already_in_room boolean := false;
+    v_is_room_full_any_night boolean := false;
     v_existing_allocation record;
     v_new_allocation_id uuid;
 BEGIN
@@ -111,6 +110,10 @@ BEGIN
         RAISE EXCEPTION 'BOOKING_NOT_ELIGIBLE: Status must be paid, currently %', v_pa.status USING ERRCODE = 'P0001';
     END IF;
 
+    IF v_pa.start_date IS NULL OR v_pa.end_date IS NULL OR v_pa.start_date >= v_pa.end_date THEN
+        RAISE EXCEPTION 'INVALID_BOOKING_DATES: start_date must be before end_date' USING ERRCODE = 'P0001';
+    END IF;
+
     -- 6. Fetch Participant for Gender Check
     SELECT * INTO v_participant
     FROM public.participants
@@ -147,23 +150,27 @@ BEGIN
         );
     END IF;
 
-    -- 8. Check Current Room Occupancy (Deduplicated by Distinct Physical Participants)
-    SELECT count(DISTINCT pa.participant_id) INTO v_current_occupancy
-    FROM public.accommodation_allocations aa
-    JOIN public.participant_accommodations pa ON pa.id = aa.participant_accommodation_id
-    WHERE aa.room_id = p_room_id AND aa.status = 'active';
-
-    -- Check if this specific participant is ALREADY an active occupant of this room
+    -- 8. Check Current Room Occupancy (Date-Aware: per-night within stay interval [start_date, end_date))
+    -- Room capacity must be evaluated on every night of the requested booking.
+    -- Stays meet at checkout/check-in without overlapping (start_date <= stay_night < end_date).
+    -- Excludes the participant being allocated/reallocated (pa.participant_id <> v_pa.participant_id)
+    -- so multi-order bookings for the same participant do not consume duplicate beds.
     SELECT EXISTS (
         SELECT 1
-        FROM public.accommodation_allocations aa
-        JOIN public.participant_accommodations pa ON pa.id = aa.participant_accommodation_id
-        WHERE aa.room_id = p_room_id
-          AND aa.status = 'active'
-          AND pa.participant_id = v_pa.participant_id
-    ) INTO v_is_already_in_room;
+        FROM generate_series(v_pa.start_date, v_pa.end_date - INTERVAL '1 day', INTERVAL '1 day') AS stay_night(night_date)
+        WHERE (
+            SELECT count(DISTINCT pa.participant_id)
+            FROM public.accommodation_allocations aa
+            JOIN public.participant_accommodations pa ON pa.id = aa.participant_accommodation_id
+            WHERE aa.room_id = p_room_id
+              AND aa.status = 'active'
+              AND pa.participant_id <> v_pa.participant_id
+              AND pa.start_date <= stay_night.night_date
+              AND pa.end_date > stay_night.night_date
+        ) >= v_room.capacity
+    ) INTO v_is_room_full_any_night;
 
-    IF NOT v_is_already_in_room AND v_current_occupancy >= v_room.capacity THEN
+    IF v_is_room_full_any_night THEN
         RAISE EXCEPTION 'ROOM_FULL: Capacity exceeded' USING ERRCODE = 'P0001';
     END IF;
 
