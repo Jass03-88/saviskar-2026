@@ -1276,13 +1276,21 @@ export default function RegistrationForm({
   }, [accommodationPlans]);
 
   const getAccommodationCost = useCallback(
-    (baseSlug: string, extraDays?: "none" | "before_27" | "after_30" | "both") => {
+    (
+      baseSlug: string,
+      extraDays?: "none" | "before_27" | "after_30" | "both",
+      selectedDate?: string
+    ) => {
       if (!baseSlug) return 0;
       if (baseSlug === "1_day") {
         const plan = accommodationPlans.find((p) => p.slug === "1_day");
         return plan?.price ?? 499;
       }
       if (baseSlug === "2_days") {
+        if (selectedDate === "2026-10-30" || selectedDate === "2026-10-28" || extraDays === "none") {
+          const plan = accommodationPlans.find((p) => p.slug === "2_days");
+          return plan?.price ?? 999;
+        }
         if (extraDays === "before_27" || extraDays === "after_30") {
           const plan = accommodationPlans.find((p) => p.slug === "3_days");
           return plan?.price ?? 1498;
@@ -1313,12 +1321,12 @@ export default function RegistrationForm({
 
     // Main participant accommodation
     if (mainAccommodationSlug) {
-      accCost += getAccommodationCost(mainAccommodationSlug, mainExtraDays);
+      accCost += getAccommodationCost(mainAccommodationSlug, mainExtraDays, mainAccommodationDate);
     }
 
     // Faculty accommodation
     if (facultyEnabled && facultyState.accommodationPlanSlug) {
-      accCost += getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays);
+      accCost += getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays, facultyState.accommodationDate);
     }
 
     // Team members accommodations
@@ -1327,7 +1335,7 @@ export default function RegistrationForm({
         const state = getTeamState(event.id);
         state.members.forEach((m) => {
           if (m.accommodationPlanSlug) {
-            accCost += getAccommodationCost(m.accommodationPlanSlug, m.extraDays);
+            accCost += getAccommodationCost(m.accommodationPlanSlug, m.extraDays, m.accommodationDate);
           }
         });
       }
@@ -1690,7 +1698,7 @@ export default function RegistrationForm({
       const accSummaries: ConfirmedRegistrationData["accommodations"] = [];
       if (mainAccSlug) {
         const plan = accommodationPlans.find((p) => p.slug === mainAccSlug);
-        const cost = getAccommodationCost(mainAccSlug, mainExtraDays);
+        const cost = getAccommodationCost(mainAccSlug, mainExtraDays, mainAccommodationDate);
         accSummaries.push({
           planName: plan?.name || "Standard Accommodation",
           startDate: mainAccommodationDate,
@@ -1703,7 +1711,7 @@ export default function RegistrationForm({
       }
       if (facultyEnabled && facultyState.accommodationPlanSlug) {
         const plan = accommodationPlans.find((p) => p.slug === facultyState.accommodationPlanSlug);
-        const cost = getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays);
+        const cost = getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays, facultyState.accommodationDate);
         accSummaries.push({
           planName: `Faculty: ${plan?.name || "Standard Accommodation"}`,
           startDate: facultyState.accommodationDate,
@@ -3476,7 +3484,7 @@ export default function RegistrationForm({
 
                               <div className="flex items-center gap-3 shrink-0">
                                 <span className="font-mono text-xs font-medium text-violet-200">
-                                  ₹{getAccommodationCost(mainAccommodationSlug, mainExtraDays).toLocaleString("en-IN")}
+                                  ₹{getAccommodationCost(mainAccommodationSlug, mainExtraDays, mainAccommodationDate).toLocaleString("en-IN")}
                                 </span>
                                 <button
                                   type="button"
@@ -3513,7 +3521,7 @@ export default function RegistrationForm({
 
                               <div className="flex items-center gap-3 shrink-0">
                                 <span className="font-mono text-xs font-medium text-violet-200">
-                                  ₹{getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays).toLocaleString("en-IN")}
+                                  ₹{getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays, facultyState.accommodationDate).toLocaleString("en-IN")}
                                 </span>
                                 <button
                                   type="button"
@@ -3556,7 +3564,7 @@ export default function RegistrationForm({
 
                                   <div className="flex items-center gap-3 shrink-0">
                                     <span className="font-mono text-xs font-medium text-violet-200">
-                                      ₹{getAccommodationCost(m.accommodationPlanSlug, m.extraDays).toLocaleString("en-IN")}
+                                      ₹{getAccommodationCost(m.accommodationPlanSlug, m.extraDays, m.accommodationDate).toLocaleString("en-IN")}
                                     </span>
                                     <button
                                       type="button"
@@ -4002,8 +4010,9 @@ export default function RegistrationForm({
                                               } else if (val === "2_days") {
                                                 if (mainAccommodationDate !== "2026-10-28" && mainAccommodationDate !== "2026-10-30") {
                                                   setMainAccommodationDate("2026-10-28");
-                                                  setMainExtraDays("none");
+
                                                 }
+                                                setMainExtraDays("none");
                                               } else if (val === "4_days") {
                                                 if (mainAccommodationDate !== "2026-10-27" && mainAccommodationDate !== "2026-10-28") {
                                                   setMainAccommodationDate("2026-10-27");
@@ -4272,7 +4281,7 @@ export default function RegistrationForm({
                                                checked={mainAccommodationDate === "2026-10-30"}
                                                onChange={() => {
                                                  setMainAccommodationDate("2026-10-30");
-                                                 setMainExtraDays("after_30");
+                                                 setMainExtraDays("none");
                                                }}
                                                className="sr-only"
                                              />
@@ -4669,7 +4678,7 @@ export default function RegistrationForm({
                                                     updateTeamMemberMultiple(event.id, index, {
                                                       accommodationPlanSlug: val,
                                                       accommodationDate: is30 ? "2026-10-30" : "2026-10-28",
-                                                      extraDays: is30 ? "after_30" : "none",
+                                                      extraDays: "none",
                                                     });
                                                   } else if (val === "4_days") {
                                                     const is28 = member.accommodationDate === "2026-10-28";
@@ -4840,7 +4849,7 @@ export default function RegistrationForm({
                                                    onChange={() => {
                                                      updateTeamMemberMultiple(event.id, index, {
                                                        accommodationDate: "2026-10-30",
-                                                       extraDays: "after_30",
+                                                       extraDays: "none",
                                                      });
                                                    }}
                                                    className="sr-only"
@@ -5202,8 +5211,9 @@ export default function RegistrationForm({
                                               } else if (val === "2_days") {
                                                 if (mainAccommodationDate !== "2026-10-28" && mainAccommodationDate !== "2026-10-30") {
                                                   setMainAccommodationDate("2026-10-28");
-                                                  setMainExtraDays("none");
+
                                                 }
+                                                setMainExtraDays("none");
                                               } else if (val === "4_days") {
                                                 if (mainAccommodationDate !== "2026-10-27" && mainAccommodationDate !== "2026-10-28") {
                                                   setMainAccommodationDate("2026-10-27");
@@ -5363,7 +5373,7 @@ export default function RegistrationForm({
                                                checked={mainAccommodationDate === "2026-10-30"}
                                                onChange={() => {
                                                  setMainAccommodationDate("2026-10-30");
-                                                 setMainExtraDays("after_30");
+                                                 setMainExtraDays("none");
                                                }}
                                                className="sr-only"
                                              />
@@ -5752,7 +5762,7 @@ export default function RegistrationForm({
                                               ...facultyState,
                                               accommodationPlanSlug: val,
                                               accommodationDate: is30 ? "2026-10-30" : "2026-10-28",
-                                              extraDays: is30 ? "after_30" : "none",
+                                              extraDays: "none",
                                             });
                                           } else if (val === "4_days") {
                                             const is28 = facultyState.accommodationDate === "2026-10-28";
@@ -5927,7 +5937,7 @@ export default function RegistrationForm({
                                              setFacultyState({
                                                ...facultyState,
                                                accommodationDate: "2026-10-30",
-                                               extraDays: "after_30",
+                                               extraDays: "none",
                                              });
                                            }}
                                            className="sr-only"
@@ -6178,7 +6188,7 @@ export default function RegistrationForm({
                           </div>
 
                           <span className="font-mono text-sm font-medium text-white shrink-0">
-                            ₹{getAccommodationCost(mainAccommodationSlug, mainExtraDays).toLocaleString("en-IN")}
+                            ₹{getAccommodationCost(mainAccommodationSlug, mainExtraDays, mainAccommodationDate).toLocaleString("en-IN")}
                           </span>
                         </div>
                       )}
@@ -6200,7 +6210,7 @@ export default function RegistrationForm({
                           </div>
 
                           <span className="font-mono text-sm font-medium text-white shrink-0">
-                            ₹{getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays).toLocaleString("en-IN")}
+                            ₹{getAccommodationCost(facultyState.accommodationPlanSlug, facultyState.extraDays, facultyState.accommodationDate).toLocaleString("en-IN")}
                           </span>
                         </div>
                       )}
@@ -6228,7 +6238,7 @@ export default function RegistrationForm({
                               </div>
 
                               <span className="font-mono text-sm font-medium text-white shrink-0">
-                                ₹{getAccommodationCost(m.accommodationPlanSlug, m.extraDays).toLocaleString("en-IN")}
+                                ₹{getAccommodationCost(m.accommodationPlanSlug, m.extraDays, m.accommodationDate).toLocaleString("en-IN")}
                               </span>
                             </div>
                           );
