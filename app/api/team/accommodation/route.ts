@@ -290,7 +290,7 @@ export async function POST(request: NextRequest) {
       if (rawExtraDays === "before_27") {
         effectivePlanSlug = "3_days";
         selectedDate = "2026-10-27";
-      } else if (rawExtraDays === "after_30") {
+      } else if (rawExtraDays === "after_30" && selectedDate !== "2026-10-30") {
         effectivePlanSlug = "3_days";
         selectedDate = "2026-10-28";
       } else if (rawExtraDays === "both") {
