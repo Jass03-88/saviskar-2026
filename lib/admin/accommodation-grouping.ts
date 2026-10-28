@@ -347,3 +347,121 @@ export function getGroupHeaderId(groupKey: string): string {
   const sanitized = (groupKey || "").replace(/[^a-zA-Z0-9_-]/g, "-");
   return `group-header-${sanitized}`;
 }
+
+export interface ParticipantAccommodationEntry {
+  participantId: string;
+  participantDbId: string;
+  participantCode: string;
+  name: string;
+  email: string;
+  phone: string;
+  gender: string;
+  state: string;
+  college?: string | null;
+  isFaculty: boolean;
+  records: AccommodationRecord[];
+  primaryRecord: AccommodationRecord;
+  isMultiOrder: boolean;
+  totalOrders: number;
+  totalAmount: number;
+  allPaid: boolean;
+  hasPaid: boolean;
+  isAllocated: boolean;
+  isPartiallyAllocated: boolean;
+  isAwaitingAllocation: boolean;
+  isCheckedIn: boolean;
+  isCheckedOut: boolean;
+  canReallocate: boolean;
+  assignedRoomId?: string | null;
+  assignedHostelId?: string | null;
+  combinedDateRange: string;
+}
+
+/**
+ * Groups raw accommodation records by stable canonical participant ID.
+ * All accommodation orders belonging to the same participant are consolidated into a single entry.
+ * Original individual records, amounts, dates, and payment references are preserved.
+ */
+export function groupRecordsByParticipant(records: AccommodationRecord[]): ParticipantAccommodationEntry[] {
+  if (!Array.isArray(records) || records.length === 0) {
+    return [];
+  }
+
+  const map = new Map<string, AccommodationRecord[]>();
+
+  for (const acc of records) {
+    // Identity key: MUST use stable database participant ID (acc.participant_id or acc.participants?.participant_id)
+    // Never group by name or email alone.
+    const key = (acc.participants?.participant_id || acc.participant_id || "").trim();
+    const mapKey = key || `record_${acc.id}`;
+    const existing = map.get(mapKey);
+    if (existing) {
+      existing.push(acc);
+    } else {
+      map.set(mapKey, [acc]);
+    }
+  }
+
+  const entries: ParticipantAccommodationEntry[] = [];
+
+  for (const [key, accs] of map.entries()) {
+    // Sort orders by start_date ascending
+    accs.sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
+
+    // Find primary record: prefer one with an active room allocation, or first paid, or first
+    const primaryRecord = accs.find((a) => a.room_id) || accs.find((a) => a.status === "paid") || accs[0];
+    const p = primaryRecord.participants;
+
+    const allPaid = accs.every((a) => a.status === "paid");
+    const hasPaid = accs.some((a) => a.status === "paid");
+    const paidAccs = accs.filter((a) => a.status === "paid");
+
+    const allocatedCount = paidAccs.filter((a) => !!a.room_id).length;
+    const isAllocated = paidAccs.length > 0 && allocatedCount === paidAccs.length;
+    const isPartiallyAllocated = allocatedCount > 0 && allocatedCount < paidAccs.length;
+    const isAwaitingAllocation = paidAccs.length > 0 && allocatedCount === 0;
+
+    const isCheckedIn = accs.some((a) => a.checked_in && !a.checked_out);
+    const isCheckedOut = accs.length > 0 && accs.every((a) => a.checked_out);
+    const canReallocate = isAllocated && !isCheckedOut;
+
+    // Calculate combined stay interval
+    const startDates = accs.map((a) => a.start_date).filter(Boolean).sort();
+    const endDates = accs.map((a) => a.end_date).filter(Boolean).sort();
+    const combinedDateRange =
+      startDates.length > 0 && endDates.length > 0
+        ? `${startDates[0]} to ${endDates[endDates.length - 1]}`
+        : primaryRecord.start_date || "—";
+
+    entries.push({
+      participantId: key,
+      participantDbId: primaryRecord.participant_id,
+      participantCode: p?.participant_id || key,
+      name: p?.name || "Unknown",
+      email: p?.email || "",
+      phone: p?.phone || "",
+      gender: p?.gender || "",
+      state: p?.state || "",
+      college: p?.college || null,
+      isFaculty: Boolean(p?.is_faculty),
+      records: accs,
+      primaryRecord,
+      isMultiOrder: accs.length > 1,
+      totalOrders: accs.length,
+      totalAmount: accs.reduce((sum, a) => sum + (Number(a.amount) || 0), 0),
+      allPaid,
+      hasPaid,
+      isAllocated,
+      isPartiallyAllocated,
+      isAwaitingAllocation,
+      isCheckedIn,
+      isCheckedOut,
+      canReallocate,
+      assignedRoomId: primaryRecord.room_id,
+      assignedHostelId: primaryRecord.hostel_id,
+      combinedDateRange,
+    });
+  }
+
+  return entries;
+}

@@ -1,4 +1,4 @@
-﻿import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { requireAccommodationAdmin } from "@/lib/supabase/server";
 
@@ -274,7 +274,7 @@ export async function GET(request: Request) {
     const allocationsQuery = async (start: number, end: number, isFirst: boolean) => await
       supabaseAdmin
         .from("accommodation_allocations")
-        .select("hostel_id, room_id", isFirst ? { count: "exact" } : undefined)
+        .select("hostel_id, room_id, participant_accommodation_id, participant_accommodations ( participant_id )", isFirst ? { count: "exact" } : undefined)
         .eq("status", "active")
         .order("id", { ascending: false })
         .range(start, end);
@@ -289,9 +289,9 @@ export async function GET(request: Request) {
 
     const activeAllocations = allocationsResult.data;
 
-    const roomOccupancy = new Map<string, number>();
-    const floorOccupancy = new Map<string, number>();
-    const hostelOccupancy = new Map<string, number>();
+    const roomParticipants = new Map<string, Set<string>>();
+    const floorParticipants = new Map<string, Set<string>>();
+    const hostelParticipants = new Map<string, Set<string>>();
 
     const roomToFloor = new Map<string, string>();
     if (rooms) {
@@ -301,18 +301,42 @@ export async function GET(request: Request) {
     }
 
     if (activeAllocations) {
+      let anonymousCounter = 0;
       for (const a of activeAllocations) {
+        const participantKey =
+          a.participant_accommodations?.participant_id ||
+          a.participant_id ||
+          a.participant_accommodation_id ||
+          `anon_${++anonymousCounter}`;
+
         if (a.room_id) {
-          roomOccupancy.set(a.room_id, (roomOccupancy.get(a.room_id) ?? 0) + 1);
+          if (!roomParticipants.has(a.room_id)) roomParticipants.set(a.room_id, new Set());
+          roomParticipants.get(a.room_id)!.add(participantKey);
+
           const floorId = roomToFloor.get(a.room_id);
           if (floorId) {
-            floorOccupancy.set(floorId, (floorOccupancy.get(floorId) ?? 0) + 1);
+            if (!floorParticipants.has(floorId)) floorParticipants.set(floorId, new Set());
+            floorParticipants.get(floorId)!.add(participantKey);
           }
         }
         if (a.hostel_id) {
-          hostelOccupancy.set(a.hostel_id, (hostelOccupancy.get(a.hostel_id) ?? 0) + 1);
+          if (!hostelParticipants.has(a.hostel_id)) hostelParticipants.set(a.hostel_id, new Set());
+          hostelParticipants.get(a.hostel_id)!.add(participantKey);
         }
       }
+    }
+
+    const roomOccupancy = new Map<string, number>();
+    for (const [rId, pSet] of roomParticipants) {
+      roomOccupancy.set(rId, pSet.size);
+    }
+    const floorOccupancy = new Map<string, number>();
+    for (const [fId, pSet] of floorParticipants) {
+      floorOccupancy.set(fId, pSet.size);
+    }
+    const hostelOccupancy = new Map<string, number>();
+    for (const [hId, pSet] of hostelParticipants) {
+      hostelOccupancy.set(hId, pSet.size);
     }
 
     // Calculate total accommodation stats including check-in/out in bounded batches
