@@ -203,6 +203,12 @@ export async function DELETE(request: Request) {
       .select("id");
 
     if (error) {
+      if (error.code === "23503") {
+        return NextResponse.json(
+          { error: "Cannot delete floor because related room records exist. Deactivate the floor instead." },
+          { status: 400 }
+        );
+      }
       return NextResponse.json({ error: "Could not delete floor." }, { status: 500 });
     }
 
