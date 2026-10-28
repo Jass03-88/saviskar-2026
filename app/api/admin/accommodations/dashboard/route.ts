@@ -274,7 +274,7 @@ export async function GET(request: Request) {
     const allocationsQuery = async (start: number, end: number, isFirst: boolean) => await
       supabaseAdmin
         .from("accommodation_allocations")
-        .select("hostel_id, room_id, participant_accommodation_id, participant_accommodations ( participant_id )", isFirst ? { count: "exact" } : undefined)
+        .select("hostel_id, room_id, participant_accommodation_id, participant_accommodations ( participant_id, start_date, end_date )", isFirst ? { count: "exact" } : undefined)
         .eq("status", "active")
         .order("id", { ascending: false })
         .range(start, end);
@@ -338,6 +338,19 @@ export async function GET(request: Request) {
     for (const [hId, pSet] of hostelParticipants) {
       hostelOccupancy.set(hId, pSet.size);
     }
+
+    const activeAllocationsSummary = (activeAllocations || []).map((a: any) => {
+      const pa = Array.isArray(a.participant_accommodations)
+        ? a.participant_accommodations[0]
+        : a.participant_accommodations;
+      return {
+        hostel_id: a.hostel_id,
+        room_id: a.room_id,
+        participant_id: pa?.participant_id || a.participant_id || a.participant_accommodation_id || "",
+        start_date: pa?.start_date || null,
+        end_date: pa?.end_date || null,
+      };
+    });
 
     // Calculate total accommodation stats including check-in/out in bounded batches
     const statsQuery = async (start: number, end: number, isFirst: boolean) => await
@@ -548,6 +561,7 @@ export async function GET(request: Request) {
         roomOccupancy: Object.fromEntries(roomOccupancy),
         floorOccupancy: Object.fromEntries(floorOccupancy),
         hostelOccupancy: Object.fromEntries(hostelOccupancy),
+        activeAllocations: activeAllocationsSummary,
         stats: { total, paid, pending, cancelled, checkedIn, checkedOut, allocated, awaitingAllocation, totalCapacity, occupiedCapacity, participants: activeParticipants, faculty: activeFaculty },
         page,
         pageSize,

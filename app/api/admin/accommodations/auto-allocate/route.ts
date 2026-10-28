@@ -1,6 +1,7 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { requireAccommodationAdmin } from "@/lib/supabase/server";
+import { calculateRoomDateOccupancy } from "@/lib/accommodation-dates";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,8 @@ export async function POST(request: Request) {
         id,
         participant_id,
         status,
+        start_date,
+        end_date,
         participants ( participant_id, gender )
       `)
       .eq("status", "paid")
@@ -96,31 +99,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: { code: "DB_ERROR", message: "Failed to load hostels/floors/rooms." } }, { status: 500 });
     }
 
-    // 5. Calculate Current Occupancies by DISTINCT physical participants
+    // 5. Track Current Active Allocations with Dates
     const { data: activeAllocations, error: allocErr } = await supabaseAdmin
       .from("accommodation_allocations")
-      .select("room_id, participant_accommodations ( participant_id )")
+      .select("room_id, participant_accommodations ( participant_id, start_date, end_date )")
       .eq("status", "active");
 
     if (allocErr) {
       return NextResponse.json({ success: false, error: { code: "DB_ERROR", message: "Failed to load occupancies." } }, { status: 500 });
     }
 
-    const roomOccupantsMap = new Map<string, Set<string>>();
+    const trackedAllocations: Array<{
+      room_id: string;
+      participant_id: string;
+      start_date: string;
+      end_date: string;
+    }> = [];
+
     for (const alloc of activeAllocations || []) {
       const pa = Array.isArray(alloc.participant_accommodations)
         ? alloc.participant_accommodations[0]
         : alloc.participant_accommodations;
-      const participantId = pa?.participant_id || alloc.room_id;
-      if (!roomOccupantsMap.has(alloc.room_id)) {
-        roomOccupantsMap.set(alloc.room_id, new Set<string>());
+      if (alloc.room_id && pa?.start_date && pa?.end_date) {
+        trackedAllocations.push({
+          room_id: alloc.room_id,
+          participant_id: pa.participant_id || (alloc as any).participant_id || alloc.room_id,
+          start_date: pa.start_date,
+          end_date: pa.end_date,
+        });
       }
-      roomOccupantsMap.get(alloc.room_id)!.add(participantId);
-    }
-
-    const occupancyMap = new Map<string, number>();
-    for (const [roomId, occupants] of roomOccupantsMap.entries()) {
-      occupancyMap.set(roomId, occupants.size);
     }
 
     // Build hierarchical map: Hostel -> Floor -> Room[]
@@ -172,6 +179,19 @@ export async function POST(request: Request) {
         continue;
       }
 
+      if (!acc.start_date || !acc.end_date) {
+        pushResult("SKIPPED", "MISSING_BOOKING_DATES");
+        continue;
+      }
+
+      if (acc.start_date >= acc.end_date) {
+        pushResult("SKIPPED", "INVALID_BOOKING_DATES");
+        continue;
+      }
+
+      const targetStartDate = acc.start_date;
+      const targetEndDate = acc.end_date;
+
       // Filter eligible hostels
       const eligibleHostels = (hostels || []).filter(h => {
         return h.gender_eligibility === "any" || h.gender_eligibility === "mixed" || h.gender_eligibility === gender;
@@ -191,8 +211,16 @@ export async function POST(request: Request) {
         for (const fl of hostelFloors) {
           const floorRooms = activeRoomMap.get(fl.id) || [];
           for (const rm of floorRooms) {
-            const currentOcc = occupancyMap.get(rm.id) || 0;
-            if (currentOcc < rm.capacity) {
+            const { isFull } = calculateRoomDateOccupancy({
+              roomId: rm.id,
+              roomCapacity: rm.capacity,
+              targetStartDate,
+              targetEndDate,
+              excludeParticipantId: acc.participant_id,
+              activeAllocations: trackedAllocations,
+            });
+
+            if (!isFull) {
               selectedRoom = rm;
               selectedHostelId = h.id;
               break;
@@ -222,8 +250,13 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // Successfully allocated, increment local occupancy map
-      occupancyMap.set(selectedRoom.id, (occupancyMap.get(selectedRoom.id) || 0) + 1);
+      // Successfully allocated, track in local allocations list for remaining batch candidates
+      trackedAllocations.push({
+        room_id: selectedRoom.id,
+        participant_id: acc.participant_id,
+        start_date: targetStartDate,
+        end_date: targetEndDate,
+      });
       pushResult("ALLOCATED", "ALLOCATED");
     }
 

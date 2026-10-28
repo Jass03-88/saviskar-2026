@@ -126,3 +126,122 @@ export function isValidAccommodationDate(planSlug: string, startDate?: string | 
       return false;
   }
 }
+
+/**
+ * Returns an array of calendar night date strings (YYYY-MM-DD) for a stay interval [startDate, endDate).
+ * Consecutive stays meeting at boundary (e.g. checkout Oct 28, checkin Oct 28) do not overlap.
+ */
+export function getStayNights(startDate?: string | null, endDate?: string | null): string[] {
+  if (!startDate || !endDate || startDate >= endDate) return [];
+  const nights: string[] = [];
+  let current = startDate;
+  while (current < endDate) {
+    nights.push(current);
+    current = addDaysToIso(current, 1);
+  }
+  return nights;
+}
+
+/**
+ * Checks whether two stay intervals [startA, endA) and [startB, endB) overlap.
+ * Stays that touch at boundary (checkout = checkin) do not overlap.
+ */
+export function isDateOverlap(
+  startA?: string | null,
+  endA?: string | null,
+  startB?: string | null,
+  endB?: string | null
+): boolean {
+  if (!startA || !endA || !startB || !endB) return false;
+  return startA < endB && endA > startB;
+}
+
+export interface ActiveAllocationRecord {
+  room_id: string;
+  participant_id?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  hostel_id?: string | null;
+}
+
+export interface RoomDateOccupancyResult {
+  peakOccupancy: number;
+  isFull: boolean;
+  availableBeds: number;
+  occupancyPerNight: Record<string, number>;
+}
+
+/**
+ * Evaluates room capacity for a requested stay interval [targetStartDate, targetEndDate)
+ * against active room allocations, counting DISTINCT physical participants per night.
+ * Excludes the target participant so multi-order bookings do not count against themselves.
+ */
+export function calculateRoomDateOccupancy(options: {
+  roomId: string;
+  roomCapacity: number;
+  targetStartDate?: string | null;
+  targetEndDate?: string | null;
+  excludeParticipantId?: string | null;
+  activeAllocations: ActiveAllocationRecord[];
+}): RoomDateOccupancyResult {
+  const {
+    roomId,
+    roomCapacity,
+    targetStartDate,
+    targetEndDate,
+    excludeParticipantId,
+    activeAllocations,
+  } = options;
+
+  const nights = getStayNights(targetStartDate, targetEndDate);
+  if (nights.length === 0) {
+    return {
+      peakOccupancy: 0,
+      isFull: false,
+      availableBeds: roomCapacity,
+      occupancyPerNight: {},
+    };
+  }
+
+  // Filter allocations for this room and other participants
+  const relevantAllocations = activeAllocations.filter((a) => {
+    if (a.room_id !== roomId) return false;
+    if (excludeParticipantId && a.participant_id && a.participant_id === excludeParticipantId) {
+      return false;
+    }
+    return true;
+  });
+
+  const occupancyPerNight: Record<string, number> = {};
+  let peakOccupancy = 0;
+
+  for (const night of nights) {
+    const distinctParticipants = new Set<string>();
+    let anonCounter = 0;
+
+    for (const alloc of relevantAllocations) {
+      if (alloc.start_date && alloc.end_date) {
+        if (alloc.start_date <= night && alloc.end_date > night) {
+          const pKey = alloc.participant_id || `anon_${++anonCounter}`;
+          distinctParticipants.add(pKey);
+        }
+      }
+    }
+
+    const nightCount = distinctParticipants.size;
+    occupancyPerNight[night] = nightCount;
+    if (nightCount > peakOccupancy) {
+      peakOccupancy = nightCount;
+    }
+  }
+
+  const isFull = peakOccupancy >= roomCapacity;
+  const availableBeds = Math.max(0, roomCapacity - peakOccupancy);
+
+  return {
+    peakOccupancy,
+    isFull,
+    availableBeds,
+    occupancyPerNight,
+  };
+}

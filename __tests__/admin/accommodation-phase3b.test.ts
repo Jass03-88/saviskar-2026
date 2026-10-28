@@ -113,9 +113,9 @@ describe("Phase 3B - Accommodation Operations & Allocation APIs", () => {
     it("processes bulk allocation safely", async () => {
       // Mock unallocated
       const mockUnallocated = [
-        { id: "pa1", status: "paid", participants: { participant_id: "p1", gender: "male" } },
-        { id: "pa2", status: "paid", participants: [{ participant_id: "p2", gender: "female" }] },
-        { id: "pa3", status: "paid", participants: { participant_id: "p3", gender: "other" } }
+        { id: "pa1", status: "paid", start_date: "2026-10-28", end_date: "2026-10-29", participants: { participant_id: "p1", gender: "male" } },
+        { id: "pa2", status: "paid", start_date: "2026-10-28", end_date: "2026-10-29", participants: [{ participant_id: "p2", gender: "female" }] },
+        { id: "pa3", status: "paid", start_date: "2026-10-28", end_date: "2026-10-29", participants: { participant_id: "p3", gender: "other" } }
       ];
       
       const mockHostels = [
@@ -134,7 +134,7 @@ describe("Phase 3B - Accommodation Operations & Allocation APIs", () => {
       ];
       
       const mockAllocations = [
-        { room_id: "r2", status: "active" } // r2 is full
+        { room_id: "r2", status: "active", participant_accommodations: { participant_id: "other-p", start_date: "2026-10-28", end_date: "2026-10-29" } } // r2 is full
       ];
 
       fromMock.mockImplementation((table) => {
