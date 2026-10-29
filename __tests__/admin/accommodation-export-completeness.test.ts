@@ -4,6 +4,10 @@ import {
   type AccommodationExportRecord,
   type PlanRecord,
 } from "@/lib/admin/accommodation-excel-export";
+import {
+  matchesAccommodationDateFilter,
+  buildParticipantActiveStaysMap,
+} from "@/lib/accommodation-dates";
 import ExcelJS from "exceljs";
 
 describe("Accommodation Export Completeness & Paginated Server Query", () => {
@@ -679,5 +683,295 @@ describe("Accommodation Export Completeness & Paginated Server Query", () => {
 
     const participantOnly = list.filter((a) => !a.participants?.is_faculty);
     expect(participantOnly.map((a) => a.id)).toEqual(["part-1"]);
+  });
+
+  it("14. 28 Oct Only (Day 1) filter: strictly includes 28->29 Oct checkout and excludes 28->30 Oct and 28->31 Oct stays", () => {
+    const records: AccommodationExportRecord[] = [
+      {
+        id: "acc-28-only",
+        participant_id: "part-1",
+        start_date: "2026-10-28",
+        end_date: "2026-10-29",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        participants: { participant_id: "SVK26-P001", name: "Single Day 28 Delegate" },
+      },
+      {
+        id: "acc-28-30-two-day",
+        participant_id: "part-2",
+        start_date: "2026-10-28",
+        end_date: "2026-10-30",
+        duration_days: 2,
+        amount: 999,
+        status: "paid",
+        participants: { participant_id: "SVK26-P002", name: "Two Day 28-30 Delegate" },
+      },
+      {
+        id: "acc-28-31-three-day",
+        participant_id: "part-3",
+        start_date: "2026-10-28",
+        end_date: "2026-10-31",
+        duration_days: 3,
+        amount: 1498,
+        status: "paid",
+        participants: { participant_id: "SVK26-P003", name: "Three Day 28-31 Delegate" },
+      },
+      {
+        id: "acc-29-only",
+        participant_id: "part-4",
+        start_date: "2026-10-29",
+        end_date: "2026-10-30",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        participants: { participant_id: "SVK26-P004", name: "Day 2 Only Delegate" },
+      },
+      {
+        id: "acc-corrupt-duration-two-day",
+        participant_id: "part-5",
+        start_date: "2026-10-28",
+        end_date: "2026-10-30",
+        duration_days: 1, // Corrupt duration_days in DB, but actual checkout is 30 Oct!
+        amount: 999,
+        status: "paid",
+        participants: { participant_id: "SVK26-P005", name: "Corrupt Duration Delegate" },
+      },
+    ];
+
+    const activeMap = buildParticipantActiveStaysMap(records);
+    const filtered28 = records.filter((acc) => {
+      const pId = (acc.participants?.participant_id || acc.participant_id || "").trim();
+      return matchesAccommodationDateFilter(acc, "28", activeMap.get(pId));
+    });
+
+    // Only acc-28-only must match!
+    expect(filtered28.map((r) => r.id)).toEqual(["acc-28-only"]);
+
+    // Explicit verification of required exclusions:
+    expect(filtered28.some((r) => r.id === "acc-28-30-two-day")).toBe(false);
+    expect(filtered28.some((r) => r.id === "acc-28-31-three-day")).toBe(false);
+    expect(filtered28.some((r) => r.id === "acc-corrupt-duration-two-day")).toBe(false);
+    expect(filtered28.some((r) => r.id === "acc-29-only")).toBe(false);
+  });
+
+  it("15. 28 Oct Only (Day 1) filter: excludes bookings with linked active contiguous extensions (effective stay > 1 day)", () => {
+    // Participant A booked 28->29 Oct, and later added a linked extension for 29->30 Oct.
+    // Their actual checkout is 30 Oct morning, so they must NOT appear under "28 Oct Only (Day 1)".
+    const records: AccommodationExportRecord[] = [
+      {
+        id: "part-a-stay-1",
+        participant_id: "part-a",
+        start_date: "2026-10-28",
+        end_date: "2026-10-29",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        participants: { participant_id: "SVK26-EXT01", name: "Extended Delegate A" },
+      },
+      {
+        id: "part-a-stay-2-extension",
+        participant_id: "part-a",
+        start_date: "2026-10-29",
+        end_date: "2026-10-30",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        participants: { participant_id: "SVK26-EXT01", name: "Extended Delegate A" },
+      },
+      {
+        id: "part-regular-stay",
+        participant_id: "part-reg",
+        start_date: "2026-10-28",
+        end_date: "2026-10-29",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        participants: { participant_id: "SVK26-REG01", name: "Regular 1-Day Delegate" },
+      },
+    ];
+
+    const activeMap = buildParticipantActiveStaysMap(records);
+    const filtered28 = records.filter((acc) => {
+      const pId = (acc.participants?.participant_id || acc.participant_id || "").trim();
+      return matchesAccommodationDateFilter(acc, "28", activeMap.get(pId));
+    });
+
+    // Only regular delegate must match! Extended delegate must be completely excluded from 28 Oct Only!
+    expect(filtered28.map((r) => r.id)).toEqual(["part-regular-stay"]);
+    expect(filtered28.some((r) => r.participant_id === "part-a")).toBe(false);
+  });
+
+  it("16. 28 Oct Only (Day 1) filter: preserves separate independent 1-day stays without exclusion by non-contiguous bookings", () => {
+    // Participant B booked a 1-day stay on 28 Oct (checks out 29 Oct morning),
+    // and separately booked an independent stay on 31 Oct (checks out 1 Nov).
+    // Because there is a gap (29 to 31 Oct), the 28 Oct stay is genuinely a 1-day 28 Oct stay.
+    const records: AccommodationExportRecord[] = [
+      {
+        id: "part-b-stay-28",
+        participant_id: "part-b",
+        start_date: "2026-10-28",
+        end_date: "2026-10-29",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        participants: { participant_id: "SVK26-INDEP01", name: "Independent Multi-Booking Delegate" },
+      },
+      {
+        id: "part-b-stay-31",
+        participant_id: "part-b",
+        start_date: "2026-10-31",
+        end_date: "2026-11-01",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        participants: { participant_id: "SVK26-INDEP01", name: "Independent Multi-Booking Delegate" },
+      },
+    ];
+
+    const activeMap = buildParticipantActiveStaysMap(records);
+
+    // When filtering by "28", the 28 Oct stay MUST match
+    const filtered28 = records.filter((acc) => {
+      const pId = (acc.participants?.participant_id || acc.participant_id || "").trim();
+      return matchesAccommodationDateFilter(acc, "28", activeMap.get(pId));
+    });
+    expect(filtered28.map((r) => r.id)).toEqual(["part-b-stay-28"]);
+
+    // When filtering by "31", the 31 Oct stay MUST match
+    const filtered31 = records.filter((acc) => {
+      const pId = (acc.participants?.participant_id || acc.participant_id || "").trim();
+      return matchesAccommodationDateFilter(acc, "31", activeMap.get(pId));
+    });
+    expect(filtered31.map((r) => r.id)).toEqual(["part-b-stay-31"]);
+  });
+
+  it("17. 28 Oct Only (Day 1) filter: cancelled or failed extensions do not disqualify an active 28 Oct booking", () => {
+    // Participant C booked 28->29 Oct (paid).
+    // Later initiated an extension for 29->30 Oct which was cancelled/failed.
+    // Their only active stay is 28->29 Oct, so it must still match "28 Oct Only".
+    const records: AccommodationExportRecord[] = [
+      {
+        id: "part-c-active-stay",
+        participant_id: "part-c",
+        start_date: "2026-10-28",
+        end_date: "2026-10-29",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        participants: { participant_id: "SVK26-C001", name: "Delegate with Cancelled Extension" },
+      },
+      {
+        id: "part-c-cancelled-extension",
+        participant_id: "part-c",
+        start_date: "2026-10-29",
+        end_date: "2026-10-30",
+        duration_days: 1,
+        amount: 499,
+        status: "cancelled",
+        participants: { participant_id: "SVK26-C001", name: "Delegate with Cancelled Extension" },
+      },
+    ];
+
+    const activeMap = buildParticipantActiveStaysMap(records);
+    const filtered28 = records.filter((acc) => {
+      const pId = (acc.participants?.participant_id || acc.participant_id || "").trim();
+      return matchesAccommodationDateFilter(acc, "28", activeMap.get(pId));
+    });
+
+    expect(filtered28.map((r) => r.id)).toEqual(["part-c-active-stay"]);
+  });
+
+  it("18. End-to-end export filter pipeline: Paid + 28 Oct Only accurately yields genuine 28 Oct 1-day stays in workbook", async () => {
+    const testRecords: AccommodationExportRecord[] = [
+      // 1. Paid 28 Oct 1-day stay (SHOULD BE INCLUDED)
+      {
+        id: "e2e-28-valid",
+        participant_id: "p-valid",
+        start_date: "2026-10-28",
+        end_date: "2026-10-29",
+        duration_days: 1,
+        amount: 499,
+        status: "paid",
+        hostel_id: "hostel-boys",
+        room_id: "room-101",
+        checked_in: false,
+        checked_out: false,
+        created_at: "2026-10-25T10:00:00Z",
+        participants: { participant_id: "SVK26-V01", name: "Valid 28 Delegate", gender: "male", state: "Punjab" },
+        payment_orders: { status: "paid" },
+      },
+      // 2. Paid 28-30 Oct 2-day stay (SHOULD BE EXCLUDED)
+      {
+        id: "e2e-28-30-twoday",
+        participant_id: "p-twoday",
+        start_date: "2026-10-28",
+        end_date: "2026-10-30",
+        duration_days: 2,
+        amount: 999,
+        status: "paid",
+        hostel_id: "hostel-boys",
+        room_id: "room-102",
+        checked_in: false,
+        checked_out: false,
+        created_at: "2026-10-25T10:00:00Z",
+        participants: { participant_id: "SVK26-V02", name: "Two Day Delegate", gender: "male", state: "Delhi" },
+        payment_orders: { status: "paid" },
+      },
+      // 3. Unpaid 28 Oct 1-day stay (SHOULD BE EXCLUDED by Paid status filter)
+      {
+        id: "e2e-28-unpaid",
+        participant_id: "p-unpaid",
+        start_date: "2026-10-28",
+        end_date: "2026-10-29",
+        duration_days: 1,
+        amount: 499,
+        status: "unpaid",
+        hostel_id: "hostel-boys",
+        created_at: "2026-10-25T10:00:00Z",
+        participants: { participant_id: "SVK26-V03", name: "Unpaid Delegate", gender: "male", state: "Haryana" },
+      },
+    ];
+
+    const activeMap = buildParticipantActiveStaysMap(testRecords);
+    const filterStatus = "paid";
+    const filterDate = "28";
+
+    const filtered = testRecords.filter((acc) => {
+      const po = Array.isArray(acc.payment_orders) ? acc.payment_orders[0] : acc.payment_orders;
+      const poStatus = po?.status ? String(po.status).toLowerCase() : "";
+      const accStatus = acc.status ? String(acc.status).toLowerCase() : "";
+      const matchesStatus =
+        (accStatus === "paid" || poStatus === "paid" || poStatus === "completed") &&
+        accStatus !== "refunded" &&
+        poStatus !== "refunded" &&
+        accStatus !== "cancelled" &&
+        poStatus !== "cancelled";
+
+      const pId = (acc.participants?.participant_id || acc.participant_id || "").trim();
+      const matchesDate = matchesAccommodationDateFilter(acc, filterDate, activeMap.get(pId));
+
+      return matchesStatus && matchesDate;
+    });
+
+    expect(filtered.map((r) => r.id)).toEqual(["e2e-28-valid"]);
+
+    // Generate workbook from filtered dataset
+    const workbook = await buildAccommodationWorkbook({
+      accommodations: filtered,
+      hostels: [{ id: "hostel-boys", name: "Boys Hostel" }],
+      floors: [],
+      rooms: [{ id: "room-101", room_number: "101", floor_id: "f1", hostel_id: "hostel-boys", capacity: 2 }],
+      plans: mockPlans,
+    });
+
+    const masterSheet = workbook.getWorksheet("Accommodation Master");
+    expect(masterSheet).toBeDefined();
+    // Header (1) + 1 record = 2 rows
+    expect(masterSheet?.rowCount).toBe(2);
+    expect(masterSheet?.getCell("C2").value).toBe("SVK26-V01");
+    expect(masterSheet?.getCell("D2").value).toBe("Valid 28 Delegate");
+    expect(masterSheet?.getCell("P2").value).toBe("2026-10-28");
+    expect(masterSheet?.getCell("R2").value).toBe("2026-10-29");
   });
 });

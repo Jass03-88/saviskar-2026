@@ -18,6 +18,10 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { requireAccommodationAdmin } from "@/lib/supabase/server";
 import { buildAccommodationWorkbook } from "@/lib/admin/accommodation-excel-export";
+import {
+  matchesAccommodationDateFilter,
+  buildParticipantActiveStaysMap,
+} from "@/lib/accommodation-dates";
 
 export const dynamic = "force-dynamic";
 
@@ -222,6 +226,8 @@ export async function GET(request: Request) {
     let targetRecords = allAccommodations;
 
     if (scope === "filtered") {
+      const participantActiveStaysMap = buildParticipantActiveStaysMap(allAccommodations);
+
       targetRecords = allAccommodations.filter((acc) => {
         const p = acc.participants;
         if (!p) return false;
@@ -352,34 +358,9 @@ export async function GET(request: Request) {
         const matchesType =
           filterType === "all" || (filterType === "faculty" ? !!p.is_faculty : !p.is_faculty);
 
-        let matchesDate = true;
-        if (filterDate === "27") {
-          matchesDate = normStart === "2026-10-27" && acc.duration_days === 1;
-        } else if (filterDate === "28") {
-          matchesDate = normStart === "2026-10-28" && acc.duration_days === 1;
-        } else if (filterDate === "29") {
-          matchesDate = normStart === "2026-10-29" && acc.duration_days === 1;
-        } else if (filterDate === "30") {
-          matchesDate = normStart === "2026-10-30" && acc.duration_days === 1;
-        } else if (filterDate === "31") {
-          matchesDate = normStart === "2026-10-31" && acc.duration_days === 1;
-        } else if (filterDate === "2_days") {
-          matchesDate = acc.duration_days === 2 && normStart === "2026-10-28";
-        } else if (filterDate === "2_days_30") {
-          matchesDate = acc.duration_days === 2 && normStart === "2026-10-30";
-        } else if (filterDate === "3_days_27") {
-          matchesDate = acc.duration_days === 3 && normStart === "2026-10-27";
-        } else if (filterDate === "3_days_30") {
-          matchesDate = acc.duration_days === 3 && (normStart === "2026-10-28" || normStart === "2026-10-30");
-        } else if (filterDate === "3_days_29") {
-          matchesDate = acc.duration_days === 3 && normStart === "2026-10-29";
-        } else if (filterDate === "4_days") {
-          matchesDate = acc.duration_days === 4 && normStart === "2026-10-27";
-        } else if (filterDate === "4_days_28") {
-          matchesDate = acc.duration_days === 4 && normStart === "2026-10-28";
-        } else if (filterDate === "both" || filterDate === "multi") {
-          matchesDate = acc.duration_days >= 2;
-        }
+        const pId = (p.participant_id || acc.participant_id || "").trim();
+        const activeStays = participantActiveStaysMap.get(pId);
+        const matchesDate = matchesAccommodationDateFilter(acc, filterDate, activeStays);
 
         return (
           matchesSearch &&
