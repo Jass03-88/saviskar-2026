@@ -130,6 +130,7 @@ describe("Email Recipient Safeguard & Environment-Aware Routing", () => {
       expect(result.success).toBe(true);
       expect(result.emailsSent).toBe(1);
       expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockSend.mock.calls[0].length).toBe(1);
       expect(mockSend).toHaveBeenCalledWith(
         expect.objectContaining({
           to: ["real.student@cgc.edu.in"],
@@ -172,6 +173,8 @@ describe("Email Recipient Safeguard & Environment-Aware Routing", () => {
         2,
         expect.objectContaining({ to: ["teammate1@cgc.edu.in"] })
       );
+      expect(mockSend.mock.calls[0].length).toBe(1);
+      expect(mockSend.mock.calls[1].length).toBe(1);
     });
 
     it("fails closed when guard is enabled but APPROVED_TEST_EMAIL is missing", async () => {
@@ -229,6 +232,7 @@ describe("Email Recipient Safeguard & Environment-Aware Routing", () => {
 
       expect(result.success).toBe(true);
       expect(result.emailsSent).toBe(1);
+      expect(mockSend.mock.calls[0].length).toBe(1);
       expect(mockSend).toHaveBeenCalledWith(
         expect.objectContaining({
           to: ["jashan.cgcu@gmail.com"],
@@ -256,6 +260,8 @@ describe("Email Recipient Safeguard & Environment-Aware Routing", () => {
 
       expect(result.success).toBe(true);
       expect(mockSend).toHaveBeenCalledTimes(2);
+      expect(mockSend.mock.calls[0].length).toBe(1);
+      expect(mockSend.mock.calls[1].length).toBe(1);
       expect(mockSend).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({
@@ -263,6 +269,77 @@ describe("Email Recipient Safeguard & Environment-Aware Routing", () => {
           to: ["real.student@cgc.edu.in"],
         })
       );
+    });
+
+    it("passes valid idempotencyKey option as 2nd argument when idempotencyKey is present", async () => {
+      setNodeEnv("production");
+      delete process.env.ENABLE_TEST_RECIPIENT_GUARD;
+      delete process.env.APPROVED_TEST_EMAIL;
+
+      mockSend.mockResolvedValueOnce({
+        data: { id: "msg_idemp_001" },
+        error: null,
+      });
+
+      const result = await sendRegistrationEmail({
+        ...baseRegistrationData,
+        idempotencyKey: "test_idemp_key",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.emailsSent).toBe(1);
+      expect(mockSend).toHaveBeenCalledTimes(1);
+      expect(mockSend.mock.calls[0].length).toBe(2);
+      expect(mockSend.mock.calls[0][1]).toEqual({
+        idempotencyKey: "test_idemp_key_SVK26-12345678",
+      });
+      expect(mockSend.mock.calls[0][0].headers).toEqual({
+        "X-Entity-Ref-ID": "test_idemp_key_SVK26-12345678",
+      });
+      expect(mockSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: ["real.student@cgc.edu.in"],
+        }),
+        { idempotencyKey: "test_idemp_key_SVK26-12345678" }
+      );
+    });
+
+    it("preserves idempotencyKey option in 403 domain unverified fallback retry", async () => {
+      setNodeEnv("production");
+      delete process.env.ENABLE_TEST_RECIPIENT_GUARD;
+      delete process.env.APPROVED_TEST_EMAIL;
+
+      mockSend
+        .mockResolvedValueOnce({
+          data: null,
+          error: { statusCode: 403, message: "domain is not verified" },
+        })
+        .mockResolvedValueOnce({
+          data: { id: "msg_idemp_fallback_002" },
+          error: null,
+        });
+
+      const result = await sendRegistrationEmail({
+        ...baseRegistrationData,
+        idempotencyKey: "test_idemp_fallback",
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockSend).toHaveBeenCalledTimes(2);
+      // Both initial and retry calls pass exactly 2 arguments with the idempotency key option
+      expect(mockSend.mock.calls[0].length).toBe(2);
+      expect(mockSend.mock.calls[0][1]).toEqual({
+        idempotencyKey: "test_idemp_fallback_SVK26-12345678",
+      });
+      expect(mockSend.mock.calls[1].length).toBe(2);
+      expect(mockSend.mock.calls[1][1]).toEqual({
+        idempotencyKey: "test_idemp_fallback_SVK26-12345678",
+      });
+      expect(mockSend.mock.calls[1][0].headers).toEqual({
+        "X-Entity-Ref-ID": "test_idemp_fallback_SVK26-12345678",
+      });
+      expect(mockSend.mock.calls[1][0].from).toBe("Saviskar 2026 <onboarding@resend.dev>");
+      expect(mockSend.mock.calls[1][0].to).toEqual(["real.student@cgc.edu.in"]);
     });
   });
 

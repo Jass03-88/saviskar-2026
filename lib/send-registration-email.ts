@@ -1193,20 +1193,25 @@ export async function sendRegistrationEmail(
       }
 
       const recipientIdempKey = data.idempotencyKey
-        ? `${data.idempotencyKey}_${recipient.participantId}`
+        ? (data.idempotencyKey.endsWith(`_${recipient.participantId}`)
+            ? data.idempotencyKey
+            : `${data.idempotencyKey}_${recipient.participantId}`)
         : undefined;
 
-      let { data: resData, error: resError } = await resend.emails.send(
-        {
-          from: fromEmail,
-          to: [destinationEmail],
-          subject: subjectLine,
-          html: emailHtml,
-          headers: recipientIdempKey ? { "X-Entity-Ref-ID": recipientIdempKey } : undefined,
-          ...(attachments ? { attachments } : {}),
-        },
-        recipientIdempKey ? ({ idempotencyKey: recipientIdempKey } as any) : undefined
-      );
+      const sendPayload = {
+        from: fromEmail,
+        to: [destinationEmail],
+        subject: subjectLine,
+        html: emailHtml,
+        headers: recipientIdempKey ? { "X-Entity-Ref-ID": recipientIdempKey } : undefined,
+        ...(attachments ? { attachments } : {}),
+      };
+
+      const sendOptions = recipientIdempKey ? { idempotencyKey: recipientIdempKey } : undefined;
+
+      let { data: resData, error: resError } = sendOptions
+        ? await resend.emails.send(sendPayload, sendOptions)
+        : await resend.emails.send(sendPayload);
 
       if (resError && (resError as { statusCode?: number; message?: string }).statusCode === 403 && String((resError as { message?: string }).message || "").includes("domain is not verified")) {
         if (guardActive) {
@@ -1220,17 +1225,17 @@ export async function sendRegistrationEmail(
         }
 
         console.warn(`[REGISTER EMAIL] Domain not verified in Resend. Retrying with onboarding fallback...`);
-        const fallbackRes = await resend.emails.send(
-          {
-            from: "Saviskar 2026 <onboarding@resend.dev>",
-            to: [destinationEmail],
-            subject: subjectLine,
-            html: emailHtml,
-            headers: recipientIdempKey ? { "X-Entity-Ref-ID": recipientIdempKey } : undefined,
-            ...(attachments ? { attachments } : {}),
-          },
-          recipientIdempKey ? ({ idempotencyKey: recipientIdempKey } as any) : undefined
-        );
+        const fallbackPayload = {
+          from: "Saviskar 2026 <onboarding@resend.dev>",
+          to: [destinationEmail],
+          subject: subjectLine,
+          html: emailHtml,
+          headers: recipientIdempKey ? { "X-Entity-Ref-ID": recipientIdempKey } : undefined,
+          ...(attachments ? { attachments } : {}),
+        };
+        const fallbackRes = sendOptions
+          ? await resend.emails.send(fallbackPayload, sendOptions)
+          : await resend.emails.send(fallbackPayload);
         resData = fallbackRes.data;
         resError = fallbackRes.error;
       }

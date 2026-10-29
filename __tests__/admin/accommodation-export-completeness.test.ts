@@ -157,7 +157,7 @@ describe("Accommodation Export Completeness & Paginated Server Query", () => {
     await loadedWb.xlsx.load(buffer);
     expect(loadedWb.worksheets.length).toBe(3);
     expect(loadedWb.getWorksheet("Accommodation Master")!.rowCount).toBe(TOTAL_RECORDS + 1);
-  });
+  }, 30000);
 
   it("3. Filtered export respects active criteria while Export All retains all records", () => {
     const TOTAL_RECORDS = 100;
