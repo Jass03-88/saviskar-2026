@@ -100,6 +100,8 @@ export async function POST(request: NextRequest) {
 
   // ─── Idempotency: Already Paid ──────────────────────────
   if (paymentOrder.status === "paid") {
+    // Ensure confirmation email & receipt invoice are delivered even if settled by webhook moments before
+    await ensurePaymentConfirmationSent(paymentOrderId);
     return NextResponse.redirect(new URL(resumeUrl), 303);
   }
 

@@ -16,6 +16,9 @@ export type ReceiptLineItem = {
   registrationType?: 'individual' | 'team';
   teamName?: string | null;
   amount: number;
+  dates?: string | null;
+  durationDays?: number | null;
+  checkoutDate?: string | null;
 };
 
 export type ReceiptData = {
@@ -251,7 +254,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   if (data.phone) {
     drawRow('Contact Number', data.phone);
   }
-  drawRow('College / Institution', data.college);
+  drawRow('College / Institution', data.college || 'N/A');
 
   cursorY -= 12;
   drawDivider(currentPage, cursorY);
@@ -266,7 +269,17 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     if (single.category) {
       drawRow('Category', single.category);
     }
-    if (!isAcc) {
+    if (isAcc) {
+      if (single.dates) {
+        drawRow('Stay Dates', single.dates);
+      }
+      if (single.durationDays) {
+        drawRow('Duration', `${single.durationDays} ${single.durationDays === 1 ? 'Day' : 'Days'}`);
+      }
+      if (single.checkoutDate) {
+        drawRow('Check-out', single.checkoutDate);
+      }
+    } else {
       drawRow('Registration Type', single.registrationType === 'team' ? 'Team' : 'Individual');
       if (single.registrationType === 'team' && single.teamName) {
         drawRow('Team', single.teamName);
@@ -277,13 +290,14 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     drawSectionTitle(hasAcc ? `REGISTRATION & ITEMS (${lineItems.length} ITEMS)` : `REGISTRATION (${lineItems.length} EVENTS)`);
     lineItems.forEach((item, index) => {
       const isAcc = item.category === 'Accommodation';
+      const stayInfo = isAcc && item.dates ? ` (${item.dates})` : '';
       const typeInfo = isAcc
-        ? 'Booking'
+        ? (item.durationDays ? `${item.durationDays}D Stay` : 'Campus Stay')
         : item.registrationType === 'team' && item.teamName
         ? `Team: ${item.teamName}`
         : item.registrationType === 'team' ? 'Team' : 'Individual';
-      const categoryInfo = item.category ? ` (${item.category})` : '';
-      drawRow(isAcc ? `Item ${index + 1}` : `Event ${index + 1}`, `${item.eventName}${categoryInfo} — ${typeInfo}`);
+      const categoryInfo = item.category ? ` [${item.category}]` : '';
+      drawRow(isAcc ? `Item ${index + 1}` : `Event ${index + 1}`, `${item.eventName}${stayInfo}${categoryInfo} — ${typeInfo}`);
     });
   }
 
@@ -423,7 +437,12 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   // Table rows for all line items
   for (const item of lineItems) {
     checkPageOverflow(25);
-    const itemDesc = `${item.eventName} Registration`;
+    const isAcc = item.category === 'Accommodation';
+    const itemDesc = isAcc
+      ? (item.eventName.toLowerCase().includes('accommodation') || item.eventName.toLowerCase().includes('stay')
+          ? item.eventName
+          : `${item.eventName} Accommodation`)
+      : (item.eventName.toLowerCase().endsWith('registration') ? item.eventName : `${item.eventName} Registration`);
     const descLines = wrapText(itemDesc, helvetica, 10, CONTENT_WIDTH - 100);
 
     currentPage.drawText(descLines[0] || itemDesc, {
@@ -480,7 +499,7 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
     color: rgb(0.3, 0.3, 0.3),
   });
   
-  currentPage.drawText('This is an electronically generated payment receipt for Saviskar 2026 registration.', {
+  currentPage.drawText('This is an electronically generated payment receipt for Saviskar 2026.', {
     x: MARGIN,
     y: footerY - 15,
     size: 8,
