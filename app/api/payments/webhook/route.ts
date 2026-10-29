@@ -161,6 +161,9 @@ export async function POST(
       "Webhook: payment order already in final state:",
       paymentOrder.status
     );
+    if (paymentOrder.status === "paid") {
+      await ensurePaymentConfirmationSent(paymentOrder.id);
+    }
     return new Response("OK", {
       status: 200,
     });
@@ -261,6 +264,9 @@ export async function POST(
 
     if (rpcData?.action === "already_processed" || rpcData?.action === "already_paid" || rpcData?.action === "already_refunded") {
       console.log(`[WEBHOOK IDEMPOTENCY] Event already processed for payment ${event.gatewayPaymentId}. Skipping duplicate execution.`);
+      if (rpcData?.action !== "already_refunded") {
+        await ensurePaymentConfirmationSent(paymentOrder.id);
+      }
       return new Response("OK", { status: 200 });
     }
 

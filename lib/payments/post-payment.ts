@@ -35,7 +35,7 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     })
     .eq("id", paymentOrderId)
     .is("receipt_email_sent_at", null)
-    .or(`receipt_email_claim_id.is.null,receipt_email_claimed_at.lt.${staleThreshold}`)
+    .or(`receipt_email_claim_id.is.null,receipt_email_claimed_at.is.null,receipt_email_claimed_at.lt.${staleThreshold}`)
     .select("id");
 
   if (claimError) {
@@ -179,10 +179,38 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
 
     const typedItems = orderItems as unknown as OrderItemRow[];
 
-    const receiptItems = typedItems.map((item) => {
+    // Fetch direct participant_accommodations as complement/fallback
+    const hasAccItems = typedItems.some((it) => it.item_type === "accommodation");
+    let directAccRecords: Array<any> = [];
+    if (hasAccItems) {
+      const { data: directAccs } = await supabaseAdmin
+        .from("participant_accommodations")
+        .select(`
+          id,
+          start_date,
+          end_date,
+          duration_days,
+          amount,
+          status,
+          accommodation_plans (
+            name,
+            slug
+          ),
+          participants (
+            name,
+            participant_id
+          )
+        `)
+        .eq("payment_order_id", paymentOrderId);
+      if (directAccs && directAccs.length > 0) {
+        directAccRecords = directAccs;
+      }
+    }
+
+    const receiptItems = typedItems.map((item, idx) => {
       if (item.item_type === "accommodation") {
         const rawAcc = item.participant_accommodations;
-        const acc = Array.isArray(rawAcc) ? rawAcc[0] : rawAcc;
+        const acc = (Array.isArray(rawAcc) ? rawAcc[0] : rawAcc) || directAccRecords[idx] || directAccRecords[0];
         const rawPlan = acc?.accommodation_plans;
         const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
         const rawDelegate = acc?.participants;
@@ -190,12 +218,16 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
 
         const planName = plan?.name || "Accommodation Booking";
         const delegateLabel = delegate?.name ? ` (${delegate.name})` : "";
+        const datesStr = acc?.start_date && acc?.end_date ? `${acc.start_date} to ${acc.end_date}` : null;
         return {
           eventName: `${planName}${delegateLabel}`,
           category: "Accommodation",
           registrationType: "individual" as const,
           teamName: null,
           amount: Number(item.amount) || 0,
+          dates: datesStr,
+          durationDays: acc?.duration_days || null,
+          checkoutDate: acc?.end_date || null,
         };
       }
 
@@ -210,6 +242,7 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       };
     });
 
+    const isAccommodationOnly = typedItems.every((it) => it.item_type === "accommodation");
     const primaryItem = typedItems.find((it) => it.item_type !== "accommodation") || typedItems[0];
     const primaryEvent = Array.isArray(primaryItem.events) ? primaryItem.events[0] : primaryItem.events;
     const primaryPe = Array.isArray(primaryItem.participant_events) ? primaryItem.participant_events[0] : primaryItem.participant_events;
@@ -277,12 +310,14 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       participantId: participant.participant_id,
       email: participant.email,
       phone: participant.phone,
-      college: participant.college,
+      college: participant.college || "N/A",
       items: receiptItems,
       teamMembers: receiptTeamMembers.length > 0 ? receiptTeamMembers : undefined,
-      eventName: primaryEvent?.name ?? "Saviskar Event",
-      eventCategory: primaryEvent?.category ?? null,
-      registrationType: primaryEvent?.registration_type === "team" ? ("team" as const) : ("individual" as const),
+      eventName: isAccommodationOnly
+        ? (receiptItems[0]?.eventName || "Campus Accommodation")
+        : (primaryEvent?.name ?? "Saviskar Event"),
+      eventCategory: isAccommodationOnly ? "Accommodation" : (primaryEvent?.category ?? null),
+      registrationType: isAccommodationOnly ? "individual" : (primaryEvent?.registration_type === "team" ? ("team" as const) : ("individual" as const)),
       teamName: primaryPe?.team_name ?? null,
       amount: order.amount,
       gateway: order.gateway || "Unknown",
@@ -318,31 +353,38 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
       ? receiptItems[0].eventName
       : `${receiptItems[0].eventName} (+${receiptItems.length - 1} more)`;
 
-    const accommodationDetails = typedItems
-      .filter((it) => it.item_type === "accommodation")
-      .map((it) => {
-        const rawAcc = it.participant_accommodations;
-        const acc = Array.isArray(rawAcc) ? rawAcc[0] : rawAcc;
-        const rawPlan = acc?.accommodation_plans;
-        const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
-        const rawDelegate = acc?.participants;
-        const delegate = Array.isArray(rawDelegate) ? rawDelegate[0] : rawDelegate;
-        return {
-          planName: plan?.name || "Accommodation",
-          participantName: delegate?.name || participant.name,
-          dates: acc?.start_date && acc?.end_date ? `${acc.start_date} to ${acc.end_date}` : "Festival Dates",
-          amount: Number(it.amount) || 0,
-        };
-      });
+    const accommodationDetails = hasAccItems
+      ? typedItems
+          .filter((it) => it.item_type === "accommodation")
+          .map((it, idx) => {
+            const rawAcc = it.participant_accommodations;
+            const acc = (Array.isArray(rawAcc) ? rawAcc[0] : rawAcc) || directAccRecords[idx] || directAccRecords[0];
+            const rawPlan = acc?.accommodation_plans;
+            const plan = Array.isArray(rawPlan) ? rawPlan[0] : rawPlan;
+            const rawDelegate = acc?.participants;
+            const delegate = Array.isArray(rawDelegate) ? rawDelegate[0] : rawDelegate;
+            return {
+              planName: plan?.name || "Accommodation",
+              participantName: delegate?.name || participant.name,
+              dates: acc?.start_date && acc?.end_date ? `${acc.start_date} to ${acc.end_date}` : "Festival Dates",
+              durationDays: acc?.duration_days || undefined,
+              checkoutDate: acc?.end_date || undefined,
+              orderReference: order.order_reference,
+              paymentId: order.gateway_payment_id || undefined,
+              amount: Number(it.amount) || 0,
+            };
+          })
+      : [];
 
     // 4. SEND EMAIL
     const emailResult = await sendRegistrationEmail({
-      registrationId: primaryPe?.id || primaryItem.participant_event_id,
+      registrationId: primaryPe?.id || primaryItem.participant_event_id || primaryItem.participant_accommodation_id,
+      idempotencyKey: `rcp_${order.order_reference}_${participant.participant_id}`,
       participantId: participant.participant_id,
       eventName: eventNameLabel,
-      eventCategory: primaryEvent?.category ?? (primaryItem.item_type === "accommodation" ? "Accommodation" : null),
+      eventCategory: isAccommodationOnly ? "Accommodation" : (primaryEvent?.category ?? null),
       name: participant.name,
-      college: participant.college,
+      college: participant.college || "N/A",
       email: participant.email,
       phone: participant.phone,
       team: primaryPe?.team_name ?? null,
@@ -366,7 +408,7 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
 
     console.log(`[RECEIPT] updating receipt_email_sent_at`);
     // 5. MARK AS SENT & CLEAR CLAIM
-    await supabaseAdmin
+    const { error: markSentError } = await supabaseAdmin
       .from("payment_orders")
       .update({ 
         receipt_email_sent_at: new Date().toISOString(),
@@ -374,7 +416,12 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
         receipt_email_claimed_at: null,
       })
       .eq("id", paymentOrderId)
-      .eq("receipt_email_claim_id", claimId);
+      .eq("receipt_email_claim_id", claimId)
+      .is("receipt_email_sent_at", null);
+
+    if (markSentError) {
+      console.error("[RECEIPT] Failed to mark order receipt_email_sent_at:", markSentError, { paymentOrderId, claimId });
+    }
     
     console.log(`[RECEIPT] COMPLETE`);
 
@@ -382,15 +429,21 @@ export async function ensurePaymentConfirmationSent(paymentOrderId: string) {
     console.error("[RECEIPT] ensurePaymentConfirmationSent: Exception caught:", error);
 
     // Release the claim so it can be retried later safely.
+    // Scoped strictly to claimId and unsent state: cannot clear newer claims or overwrite sent orders.
     // We intentionally DO NOT revert the 'paid' status.
-    await supabaseAdmin
+    const { error: releaseError } = await supabaseAdmin
       .from("payment_orders")
       .update({
         receipt_email_claim_id: null,
         receipt_email_claimed_at: null,
       })
       .eq("id", paymentOrderId)
-      .eq("receipt_email_claim_id", claimId);
+      .eq("receipt_email_claim_id", claimId)
+      .is("receipt_email_sent_at", null);
+
+    if (releaseError) {
+      console.error("[RECEIPT] Failed to release email claim:", releaseError, { paymentOrderId, claimId });
+    }
   }
 
 }

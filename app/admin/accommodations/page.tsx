@@ -19,6 +19,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import { getCanonicalStayLabel, calculateRoomDateOccupancy } from "@/lib/accommodation-dates";
+import { exportAccommodationXlsx } from "@/lib/admin/accommodation-excel-export";
 import { groupAccommodationRecords, paginateGroupedAccommodations, getGroupControlsId, getGroupHeaderId, groupRecordsByParticipant, ParticipantAccommodationEntry } from "@/lib/admin/accommodation-grouping";
 import { ParticipantDetailDialog } from "@/components/admin/ParticipantDetailDialog";
 import { INDIAN_STATES_AND_UT } from "@/lib/states";
@@ -164,6 +165,8 @@ type AccommodationRecord = {
   id: string;
   participant_id: string;
   accommodation_plan_id: string;
+  payment_order_id?: string | null;
+  payment_orders?: any;
   start_date: string;
   end_date: string;
   duration_days: number;
@@ -1280,6 +1283,9 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
   const [filterHostel, setFilterHostel] = useState("all");
   const [filterRoom, setFilterRoom] = useState("all");
   const [filterDate, setFilterDate] = useState("all");
+  const [filterDuration, setFilterDuration] = useState("all");
+  const [filterStartDate, setFilterStartDate] = useState("all");
+  const [filterCheckoutDate, setFilterCheckoutDate] = useState("all");
 
   // Group expansion & participant detail states
   const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(new Set());
@@ -1340,12 +1346,89 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
         room?.room_number?.toLowerCase().includes(q) ||
         hostel?.name?.toLowerCase().includes(q) ||
         Boolean(hasTeamMatch);
-      const matchesStatus = filterStatus === "all"
-        ? (acc.status !== "cancelled" && acc.status !== "failed")
-        : acc.status === filterStatus;
-      const matchesGender = filterGender === "all" || p.gender === filterGender;
+      const po = Array.isArray(acc.payment_orders) ? acc.payment_orders[0] : acc.payment_orders;
+      const poStatus = po?.status ? String(po.status).toLowerCase() : "";
+      const accStatus = acc.status ? String(acc.status).toLowerCase() : "";
+
+      let matchesStatus = true;
+      if (filterStatus === "all") {
+        // "Active Only": exclude cancelled, failed, and refunded bookings
+        matchesStatus =
+          accStatus !== "cancelled" &&
+          accStatus !== "failed" &&
+          accStatus !== "refunded" &&
+          poStatus !== "refunded" &&
+          poStatus !== "failed" &&
+          poStatus !== "cancelled";
+      } else if (filterStatus === "all_statuses") {
+        matchesStatus = true;
+      } else if (filterStatus === "paid") {
+        matchesStatus =
+          (accStatus === "paid" || poStatus === "paid" || poStatus === "completed") &&
+          accStatus !== "refunded" &&
+          poStatus !== "refunded" &&
+          accStatus !== "cancelled" &&
+          poStatus !== "cancelled";
+      } else if (filterStatus === "pending") {
+        matchesStatus =
+          (accStatus === "pending" || poStatus === "pending" || poStatus === "initiated") &&
+          accStatus !== "paid" &&
+          poStatus !== "paid" &&
+          poStatus !== "completed" &&
+          accStatus !== "cancelled" &&
+          accStatus !== "failed" &&
+          accStatus !== "refunded" &&
+          poStatus !== "refunded";
+      } else if (filterStatus === "unpaid") {
+        matchesStatus =
+          accStatus === "unpaid" &&
+          poStatus !== "paid" &&
+          poStatus !== "completed";
+      } else if (filterStatus === "partially_paid") {
+        matchesStatus = accStatus === "partially_paid" || poStatus === "partially_paid";
+      } else if (filterStatus === "cancelled") {
+        matchesStatus =
+          (accStatus === "cancelled" || poStatus === "cancelled") &&
+          accStatus !== "refunded" &&
+          poStatus !== "refunded";
+      } else if (filterStatus === "failed") {
+        matchesStatus = accStatus === "failed" || poStatus === "failed";
+      } else if (filterStatus === "refunded") {
+        matchesStatus =
+          (accStatus === "refunded" || poStatus === "refunded") &&
+          accStatus !== "cancelled";
+      } else {
+        matchesStatus = accStatus === filterStatus.toLowerCase();
+      }
+
+      const rawGender = p.gender ? String(p.gender).trim().toLowerCase() : "";
+      const isKnownGender = rawGender === "male" || rawGender === "female" || rawGender === "other";
+
+      const matchesGender =
+        filterGender === "all"
+          ? true
+          : filterGender === "unspecified"
+          ? !rawGender ||
+            rawGender === "unspecified" ||
+            rawGender === "not_specified" ||
+            rawGender === "none" ||
+            rawGender === "unknown" ||
+            !isKnownGender
+          : rawGender === filterGender.toLowerCase();
+
       const matchesState = filterState === "all" || p.state === filterState;
-      
+      const matchesDuration =
+        filterDuration === "all" || acc.duration_days === Number(filterDuration);
+
+      const normStart = acc.start_date ? String(acc.start_date).slice(0, 10) : "";
+      const normEnd = acc.end_date ? String(acc.end_date).slice(0, 10) : "";
+
+      const matchesStartDate =
+        filterStartDate === "all" || normStart === filterStartDate;
+
+      const matchesCheckoutDate =
+        filterCheckoutDate === "all" || normEnd === filterCheckoutDate;
+
       let matchesCheckIn = true;
       if (filterCheckIn === "not_allocated") {
         matchesCheckIn = !acc.room_id;
@@ -1361,40 +1444,41 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
 
       const matchesHostel = filterHostel === "all" || acc.hostel_id === filterHostel;
       const matchesRoom = filterRoom === "all" || acc.room_id === filterRoom;
-      const matchesType = filterType === "all" || (filterType === "faculty" ? !!p.is_faculty : !p.is_faculty);
+      const matchesType =
+        filterType === "all" || (filterType === "faculty" ? !!p.is_faculty : !p.is_faculty);
 
       let matchesDate = true;
       if (filterDate === "27") {
-        matchesDate = (acc.start_date === "2026-10-27" || acc.start_date?.includes("27")) && acc.duration_days === 1;
+        matchesDate = normStart === "2026-10-27" && acc.duration_days === 1;
       } else if (filterDate === "28") {
-        matchesDate = (acc.start_date === "2026-10-28" || acc.start_date?.includes("28")) && acc.duration_days === 1;
+        matchesDate = normStart === "2026-10-28" && acc.duration_days === 1;
       } else if (filterDate === "29") {
-        matchesDate = (acc.start_date === "2026-10-29" || acc.start_date?.includes("29")) && acc.duration_days === 1;
+        matchesDate = normStart === "2026-10-29" && acc.duration_days === 1;
       } else if (filterDate === "30") {
-        matchesDate = (acc.start_date === "2026-10-30" || acc.start_date?.includes("30")) && acc.duration_days === 1;
+        matchesDate = normStart === "2026-10-30" && acc.duration_days === 1;
       } else if (filterDate === "31") {
-        matchesDate = (acc.start_date === "2026-10-31" || acc.start_date?.includes("31")) && acc.duration_days === 1;
+        matchesDate = normStart === "2026-10-31" && acc.duration_days === 1;
       } else if (filterDate === "2_days") {
-        matchesDate = acc.duration_days === 2 && (acc.start_date === "2026-10-28" || acc.start_date?.includes("28"));
+        matchesDate = acc.duration_days === 2 && normStart === "2026-10-28";
       } else if (filterDate === "2_days_30") {
-        matchesDate = acc.duration_days === 2 && (acc.start_date === "2026-10-30" || acc.start_date?.includes("30"));
+        matchesDate = acc.duration_days === 2 && normStart === "2026-10-30";
       } else if (filterDate === "3_days_27") {
-        matchesDate = acc.duration_days === 3 && (acc.start_date === "2026-10-27" || acc.start_date?.includes("27"));
+        matchesDate = acc.duration_days === 3 && normStart === "2026-10-27";
       } else if (filterDate === "3_days_30") {
-        matchesDate = acc.duration_days === 3 && (acc.start_date === "2026-10-28" || acc.start_date?.includes("28") || acc.start_date?.includes("30"));
+        matchesDate = acc.duration_days === 3 && (normStart === "2026-10-28" || normStart === "2026-10-30");
       } else if (filterDate === "3_days_29") {
-        matchesDate = acc.duration_days === 3 && (acc.start_date === "2026-10-29" || acc.start_date?.includes("29"));
+        matchesDate = acc.duration_days === 3 && normStart === "2026-10-29";
       } else if (filterDate === "4_days") {
-        matchesDate = acc.duration_days === 4 && (acc.start_date === "2026-10-27" || acc.start_date?.includes("27"));
+        matchesDate = acc.duration_days === 4 && normStart === "2026-10-27";
       } else if (filterDate === "4_days_28") {
-        matchesDate = acc.duration_days === 4 && (acc.start_date === "2026-10-28" || acc.start_date?.includes("28"));
+        matchesDate = acc.duration_days === 4 && normStart === "2026-10-28";
       } else if (filterDate === "both" || filterDate === "multi") {
         matchesDate = acc.duration_days >= 2;
       }
 
-      return matchesSearch && matchesStatus && matchesGender && matchesState && matchesCheckIn && matchesHostel && matchesRoom && matchesType && matchesDate;
+      return matchesSearch && matchesStatus && matchesGender && matchesState && matchesDuration && matchesStartDate && matchesCheckoutDate && matchesCheckIn && matchesHostel && matchesRoom && matchesType && matchesDate;
     });
-  }, [data, search, filterStatus, filterGender, filterType, filterState, filterCheckIn, filterHostel, filterRoom, filterDate]);
+  }, [data, search, filterStatus, filterGender, filterType, filterState, filterDuration, filterStartDate, filterCheckoutDate, filterCheckIn, filterHostel, filterRoom, filterDate]);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(50);
@@ -1402,7 +1486,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
   // Reset to page 1 whenever search or filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, filterStatus, filterGender, filterType, filterState, filterCheckIn, filterHostel, filterRoom, filterDate]);
+  }, [search, filterStatus, filterGender, filterType, filterState, filterDuration, filterStartDate, filterCheckoutDate, filterCheckIn, filterHostel, filterRoom, filterDate]);
 
   // Overall grouping for continuous serial numbers across entire filtered set
   const fullGroupedData = useMemo(() => {
@@ -1698,6 +1782,74 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
     document.body.removeChild(link);
   };
 
+  const [exportingExcel, setExportingExcel] = useState(false);
+
+  const handleExportExcel = async (scope: "filtered" | "all" = "filtered") => {
+    if (!data) return;
+
+    try {
+      setExportingExcel(true);
+
+      if (scope === "all") {
+        // Retrieve every authorized accommodation record from the server-side export query,
+        // completely bypassing pagination and browser memory limits.
+        const res = await fetch("/api/admin/accommodations/export?scope=all&format=xlsx");
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to download complete accommodation dataset from server.");
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `saviskar-accommodations-all-${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } else {
+        // Server-Side Export Filtered: fetches the complete database dataset matching active filters
+        // ensuring no records are missed due to client-side pagination or memory limits.
+        const queryParams = new URLSearchParams({
+          scope: "filtered",
+          format: "xlsx",
+          status: filterStatus,
+          gender: filterGender,
+          type: filterType,
+          state: filterState,
+          duration: filterDuration,
+          date: filterDate,
+          startDate: filterStartDate,
+          checkoutDate: filterCheckoutDate,
+          checkIn: filterCheckIn,
+          hostelId: filterHostel,
+          roomId: filterRoom,
+          search: search.trim(),
+        });
+
+        const res = await fetch(`/api/admin/accommodations/export?${queryParams.toString()}`);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to download filtered accommodation records from server.");
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `saviskar-accommodations-filtered-${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err: unknown) {
+      console.error("Excel export error:", err);
+      alert(err instanceof Error ? err.message : "Failed to export Excel workbook. Please try again.");
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   const renderParticipantRow = (entry: ParticipantAccommodationEntry, isGroupMember: boolean) => {
     const primaryAcc = entry.primaryRecord;
     const plan = data.plans.find(p => p.id === primaryAcc.accommodation_plan_id);
@@ -1978,11 +2130,14 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
         </label>
         <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
           <option value="all">Active Only</option>
+          <option value="all_statuses">All Statuses (inc. Cancelled/Failed)</option>
           <option value="paid">Paid</option>
           <option value="pending">Pending</option>
           <option value="unpaid">Unpaid</option>
+          <option value="partially_paid">Partially Paid</option>
           <option value="cancelled">Cancelled</option>
           <option value="failed">Failed</option>
+          <option value="refunded">Refunded</option>
         </select>
         <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterCheckIn} onChange={e => setFilterCheckIn(e.target.value)}>
           <option value="all">All Lifecycle</option>
@@ -2002,6 +2157,7 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
           <option value="male">Male</option>
           <option value="female">Female</option>
           <option value="other">Other</option>
+          <option value="unspecified">Unspecified / None</option>
         </select>
         <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterState} onChange={e => setFilterState(e.target.value)}>
           <option value="all">All States</option>
@@ -2023,6 +2179,29 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
           <option value="4_days_28">28–31 Oct (4 Days • Checkout 1 Nov)</option>
           <option value="multi">All Multi-Day (2+ Days)</option>
         </select>
+        <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterStartDate} onChange={e => setFilterStartDate(e.target.value)}>
+          <option value="all">All Start Dates</option>
+          <option value="2026-10-27">Start: 27 Oct 2026</option>
+          <option value="2026-10-28">Start: 28 Oct 2026</option>
+          <option value="2026-10-29">Start: 29 Oct 2026</option>
+          <option value="2026-10-30">Start: 30 Oct 2026</option>
+          <option value="2026-10-31">Start: 31 Oct 2026</option>
+        </select>
+        <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterCheckoutDate} onChange={e => setFilterCheckoutDate(e.target.value)}>
+          <option value="all">All Checkout Dates</option>
+          <option value="2026-10-28">Checkout: 28 Oct 2026</option>
+          <option value="2026-10-29">Checkout: 29 Oct 2026</option>
+          <option value="2026-10-30">Checkout: 30 Oct 2026</option>
+          <option value="2026-10-31">Checkout: 31 Oct 2026</option>
+          <option value="2026-11-01">Checkout: 1 Nov 2026</option>
+        </select>
+        <select className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" value={filterDuration} onChange={e => setFilterDuration(e.target.value)}>
+          <option value="all">All Durations</option>
+          <option value="1">1 Day</option>
+          <option value="2">2 Days</option>
+          <option value="3">3 Days</option>
+          <option value="4">4 Days</option>
+        </select>
         <select 
           className="border border-black/10 rounded-full px-4 py-2 text-sm text-black bg-white" 
           value={filterHostel} 
@@ -2043,19 +2222,38 @@ function RegistrationsTable({ data, onRefresh, initialFilters = {} }: { data: Da
           ))}
         </select>
         
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          <div className="flex items-center rounded-full border border-black/20 bg-white p-0.5 shadow-sm">
+            <button
+              onClick={() => handleExportExcel("filtered")}
+              disabled={exportingExcel}
+              className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs text-black font-semibold hover:bg-black/5 transition disabled:opacity-50"
+              title="Export currently filtered accommodation records as Excel (.xlsx)"
+            >
+              Export Excel ({filtered.length})
+            </button>
+            <div className="h-4 w-px bg-black/10 mx-0.5" />
+            <button
+              onClick={() => handleExportExcel("all")}
+              disabled={exportingExcel}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs text-black/70 hover:text-black hover:bg-black/5 transition disabled:opacity-50"
+              title="Export all loaded accommodation records as Excel (.xlsx)"
+            >
+              All ({data.accommodations.length})
+            </button>
+          </div>
           <button 
             onClick={handleExport}
-            className="flex items-center gap-2 rounded-full border border-black/20 bg-white px-5 py-2 text-sm text-black hover:bg-black/5 transition font-medium"
+            className="flex items-center gap-2 rounded-full border border-black/20 bg-white px-4 py-2 text-xs text-black hover:bg-black/5 transition font-medium"
           >
             Export CSV
           </button>
           <button 
             onClick={handleAutoAllocate}
             disabled={autoAllocating}
-            className="flex items-center gap-2 rounded-full bg-black px-5 py-2 text-sm text-white disabled:opacity-50 hover:bg-black/90 transition font-medium"
+            className="flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs text-white disabled:opacity-50 hover:bg-black/90 transition font-medium"
           >
-            <Settings size={15} className={autoAllocating ? "animate-spin" : ""} />
+            <Settings size={14} className={autoAllocating ? "animate-spin" : ""} />
             Auto Allocate All
           </button>
         </div>
@@ -2744,6 +2942,12 @@ function PaymentsReport({ data }: { data: DashboardData }) {
             <option value="failed">FAILED</option>
             <option value="cancelled">CANCELLED</option>
           </select>
+          <button
+            onClick={() => exportAccommodationXlsx({ accommodations: filtered, hostels: data.hostels, floors: data.floors, rooms: data.rooms, plans: data.plans }, `saviskar-accommodations-payments-${new Date().toISOString().slice(0, 10)}.xlsx`)}
+            className="px-4 py-2 rounded-full border border-black/20 text-sm hover:bg-black/5 transition text-black font-semibold bg-white"
+          >
+            Export Excel (.xlsx)
+          </button>
           <button onClick={handleExport} className="px-4 py-2 rounded-full border border-black/20 text-sm hover:bg-black/5 transition text-black font-medium">Export CSV</button>
         </div>
       </div>
@@ -2819,6 +3023,12 @@ function AllocationsReport({ data }: { data: DashboardData }) {
             <option value="allocated">Allocated</option>
             <option value="awaiting">Awaiting Allocation</option>
           </select>
+          <button
+            onClick={() => exportAccommodationXlsx({ accommodations: filtered, hostels: data.hostels, floors: data.floors, rooms: data.rooms, plans: data.plans }, `saviskar-accommodations-allocations-${new Date().toISOString().slice(0, 10)}.xlsx`)}
+            className="px-4 py-2 rounded-full border border-black/20 text-sm hover:bg-black/5 transition text-black font-semibold bg-white"
+          >
+            Export Excel (.xlsx)
+          </button>
           <button onClick={handleExport} className="px-4 py-2 rounded-full border border-black/20 text-sm hover:bg-black/5 transition text-black font-medium">Export CSV</button>
         </div>
       </div>
@@ -2919,6 +3129,12 @@ function LifecycleReport({ data }: { data: DashboardData }) {
             <option value="checked_out">Checked Out</option>
             <option value="not_checked_in">Allocated, Not Checked In</option>
           </select>
+          <button
+            onClick={() => exportAccommodationXlsx({ accommodations: filtered, hostels: data.hostels, floors: data.floors, rooms: data.rooms, plans: data.plans }, `saviskar-accommodations-lifecycle-${new Date().toISOString().slice(0, 10)}.xlsx`)}
+            className="px-4 py-2 rounded-full border border-black/20 text-sm hover:bg-black/5 transition text-black font-semibold bg-white"
+          >
+            Export Excel (.xlsx)
+          </button>
           <button onClick={handleExport} className="px-4 py-2 rounded-full border border-black/20 text-sm hover:bg-black/5 transition text-black font-medium">Export CSV</button>
         </div>
       </div>

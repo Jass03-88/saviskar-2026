@@ -40,6 +40,10 @@ export type AccommodationEmailDetails = {
   participantName: string;
   dates: string;
   amount: number;
+  durationDays?: number;
+  checkoutDate?: string;
+  orderReference?: string;
+  paymentId?: string;
 };
 
 export type RegistrationEmailData = {
@@ -67,6 +71,7 @@ export type RegistrationEmailData = {
   } | null;
 
   accommodationDetails?: AccommodationEmailDetails[] | null;
+  idempotencyKey?: string;
 };
 
 export type SendResult = {
@@ -168,11 +173,12 @@ export async function sendRegistrationEmail(
     accommodationDetails = [],
   } = data;
 
+  const resolvedCollege = college && college.trim() ? college.trim() : "N/A";
+
   if (
     !participantId ||
     !eventName ||
     !name ||
-    !college ||
     !email
   ) {
     return {
@@ -216,10 +222,14 @@ export async function sendRegistrationEmail(
     : "";
 
   const safeEventName = escapeHtml(eventName);
-  const safeCollege = escapeHtml(college);
+  const safeCollege = escapeHtml(resolvedCollege);
   const safeTeam = escapeHtml(team);
   const safeCategory = escapeHtml(eventCategory);
   const safeParticipantId = escapeHtml(participantId);
+  const isAccommodationOnly =
+    eventCategory === "Accommodation" ||
+    safeCategory.toLowerCase() === "accommodation" ||
+    (!isTeamEvent && !team && (eventName.toLowerCase().includes("accommodation") || eventName.toLowerCase().includes("stay")));
 
   /*
    * Build the complete team list.
@@ -230,7 +240,7 @@ export async function sendRegistrationEmail(
         {
           participantId,
           name,
-          college,
+          college: resolvedCollege,
           email,
           phone,
           isTeamLeader:
@@ -249,7 +259,7 @@ export async function sendRegistrationEmail(
         {
           participantId,
           name,
-          college,
+          college: resolvedCollege,
           email,
           phone,
           isTeamLeader: false,
@@ -258,7 +268,7 @@ export async function sendRegistrationEmail(
         ...members.map((member) => ({
           participantId: member.participantId,
           name: member.name,
-          college: member.college,
+          college: member.college || resolvedCollege,
           email: member.email,
           phone: member.phone,
           isTeamLeader: member.isTeamLeader,
@@ -271,7 +281,7 @@ export async function sendRegistrationEmail(
         {
           participantId,
           name,
-          college,
+          college: resolvedCollege,
           email,
           phone,
           isTeamLeader: false,
@@ -499,6 +509,50 @@ export async function sendRegistrationEmail(
                     >
                       <strong>Dates:</strong> ${escapeHtml(acc.dates)}
                     </div>
+                    ${acc.durationDays ? `
+                    <div
+                      style="
+                        font-size: 12px;
+                        color: #555555;
+                        margin-top: 2px;
+                      "
+                    >
+                      <strong>Duration:</strong> ${acc.durationDays} ${acc.durationDays === 1 ? 'Day' : 'Days'}
+                    </div>
+                    ` : ""}
+                    ${acc.checkoutDate ? `
+                    <div
+                      style="
+                        font-size: 12px;
+                        color: #555555;
+                        margin-top: 2px;
+                      "
+                    >
+                      <strong>Check-out:</strong> ${escapeHtml(acc.checkoutDate)}
+                    </div>
+                    ` : ""}
+                    ${acc.orderReference ? `
+                    <div
+                      style="
+                        font-size: 12px;
+                        color: #555555;
+                        margin-top: 2px;
+                      "
+                    >
+                      <strong>Order Reference:</strong> ${escapeHtml(acc.orderReference)}
+                    </div>
+                    ` : ""}
+                    ${acc.paymentId ? `
+                    <div
+                      style="
+                        font-size: 12px;
+                        color: #555555;
+                        margin-top: 2px;
+                      "
+                    >
+                      <strong>Payment ID:</strong> ${escapeHtml(acc.paymentId)}
+                    </div>
+                    ` : ""}
                     <div
                       style="
                         font-size: 12px;
@@ -613,8 +667,14 @@ export async function sendRegistrationEmail(
                 "
               >
                 ${receiptPdf 
-                  ? `Your payment for ${safeEventName} has been successfully received.`
-                  : `Your Saviskar 2026 registration has been confirmed. Keep this email available and present the QR code at entry.`
+                  ? (isAccommodationOnly
+                      ? `Your payment for campus accommodation (${safeEventName}) has been successfully received. Keep this email and present the QR code at the accommodation desk.`
+                      : `Your payment for ${safeEventName} has been successfully received.`
+                    )
+                  : (isAccommodationOnly
+                      ? `Your Saviskar 2026 accommodation request has been received. Keep this email available and present the QR code upon arrival.`
+                      : `Your Saviskar 2026 registration has been confirmed. Keep this email available and present the QR code at entry.`
+                    )
                 }
               </p>
 
@@ -664,7 +724,7 @@ export async function sendRegistrationEmail(
                   color: #999999;
                 "
               >
-                Event
+                ${isAccommodationOnly ? "Accommodation Plan" : "Event"}
               </div>
 
               <div
@@ -688,7 +748,7 @@ export async function sendRegistrationEmail(
                         text-transform: capitalize;
                       "
                     >
-                      ${safeCategory} Event
+                      ${isAccommodationOnly ? "Campus Stay Plan" : `${safeCategory} Event`}
                     </div>
                   `
                   : ""
@@ -826,7 +886,7 @@ export async function sendRegistrationEmail(
                     color: #aaaaaa;
                   "
                 >
-                  College / University
+                  ${isAccommodationOnly ? "Institution / Organization" : "College / University"}
                 </div>
 
                 <div
@@ -1132,15 +1192,23 @@ export async function sendRegistrationEmail(
         continue;
       }
 
-      let { data, error } = await resend.emails.send({
-        from: fromEmail,
-        to: [destinationEmail],
-        subject: subjectLine,
-        html: emailHtml,
-        ...(attachments ? { attachments } : {}),
-      });
+      const recipientIdempKey = data.idempotencyKey
+        ? `${data.idempotencyKey}_${recipient.participantId}`
+        : undefined;
 
-      if (error && (error as { statusCode?: number; message?: string }).statusCode === 403 && String((error as { message?: string }).message || "").includes("domain is not verified")) {
+      let { data: resData, error: resError } = await resend.emails.send(
+        {
+          from: fromEmail,
+          to: [destinationEmail],
+          subject: subjectLine,
+          html: emailHtml,
+          headers: recipientIdempKey ? { "X-Entity-Ref-ID": recipientIdempKey } : undefined,
+          ...(attachments ? { attachments } : {}),
+        },
+        recipientIdempKey ? ({ idempotencyKey: recipientIdempKey } as any) : undefined
+      );
+
+      if (resError && (resError as { statusCode?: number; message?: string }).statusCode === 403 && String((resError as { message?: string }).message || "").includes("domain is not verified")) {
         if (guardActive) {
           if (
             (process.env.APPROVED_TEST_EMAIL || "").trim().toLowerCase() !== HARDCODED_PERMITTED_TEST_EMAIL ||
@@ -1152,21 +1220,25 @@ export async function sendRegistrationEmail(
         }
 
         console.warn(`[REGISTER EMAIL] Domain not verified in Resend. Retrying with onboarding fallback...`);
-        const fallbackRes = await resend.emails.send({
-          from: "Saviskar 2026 <onboarding@resend.dev>",
-          to: [destinationEmail],
-          subject: subjectLine,
-          html: emailHtml,
-          ...(attachments ? { attachments } : {}),
-        });
-        data = fallbackRes.data;
-        error = fallbackRes.error;
+        const fallbackRes = await resend.emails.send(
+          {
+            from: "Saviskar 2026 <onboarding@resend.dev>",
+            to: [destinationEmail],
+            subject: subjectLine,
+            html: emailHtml,
+            headers: recipientIdempKey ? { "X-Entity-Ref-ID": recipientIdempKey } : undefined,
+            ...(attachments ? { attachments } : {}),
+          },
+          recipientIdempKey ? ({ idempotencyKey: recipientIdempKey } as any) : undefined
+        );
+        resData = fallbackRes.data;
+        resError = fallbackRes.error;
       }
 
-      if (error) {
+      if (resError) {
         console.error(
           `[REGISTER EMAIL] RESEND ERROR for ${recipient.email}:`,
-          error
+          resError
         );
 
         /*
@@ -1178,7 +1250,7 @@ export async function sendRegistrationEmail(
         console.log(`[REGISTER EMAIL] Resend response received successfully for: ${recipient.email}`);
         results.push({
           email: recipient.email,
-          emailId: data?.id || null,
+          emailId: resData?.id || null,
         });
       }
     } catch (err) {
