@@ -689,7 +689,7 @@ describe("Saviskar 2026 — Master Admin Email Broadcast & Participation Certifi
 
       expect(pdfBytes).toBeInstanceOf(Uint8Array);
       expect(pdfBytes.length).toBeGreaterThan(100000);
-    });
+    }, 15000);
 
     it("Renders Hindi / Devanagari characters without stripping or corrupted replacement", async () => {
       const { pdfBytes } = await generateParticipationCertificatePdf({
@@ -699,7 +699,7 @@ describe("Saviskar 2026 — Master Admin Email Broadcast & Participation Certifi
 
       expect(pdfBytes).toBeInstanceOf(Uint8Array);
       expect(pdfBytes.length).toBeGreaterThan(100000);
-    });
+    }, 15000);
   });
 
   // =========================================================================

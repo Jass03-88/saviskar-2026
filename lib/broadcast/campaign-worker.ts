@@ -48,6 +48,7 @@ export interface CreateCertificateCampaignParams {
   adminId: string;
   adminEmail?: string;
   targetFilters?: Record<string, any>;
+  campaignId?: string; // Optional: resume/populate existing draft campaign
 }
 
 export interface ProcessBatchResult {
@@ -57,8 +58,12 @@ export interface ProcessBatchResult {
   details: Array<{ deliveryId: string; recipient: string; success: boolean; error?: string }>;
 }
 
-export function generateCertificateNumber(sourceKey: string): string {
+export function generateCertificateNumber(sourceKey: string, suffix?: string | number): string {
   const hash = crypto.createHash("sha256").update(sourceKey).digest("hex").substring(0, 10).toUpperCase();
+  if (suffix !== undefined && suffix !== null && suffix !== "") {
+    const cleanSuffix = String(suffix).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return `SAV26-CERT-${hash.substring(0, 6)}${cleanSuffix}`;
+  }
   return `SAV26-CERT-${hash}`;
 }
 
@@ -149,12 +154,10 @@ export async function createGeneralBroadcastCampaign(
     idempotency_key: generateDeliveryIdempotencyKey(campaign.id, email, "general"),
   }));
 
-  // Insert delivery rows in bounded chunks to avoid PostgreSQL statement timeouts
   const chunkSize =
     options?.chunkSize && options.chunkSize > 0
       ? options.chunkSize
       : BROADCAST_DELIVERY_INSERT_CHUNK_SIZE;
-
   for (let i = 0; i < deliveries.length; i += chunkSize) {
     const chunk = deliveries.slice(i, i + chunkSize);
     const { error: delErr } = await supabaseAdmin.from("broadcast_deliveries").insert(chunk);
@@ -165,7 +168,7 @@ export async function createGeneralBroadcastCampaign(
           .delete()
           .eq("id", campaign.id);
         if (delCampErr) {
-          console.error("[CAMPAIGN CLEANUP ERROR]:", delCampErr);
+          console.error("[CAMPAIGN CLEANUP ERROR - GENERAL CAMPAIGN]:", delCampErr);
           await supabaseAdmin
             .from("broadcast_campaigns")
             .update({ status: "failed" })
@@ -219,122 +222,275 @@ export async function createCertificateCampaign(
   const newlyCreatedCertIds: string[] = [];
 
   try {
-    // 1. Create campaign header in draft status FIRST so creator FK and header constraints are validated
-    const { data: campaign, error: campErr } = await supabaseAdmin
-      .from("broadcast_campaigns")
-      .insert({
-        title: params.title.trim(),
-        subject: params.subject.trim(),
-        body_html: params.bodyHtml,
-        body_text: params.bodyText || params.bodyHtml.replace(/<[^>]+>/g, " ").trim(),
-        campaign_type: "certificate",
-        status: "draft",
-        target_filters: targetFilters,
-        total_recipients: selectedCandidates.length,
-        total_deliveries: 0,
-        created_by: effectiveCreatedBy,
-      })
-      .select("id")
-      .single();
+    let createdCampaignId: string;
 
-    if (campErr || !campaign) {
-      throw new Error(`Failed to create certificate campaign: ${campErr?.message}`);
+    if (params.campaignId) {
+      // Resume / populate existing draft campaign
+      const { data: existingCamp, error: findCampErr } = await supabaseAdmin
+        .from("broadcast_campaigns")
+        .select("id, status, total_deliveries")
+        .eq("id", params.campaignId)
+        .single();
+
+      if (findCampErr || !existingCamp) {
+        throw new Error(`Target campaign ${params.campaignId} not found.`);
+      }
+      createdCampaignId = existingCamp.id;
+      campaignId = createdCampaignId;
+    } else {
+      // 1. Create campaign header in draft status FIRST so creator FK and header constraints are validated
+      const { data: campaign, error: campErr } = await supabaseAdmin
+        .from("broadcast_campaigns")
+        .insert({
+          title: params.title.trim(),
+          subject: params.subject.trim(),
+          body_html: params.bodyHtml,
+          body_text: params.bodyText || params.bodyHtml.replace(/<[^>]+>/g, " ").trim(),
+          campaign_type: "certificate",
+          status: "draft",
+          target_filters: targetFilters,
+          total_recipients: selectedCandidates.length,
+          total_deliveries: 0,
+          created_by: effectiveCreatedBy,
+        })
+        .select("id")
+        .single();
+
+      if (campErr || !campaign) {
+        throw new Error(`Failed to create certificate campaign: ${campErr?.message}`);
+      }
+      createdCampaignId = campaign.id;
+      campaignId = createdCampaignId;
     }
-    const createdCampaignId = campaign.id;
-    campaignId = createdCampaignId;
 
-    // 2. Create or retrieve participation_certificates records
+    // 2. Create or retrieve participation_certificates records with atomic collision resilience
     const certificateRecords: any[] = [];
-    for (const c of selectedCandidates) {
-      const certNumber = generateCertificateNumber(c.issueSourceKey);
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-      const { data: existingCert } = await supabaseAdmin
-        .from("participation_certificates")
-        .select("id, certificate_number")
-        .eq("issue_source_key", c.issueSourceKey)
-        .maybeSingle();
+    // Batch prefetch any already-issued certificates by issue_source_key in safe chunks of 80 to respect URL length limits
+    const existingCertMap = new Map<string, { id: string; certificateNumber: string }>();
+    const allSourceKeys = selectedCandidates.map((c) => c.issueSourceKey);
+    const PREFETCH_CHUNK = 80;
+    for (let i = 0; i < allSourceKeys.length; i += PREFETCH_CHUNK) {
+      const chunkKeys = allSourceKeys.slice(i, i + PREFETCH_CHUNK);
+      try {
+        const { data: foundCerts } = await supabaseAdmin
+          .from("participation_certificates")
+          .select("id, certificate_number, issue_source_key")
+          .in("issue_source_key", chunkKeys);
+        if (foundCerts) {
+          for (const cert of foundCerts) {
+            existingCertMap.set(cert.issue_source_key, {
+              id: cert.id,
+              certificateNumber: cert.certificate_number,
+            });
+          }
+        }
+      } catch {
+        // Non-fatal if batch prefetch fails; individual check/RPC handles fallback
+      }
+    }
+
+    for (const c of selectedCandidates) {
+      let resolvedCert: { id: string; certificateNumber: string } | null = null;
+
+      // Fast check: reuse existing certificate from prefetch map or database
+      let existingCert = existingCertMap.get(c.issueSourceKey);
+
+      if (!existingCert && typeof (supabaseAdmin.from("participation_certificates") as any).select === "function") {
+        try {
+          const { data: dbCert } = await supabaseAdmin
+            .from("participation_certificates")
+            .select("id, certificate_number")
+            .eq("issue_source_key", c.issueSourceKey)
+            .maybeSingle();
+          if (dbCert) {
+            existingCert = {
+              id: dbCert.id,
+              certificateNumber: dbCert.certificate_number,
+            };
+          }
+        } catch {
+          // Fall through
+        }
+      }
 
       if (existingCert) {
-        certificateRecords.push({ ...c, certificateId: existingCert.id, certificateNumber: existingCert.certificate_number });
-      } else {
-        // In hybrid mode or for synthetic fixtures, the referenced registration rows may exist only in hosted Supabase.
-        // We verify if the target row exists in the campaign database before setting relational foreign keys.
-        // The schema's original_* columns permanently preserve the authoritative immutable UUIDs.
-        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        let fkParticipantEventId: string | null = null;
-        let fkParticipantEventMemberId: string | null = null;
-        let fkParticipantId: string | null = null;
-        let fkEventId: string | null = null;
-
-        if (c.participantEventId && UUID_REGEX.test(c.participantEventId)) {
-          const { data: peExists } = await supabaseAdmin
-            .from("participant_events")
-            .select("id")
-            .eq("id", c.participantEventId)
-            .maybeSingle();
-          if (peExists) fkParticipantEventId = peExists.id;
-        }
-
-        if (c.memberId && UUID_REGEX.test(c.memberId)) {
-          const { data: memExists } = await supabaseAdmin
-            .from("participant_event_members")
-            .select("id")
-            .eq("id", c.memberId)
-            .maybeSingle();
-          if (memExists) fkParticipantEventMemberId = memExists.id;
-        }
-
-        if (c.participantId && UUID_REGEX.test(c.participantId)) {
-          const { data: pExists } = await supabaseAdmin
-            .from("participants")
-            .select("id")
-            .eq("id", c.participantId)
-            .maybeSingle();
-          if (pExists) fkParticipantId = pExists.id;
-        }
-
-        if (c.eventId && UUID_REGEX.test(c.eventId)) {
-          const { data: evExists } = await supabaseAdmin
-            .from("events")
-            .select("id")
-            .eq("id", c.eventId)
-            .maybeSingle();
-          if (evExists) fkEventId = evExists.id;
-        }
-
-        const originalPeId =
-          (c.participantEventId && UUID_REGEX.test(c.participantEventId) ? c.participantEventId : null) ||
-          (c.accommodationId && UUID_REGEX.test(c.accommodationId) ? c.accommodationId : null) ||
-          "00000000-0000-0000-0000-000000000000";
-
-        const { data: newCert, error: insErr } = await supabaseAdmin
-          .from("participation_certificates")
-          .insert({
-            certificate_number: certNumber,
-            issue_source_key: c.issueSourceKey,
-            original_participant_event_id: originalPeId,
-            original_member_row_id: (c.memberId && UUID_REGEX.test(c.memberId)) ? c.memberId : null,
-            original_participant_id: (c.participantId && UUID_REGEX.test(c.participantId)) ? c.participantId : null,
-            participant_event_id: fkParticipantEventId,
-            participant_event_member_id: fkParticipantEventMemberId,
-            participant_id: fkParticipantId,
-            event_id: fkEventId,
-            recipient_name: c.recipientName,
-            recipient_email: c.recipientEmail || null,
-            event_name: c.eventName,
-            team_name: c.teamName || null,
-            template_version: TEMPLATE_VERSION,
-            template_hash: EXPECTED_TEMPLATE_HASH,
-          })
-          .select("id, certificate_number")
-          .single();
-
-        if (insErr || !newCert) {
-          throw new Error(`Failed to issue certificate record for ${c.recipientName}: ${insErr?.message}`);
-        }
-        newlyCreatedCertIds.push(newCert.id);
-        certificateRecords.push({ ...c, certificateId: newCert.id, certificateNumber: newCert.certificate_number });
+        certificateRecords.push({
+          ...c,
+          certificateId: existingCert.id,
+          certificateNumber: existingCert.certificateNumber,
+        });
+        continue;
       }
+
+      // Foreign key resolution
+      let fkParticipantEventId: string | null = null;
+      let fkParticipantEventMemberId: string | null = null;
+      let fkParticipantId: string | null = null;
+      let fkEventId: string | null = null;
+
+      if (c.participantEventId && UUID_REGEX.test(c.participantEventId)) {
+        const { data: peExists } = await supabaseAdmin
+          .from("participant_events")
+          .select("id")
+          .eq("id", c.participantEventId)
+          .maybeSingle();
+        if (peExists) fkParticipantEventId = peExists.id;
+      }
+
+      if (c.memberId && UUID_REGEX.test(c.memberId)) {
+        const { data: memExists } = await supabaseAdmin
+          .from("participant_event_members")
+          .select("id")
+          .eq("id", c.memberId)
+          .maybeSingle();
+        if (memExists) fkParticipantEventMemberId = memExists.id;
+      }
+
+      if (c.participantId && UUID_REGEX.test(c.participantId)) {
+        const { data: pExists } = await supabaseAdmin
+          .from("participants")
+          .select("id")
+          .eq("id", c.participantId)
+          .maybeSingle();
+        if (pExists) fkParticipantId = pExists.id;
+      }
+
+      if (c.eventId && UUID_REGEX.test(c.eventId)) {
+        const { data: evExists } = await supabaseAdmin
+          .from("events")
+          .select("id")
+          .eq("id", c.eventId)
+          .maybeSingle();
+        if (evExists) fkEventId = evExists.id;
+      }
+
+      const originalPeId =
+        (c.participantEventId && UUID_REGEX.test(c.participantEventId) ? c.participantEventId : null) ||
+        (c.accommodationId && UUID_REGEX.test(c.accommodationId) ? c.accommodationId : null) ||
+        "00000000-0000-0000-0000-000000000000";
+
+      // Attempt atomic database-backed sequence RPC if available
+      if (typeof supabaseAdmin.rpc === "function") {
+        try {
+          const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc(
+            "issue_or_get_participation_certificate",
+            {
+              p_issue_source_key: c.issueSourceKey,
+              p_original_participant_event_id: originalPeId,
+              p_original_member_row_id: (c.memberId && UUID_REGEX.test(c.memberId)) ? c.memberId : null,
+              p_original_participant_id: (c.participantId && UUID_REGEX.test(c.participantId)) ? c.participantId : null,
+              p_participant_event_id: fkParticipantEventId,
+              p_participant_event_member_id: fkParticipantEventMemberId,
+              p_participant_id: fkParticipantId,
+              p_event_id: fkEventId,
+              p_recipient_name: c.recipientName,
+              p_recipient_email: c.recipientEmail || null,
+              p_event_name: c.eventName,
+              p_team_name: c.teamName || null,
+              p_template_version: TEMPLATE_VERSION,
+              p_template_hash: EXPECTED_TEMPLATE_HASH,
+            }
+          );
+          if (!rpcErr && rpcData) {
+            const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+            if (row && row.id && row.certificate_number) {
+              resolvedCert = {
+                id: row.id,
+                certificateNumber: row.certificate_number,
+              };
+              if (row.is_new) {
+                newlyCreatedCertIds.push(row.id);
+              }
+            }
+          }
+        } catch {
+          // Fall through to resilient direct insert
+        }
+      }
+
+      // Application-level optimistic fallback (used ONLY when database RPC is not installed or unavailable)
+      // NOTE: Database RPC issue_or_get_participation_certificate is the sole authoritative concurrency mechanism.
+      // The client fallback below uses optimistic retries and fails closed if conflicts cannot be resolved.
+      if (!resolvedCert) {
+        let inserted = false;
+        let attempt = 0;
+        let lastError: any = null;
+
+        while (!inserted && attempt < 5) {
+          attempt++;
+          const certNumber = attempt === 1
+            ? generateCertificateNumber(c.issueSourceKey)
+            : generateCertificateNumber(c.issueSourceKey, `${attempt}${Math.floor(100 + Math.random() * 900)}`);
+
+          const { data: newCert, error: insErr } = await supabaseAdmin
+            .from("participation_certificates")
+            .insert({
+              certificate_number: certNumber,
+              issue_source_key: c.issueSourceKey,
+              original_participant_event_id: originalPeId,
+              original_member_row_id: (c.memberId && UUID_REGEX.test(c.memberId)) ? c.memberId : null,
+              original_participant_id: (c.participantId && UUID_REGEX.test(c.participantId)) ? c.participantId : null,
+              participant_event_id: fkParticipantEventId,
+              participant_event_member_id: fkParticipantEventMemberId,
+              participant_id: fkParticipantId,
+              event_id: fkEventId,
+              recipient_name: c.recipientName,
+              recipient_email: c.recipientEmail || null,
+              event_name: c.eventName,
+              team_name: c.teamName || null,
+              template_version: TEMPLATE_VERSION,
+              template_hash: EXPECTED_TEMPLATE_HASH,
+            })
+            .select("id, certificate_number")
+            .single();
+
+          if (!insErr && newCert) {
+            resolvedCert = {
+              id: newCert.id,
+              certificateNumber: newCert.certificate_number,
+            };
+            newlyCreatedCertIds.push(newCert.id);
+            inserted = true;
+          } else {
+            lastError = insErr;
+            // Check if concurrent process inserted the same issue_source_key
+            const { data: concurrentCert } = await supabaseAdmin
+              .from("participation_certificates")
+              .select("id, certificate_number")
+              .eq("issue_source_key", c.issueSourceKey)
+              .maybeSingle();
+
+            if (concurrentCert) {
+              resolvedCert = {
+                id: concurrentCert.id,
+                certificateNumber: concurrentCert.certificate_number,
+              };
+              inserted = true;
+              break;
+            }
+
+            // If collision was on certificate_number, loop continues with new suffix
+            const isCertNumCollision =
+              insErr?.message?.includes("participation_certificates_certificate_number_key") ||
+              insErr?.code === "23505";
+            if (!isCertNumCollision) {
+              break;
+            }
+          }
+        }
+
+        if (!resolvedCert) {
+          throw new Error(`Failed to issue certificate record for ${c.recipientName}: ${lastError?.message || "Unknown error"}`);
+        }
+      }
+
+      certificateRecords.push({
+        ...c,
+        certificateId: resolvedCert.id,
+        certificateNumber: resolvedCert.certificateNumber,
+      });
     }
 
     // 3. Build delivery rows and attachments
@@ -500,27 +656,92 @@ export async function createCertificateCampaign(
       throw new Error("No deliveries could be formed (both individual and team options produced 0 recipients with valid emails).");
     }
 
-    // 4. Insert delivery rows and attachment manifests in bounded chunks
+    // Check for deliveries already persisted for this campaign (supporting idempotent resumption/retries)
+    const existingDeliveryMap = new Map<string, string>();
+    const deliveriesTable = supabaseAdmin.from("broadcast_deliveries");
+    if (typeof (deliveriesTable as any).select === "function") {
+      try {
+        const query = deliveriesTable.select("id, idempotency_key").eq("campaign_id", createdCampaignId);
+        if (typeof (query as any).range === "function") {
+          const PAGE_SIZE = 1000;
+          let from = 0;
+          let hasMore = true;
+          while (hasMore) {
+            const { data: page, error: pageErr } = await deliveriesTable
+              .select("id, idempotency_key")
+              .eq("campaign_id", createdCampaignId)
+              .range(from, from + PAGE_SIZE - 1);
+
+            if (pageErr || !page || page.length === 0) {
+              hasMore = false;
+              break;
+            }
+
+            for (const d of page) {
+              existingDeliveryMap.set(d.idempotency_key, d.id);
+            }
+
+            if (page.length < PAGE_SIZE) {
+              hasMore = false;
+            } else {
+              from += PAGE_SIZE;
+            }
+          }
+        } else {
+          const { data: directDeliveries } = await query;
+          if (Array.isArray(directDeliveries)) {
+            for (const d of directDeliveries) {
+              existingDeliveryMap.set(d.idempotency_key, d.id);
+            }
+          }
+        }
+      } catch {
+        // Non-fatal if select fails
+      }
+    }
+
+    const newDeliveryRows = deliveryRows.filter((r) => !existingDeliveryMap.has(r.idempotency_key));
+    const newDeliveryIdSet = new Set(newDeliveryRows.map((r) => r.id));
+    const newAttachmentLinks = attachmentLinks.filter((a) => newDeliveryIdSet.has(a.delivery_id));
+
+    // 4. Insert new delivery rows and attachment manifests in safe batches of 250 rows to prevent payload timeouts
     const chunkSize =
       options?.chunkSize && options.chunkSize > 0
         ? options.chunkSize
         : BROADCAST_DELIVERY_INSERT_CHUNK_SIZE;
-
-    for (let i = 0; i < deliveryRows.length; i += chunkSize) {
-      const chunk = deliveryRows.slice(i, i + chunkSize);
-      const { error: insDelErr } = await supabaseAdmin.from("broadcast_deliveries").insert(chunk);
+    for (let i = 0; i < newDeliveryRows.length; i += chunkSize) {
+      const chunk = newDeliveryRows.slice(i, i + chunkSize);
+      const { error: insDelErr } = typeof (deliveriesTable as any).upsert === "function"
+        ? await (deliveriesTable as any).upsert(chunk, { onConflict: "idempotency_key", ignoreDuplicates: true })
+        : await deliveriesTable.insert(chunk);
       if (insDelErr) {
         throw new Error(`Failed to enqueue certificate deliveries: ${insDelErr.message}`);
       }
     }
 
-    if (attachmentLinks.length > 0) {
-      for (let i = 0; i < attachmentLinks.length; i += chunkSize) {
-        const chunk = attachmentLinks.slice(i, i + chunkSize);
+    if (newAttachmentLinks.length > 0) {
+      for (let i = 0; i < newAttachmentLinks.length; i += chunkSize) {
+        const chunk = newAttachmentLinks.slice(i, i + chunkSize);
         const { error: insAttErr } = await supabaseAdmin.from("broadcast_delivery_attachments").insert(chunk);
         if (insAttErr) {
           throw new Error(`Failed to link certificate attachments: ${insAttErr.message}`);
         }
+      }
+    }
+
+    // Exact delivery count verification to guarantee authoritative accuracy when supported
+    let finalDeliveryCount = deliveryRows.length;
+    if (typeof (deliveriesTable as any).select === "function") {
+      try {
+        const { count: exactCount } = await deliveriesTable
+          .select("*", { count: "exact", head: true })
+          .eq("campaign_id", createdCampaignId);
+
+        if (typeof exactCount === "number") {
+          finalDeliveryCount = exactCount;
+        }
+      } catch {
+        // Fall back to deliveryRows.length if select fails
       }
     }
 
@@ -529,7 +750,8 @@ export async function createCertificateCampaign(
       .from("broadcast_campaigns")
       .update({
         status: "queued",
-        total_deliveries: deliveryRows.length,
+        total_deliveries: finalDeliveryCount,
+        total_recipients: certificateRecords.length,
       })
       .eq("id", createdCampaignId);
 
@@ -539,36 +761,36 @@ export async function createCertificateCampaign(
 
     return {
       campaignId: createdCampaignId,
-      totalDeliveries: deliveryRows.length,
+      totalDeliveries: finalDeliveryCount,
       totalCertificates: certificateRecords.length,
     };
   } catch (err) {
     // Compensating rollback:
-    // 1. Delete campaign (cascades deliveries and attachments via foreign key ON DELETE CASCADE)
-    if (campaignId) {
+    // 1. Delete campaign header if newly created in this run so no orphaned campaigns remain
+    if (campaignId && !params.campaignId) {
       try {
-        const { error: delCampErr } = await supabaseAdmin
-          .from("broadcast_campaigns")
-          .delete()
-          .eq("id", campaignId);
+        const { error: delCampErr } = await supabaseAdmin.from("broadcast_campaigns").delete().eq("id", campaignId);
         if (delCampErr) {
-          console.error("[CAMPAIGN ROLLBACK - CAMPAIGN]:", delCampErr);
+          console.error("[CAMPAIGN ROLLBACK ERROR - CAMPAIGN]:", delCampErr);
           await supabaseAdmin
             .from("broadcast_campaigns")
             .update({ status: "failed" })
             .eq("id", campaignId);
         }
-      } catch (delCampErr) {
-        console.error("[CAMPAIGN ROLLBACK - CAMPAIGN]:", delCampErr);
+      } catch (delCampEx) {
+        console.error("[CAMPAIGN ROLLBACK EXCEPTION - CAMPAIGN]:", delCampEx);
       }
     }
 
     // 2. Delete newly created certificates from this attempt so no orphaned certificates remain
     if (newlyCreatedCertIds.length > 0) {
       try {
-        await supabaseAdmin.from("participation_certificates").delete().in("id", newlyCreatedCertIds);
-      } catch (delCertErr) {
-        console.error("[CAMPAIGN ROLLBACK - CERTIFICATES]:", delCertErr);
+        const { error: delCertErr } = await supabaseAdmin.from("participation_certificates").delete().in("id", newlyCreatedCertIds);
+        if (delCertErr) {
+          console.error("[CAMPAIGN ROLLBACK ERROR - CERTIFICATES]:", delCertErr);
+        }
+      } catch (delCertEx) {
+        console.error("[CAMPAIGN ROLLBACK EXCEPTION - CERTIFICATES]:", delCertEx);
       }
     }
 

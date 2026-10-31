@@ -328,6 +328,7 @@ export async function POST(request: NextRequest) {
           sendTeamBackup: !!sendTeamBackup,
           adminId,
           adminEmail,
+          campaignId: typeof body.campaignId === "string" && body.campaignId.trim() ? body.campaignId.trim() : undefined,
         },
         authoritativeCandidates
       );
