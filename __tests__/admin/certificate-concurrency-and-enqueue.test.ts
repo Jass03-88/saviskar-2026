@@ -100,12 +100,16 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
               }),
             };
           }
+          const insertedDeliveries: any[] = [];
           if (table === "broadcast_deliveries") {
             return {
               select: () => ({
-                eq: () => Promise.resolve({ count: 1, data: [], error: null }),
+                eq: () => Promise.resolve({ count: insertedDeliveries.length || 1, data: insertedDeliveries, error: null }),
               }),
-              upsert: () => Promise.resolve({ error: null }),
+              upsert: (rows: any[]) => {
+                insertedDeliveries.push(...rows);
+                return Promise.resolve({ error: null });
+              },
             };
           }
           if (table === "broadcast_delivery_attachments") {
@@ -200,12 +204,16 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
               }),
             };
           }
+          const insertedDeliveries: any[] = [];
           if (table === "broadcast_deliveries") {
             return {
               select: () => ({
-                eq: () => Promise.resolve({ count: 1, data: [], error: null }),
+                eq: () => Promise.resolve({ count: insertedDeliveries.length || 1, data: insertedDeliveries, error: null }),
               }),
-              upsert: () => Promise.resolve({ error: null }),
+              upsert: (rows: any[]) => {
+                insertedDeliveries.push(...rows);
+                return Promise.resolve({ error: null });
+              },
             };
           }
           if (table === "broadcast_delivery_attachments") {
@@ -282,10 +290,14 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
               update: () => ({ eq: () => Promise.resolve({ error: null }) }),
             };
           }
+          const insertedDeliveries: any[] = [];
           if (table === "broadcast_deliveries") {
             return {
-              select: () => ({ eq: () => Promise.resolve({ count: 1, data: [], error: null }) }),
-              upsert: () => Promise.resolve({ error: null }),
+              select: () => ({ eq: () => Promise.resolve({ count: insertedDeliveries.length || 1, data: insertedDeliveries, error: null }) }),
+              upsert: (rows: any[]) => {
+                insertedDeliveries.push(...rows);
+                return Promise.resolve({ error: null });
+              },
             };
           }
           if (table === "broadcast_delivery_attachments") {
@@ -373,10 +385,14 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
               update: () => ({ eq: () => Promise.resolve({ error: null }) }),
             };
           }
+          const insertedDeliveries: any[] = [];
           if (table === "broadcast_deliveries") {
             return {
-              select: () => ({ eq: () => Promise.resolve({ count: 1, data: [], error: null }) }),
-              upsert: () => Promise.resolve({ error: null }),
+              select: () => ({ eq: () => Promise.resolve({ count: insertedDeliveries.length || 1, data: insertedDeliveries, error: null }) }),
+              upsert: (rows: any[]) => {
+                insertedDeliveries.push(...rows);
+                return Promise.resolve({ error: null });
+              },
             };
           }
           if (table === "broadcast_delivery_attachments") {
@@ -518,11 +534,19 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
               update: () => ({ eq: () => Promise.resolve({ error: null }) }),
             };
           }
+          const insertedDeliveries: any[] = [];
           if (table === "broadcast_deliveries") {
             return {
-              select: () => ({ eq: () => Promise.resolve({ count: 3980, data: [], error: null }) }),
+              select: () => ({
+                eq: () => ({
+                  range: (from: number, to: number) =>
+                    Promise.resolve({ data: insertedDeliveries.slice(from, to + 1), error: null }),
+                  then: (resolve: any) => resolve({ count: 3980, data: insertedDeliveries, error: null }),
+                }),
+              }),
               upsert: (rows: any[]) => {
                 totalDeliveriesUpserted += rows.length;
+                insertedDeliveries.push(...rows);
                 return Promise.resolve({ error: null });
               },
             };
@@ -660,7 +684,7 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
           }
           if (table === "broadcast_deliveries") {
             return {
-              select: () => ({ eq: () => Promise.resolve({ count: 1, data: [], error: null }) }),
+              select: () => ({ eq: () => Promise.resolve({ count: insertedDeliveries.length || 1, data: insertedDeliveries, error: null }) }),
               upsert: (rows: any[]) => {
                 insertedDeliveries.push(...rows);
                 return Promise.resolve({ error: null });
@@ -791,10 +815,14 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
               update: () => ({ eq: () => Promise.resolve({ error: null }) }),
             };
           }
+          const insertedDeliveries: any[] = [];
           if (table === "broadcast_deliveries") {
             return {
-              select: () => ({ eq: () => Promise.resolve({ count: 1, data: [], error: null }) }),
-              upsert: () => Promise.resolve({ error: null }),
+              select: () => ({ eq: () => Promise.resolve({ count: insertedDeliveries.length || 1, data: insertedDeliveries, error: null }) }),
+              upsert: (rows: any[]) => {
+                insertedDeliveries.push(...rows);
+                return Promise.resolve({ error: null });
+              },
             };
           }
           if (table === "broadcast_delivery_attachments") {
@@ -839,6 +867,7 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
       let campaignsInserted = 0;
       let campaignUpdatedWith: any = null;
 
+      const upsertedDeliveries: any[] = [];
       const mockSupabase = {
         from: (table: string) => {
           if (table === "participation_certificates") {
@@ -854,7 +883,7 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
             return {
               select: () => ({
                 eq: (col: string, val: string) => ({
-                  single: () => Promise.resolve({ data: { id: "camp-existing-draft-001", status: "draft", total_deliveries: 0 }, error: null }),
+                  single: () => Promise.resolve({ data: { id: "camp-existing-draft-001", status: "draft", total_deliveries: 0, sent_count: 0 }, error: null }),
                 }),
               }),
               insert: () => {
@@ -871,8 +900,11 @@ describe("Participation Certificate Number Allocation, Concurrency & Campaign En
           }
           if (table === "broadcast_deliveries") {
             return {
-              select: () => ({ eq: () => Promise.resolve({ count: 1, data: [], error: null }) }),
-              upsert: () => Promise.resolve({ error: null }),
+              select: () => ({ eq: () => Promise.resolve({ count: upsertedDeliveries.length, data: upsertedDeliveries, error: null }) }),
+              upsert: (rows: any[]) => {
+                upsertedDeliveries.push(...rows);
+                return Promise.resolve({ error: null });
+              },
             };
           }
           if (table === "broadcast_delivery_attachments") {

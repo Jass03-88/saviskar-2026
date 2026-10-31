@@ -150,10 +150,20 @@ export async function DELETE(
       return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
     }
 
-    // Safety guard: only allow deleting campaigns that have not sent any emails
-    if (campaign.sent_count > 0) {
+    // Safety guard: only allow deleting campaigns that are strictly valid empty drafts (status 'draft', exactly 0 deliveries, exactly 0 sent)
+    const isStrictDraft = campaign.status === "draft";
+    const hasZeroSent = campaign.sent_count === 0;
+    const hasZeroDeliveries = campaign.total_deliveries === 0;
+
+    if (!isStrictDraft || !hasZeroSent || !hasZeroDeliveries) {
+      if (typeof campaign.sent_count === "number" && campaign.sent_count > 0) {
+        return NextResponse.json(
+          { error: "Cannot delete a campaign that has already sent emails." },
+          { status: 400 }
+        );
+      }
       return NextResponse.json(
-        { error: "Cannot delete a campaign that has already sent emails." },
+        { error: "Only empty draft campaigns with zero deliveries and zero sent emails can be deleted." },
         { status: 400 }
       );
     }
