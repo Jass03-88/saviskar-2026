@@ -20,6 +20,9 @@ export const CERTIFICATE_EMAIL_SUBJECT =
 export const CERTIFICATE_CAMPAIGN_DEFAULT_TITLE =
   "Saviskar 2026 Participation Certificates";
 
+export const DEFAULT_CERTIFICATE_LOGO_URL =
+  "https://saviskar.co.in/images/saviskar-official-logo.png";
+
 export const SAVISKAR_OFFICIAL_URLS = {
   website: "https://saviskar.co.in",
   instagram: "https://www.instagram.com/saviskar.cgcuniversity/",
@@ -49,6 +52,7 @@ export interface CertificateEmailOptions {
   totalCertificatesAttached?: number;
   attachmentFilename?: string;
   previewText?: string;
+  logoUrl?: string;
 }
 
 export interface CertificateTeamBackupEmailOptions {
@@ -56,6 +60,7 @@ export interface CertificateTeamBackupEmailOptions {
   leaderName?: string;
   partNumber?: number;
   totalParts?: number;
+  logoUrl?: string;
   members: Array<{
     recipientName: string;
     eventName: string;
@@ -102,6 +107,9 @@ export function renderCertificateEmailHtml(options?: CertificateEmailOptions): s
     ? escapeHtml(options.certificateNumber.trim())
     : null;
   const isStayOnly = Boolean(options?.isStayOnly);
+
+  const rawLogoUrl = options?.logoUrl?.trim() || DEFAULT_CERTIFICATE_LOGO_URL;
+  const safeLogoUrl = escapeHtml(rawLogoUrl);
 
   const filename =
     options?.attachmentFilename ||
@@ -188,6 +196,10 @@ export function renderCertificateEmailHtml(options?: CertificateEmailOptions): s
       .header-padding {
         padding: 32px 20px 28px 20px !important;
       }
+      .email-header-logo {
+        width: 250px !important;
+        height: auto !important;
+      }
       .attachment-box {
         padding: 16px !important;
       }
@@ -237,13 +249,24 @@ export function renderCertificateEmailHtml(options?: CertificateEmailOptions): s
                 </tr>
               </table>
 
-              <!-- Main Festival Title -->
-              <h1 style="margin: 18px 0 0 0; font-size: 32px; font-weight: 900; color: #ffffff; letter-spacing: 3px; line-height: 1.15; text-transform: uppercase; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);">
-                SAVISKAR 2026
-              </h1>
+              <!-- Official Saviskar 2026 Logo (PNG) -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin: 20px auto 14px auto;">
+                <tr>
+                  <td align="center" valign="middle">
+                    <img
+                      src="${safeLogoUrl}"
+                      alt="SAVISKAR 2026 official logo"
+                      width="320"
+                      height="68"
+                      class="email-header-logo"
+                      style="display: block; width: 320px; max-width: 100%; height: auto; margin: 0 auto; border: 0; outline: none; text-decoration: none;"
+                    />
+                  </td>
+                </tr>
+              </table>
 
               <!-- Document Type Heading -->
-              <p style="margin: 8px 0 0 0; font-size: 15px; font-weight: 600; color: rgba(255, 255, 255, 0.95); letter-spacing: 1.5px; text-transform: uppercase; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);">
+              <p style="margin: 0; font-size: 15px; font-weight: 700; color: #ffffff; letter-spacing: 1.5px; text-transform: uppercase; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);">
                 Official Certificate of Participation
               </p>
 
@@ -448,6 +471,7 @@ export function renderCertificateEmailText(options?: CertificateEmailOptions): s
   const eventName = options?.eventName?.trim();
   const certNumber = options?.certificateNumber?.trim();
   const isStayOnly = Boolean(options?.isStayOnly);
+
   const filename =
     options?.attachmentFilename ||
     sanitizeAttachmentDisplayName(eventName, recipientName);
@@ -524,6 +548,9 @@ export function renderCertificateTeamBackupEmailHtml(
   const partHeader =
     totalParts > 1 ? ` &bull; Part ${partNumber} of ${totalParts}` : "";
 
+  const rawLogoUrl = options.logoUrl?.trim() || DEFAULT_CERTIFICATE_LOGO_URL;
+  const safeLogoUrl = escapeHtml(rawLogoUrl);
+
   const memberRowsHtml = (options.members || [])
     .map(
       (m, idx) => `
@@ -562,10 +589,24 @@ export function renderCertificateTeamBackupEmailHtml(
               <div style="font-size: 11px; font-weight: 700; color: #ffffff; text-transform: uppercase; letter-spacing: 2px;">
                 CGC UNIVERSITY, MOHALI
               </div>
-              <h1 style="margin: 14px 0 0; font-size: 28px; font-weight: 900; color: #ffffff; letter-spacing: 2.5px; text-transform: uppercase;">
-                SAVISKAR 2026
-              </h1>
-              <p style="margin: 8px 0 0; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.95); text-transform: uppercase; letter-spacing: 1px;">
+
+              <!-- Official Saviskar 2026 Logo (PNG) -->
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin: 18px auto 12px auto;">
+                <tr>
+                  <td align="center" valign="middle">
+                    <img
+                      src="${safeLogoUrl}"
+                      alt="SAVISKAR 2026 official logo"
+                      width="280"
+                      height="60"
+                      class="email-header-logo"
+                      style="display: block; width: 280px; max-width: 100%; height: auto; margin: 0 auto; border: 0; outline: none; text-decoration: none;"
+                    />
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin: 0; font-size: 14px; font-weight: 700; color: #ffffff; text-transform: uppercase; letter-spacing: 1px; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);">
                 Official Team Certificates Manifest${partHeader}
               </p>
             </td>

@@ -332,8 +332,16 @@ export default function AdminBroadcastPage() {
         } else if (data.mode === "production_readonly") {
           setIsProductionReadOnly(true);
         }
-        // Start unselected for safety
-        setSelectedCertKeys(new Set());
+        // Retain any existing selections that remain valid candidates; start unselected only if currently empty
+        setSelectedCertKeys((prev) => {
+          if (prev.size === 0) return prev;
+          const validKeys = new Set(data.recipients.filter((c: any) => c.certificateEligible).map((c: any) => c.issueSourceKey));
+          const retained = new Set<string>();
+          for (const k of prev) {
+            if (validKeys.has(k)) retained.add(k);
+          }
+          return retained;
+        });
       } else {
         setCertCandidatesError(data.error || "Failed to load certificate candidates.");
       }
@@ -1509,19 +1517,36 @@ export default function AdminBroadcastPage() {
 
                 <div className="flex flex-wrap items-center gap-2">
                   <button
+                    type="button"
                     onClick={() => {
-                      const eligible = new Set(
-                        filteredCertCandidates
+                      const allEligible = new Set(
+                        certCandidates
                           .filter((c) => c.certificateEligible)
                           .map((c) => c.issueSourceKey)
                       );
-                      setSelectedCertKeys(eligible);
+                      setSelectedCertKeys(allEligible);
                     }}
                     className="rounded-full border border-black bg-black px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-neutral-800 transition"
                   >
-                    Select All Eligible ({filteredCertCandidates.filter((c) => c.certificateEligible).length})
+                    Select All Eligible ({certCandidates.filter((c) => c.certificateEligible).length})
                   </button>
+                  {filteredCertCandidates.length < certCandidates.length && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const set = new Set(selectedCertKeys);
+                        filteredCertCandidates
+                          .filter((c) => c.certificateEligible)
+                          .forEach((c) => set.add(c.issueSourceKey));
+                        setSelectedCertKeys(set);
+                      }}
+                      className="rounded-full border border-black/20 bg-black/5 px-3.5 py-1.5 text-xs font-semibold text-black hover:bg-black/10 transition"
+                    >
+                      Add Filtered ({filteredCertCandidates.filter((c) => c.certificateEligible).length})
+                    </button>
+                  )}
                   <button
+                    type="button"
                     onClick={() => setSelectedCertKeys(new Set())}
                     className="rounded-full border border-black/10 bg-white px-3.5 py-1.5 text-xs font-semibold text-black/70 shadow-xs hover:bg-black/[0.04] hover:text-black transition"
                   >
@@ -1934,6 +1959,29 @@ export default function AdminBroadcastPage() {
                           >
                             {selectedCampaignId === camp.id ? "Hide Details" : "View Deliveries"}
                           </button>
+
+                          {camp.status === "draft" && camp.total_deliveries === 0 && camp.sent_count === 0 && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!confirm(`Delete empty draft campaign "${camp.title}"?`)) return;
+                                try {
+                                  const res = await fetch(`/api/admin/broadcast/campaigns/${camp.id}`, { method: "DELETE" });
+                                  const d = await res.json();
+                                  if (d.success) {
+                                    fetchCampaigns();
+                                  } else {
+                                    alert(d.error || "Failed to delete campaign");
+                                  }
+                                } catch (e: any) {
+                                  alert(e?.message || "Failed to delete campaign");
+                                }
+                              }}
+                              className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition"
+                            >
+                              Delete Empty Draft
+                            </button>
+                          )}
 
                           {camp.status !== "completed" ? (
                             <button
