@@ -1,3 +1,9 @@
 [build]
   command = "npm run build"
   publish = ".next"
+
+# Netlify's Next.js runtime turns the Next.js build output into serverless
+# functions, edge middleware and routing rules. Without it, the raw .next
+# folder is published as static files and every route returns a 404.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
